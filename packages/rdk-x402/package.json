@@ -1,0 +1,22 @@
+{
+  "name": "@rdk/x402",
+  "version": "1.0.0",
+  "description": "RDK x402 micropayment tip protocol — on-chain USDC tips for knowledge retrieval",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rdk/core": "workspace:*"
+  },
+  "optionalDependencies": {
+    "ethers": "^6.14.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

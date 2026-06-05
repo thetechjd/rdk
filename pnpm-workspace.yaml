@@ -1,0 +1,15 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# These packages pull heavy native binaries.
+# They are installed on-demand by rdk commands, not during workspace install.
+neverBuiltDependencies:
+  - '@xenova/transformers'
+  - 'onnxruntime-node'
+  - 'onnxruntime-web'
+  - 'sharp'
+  - 'ethers'
+
+overrides:
+  '@modelcontextprotocol/sdk': '1.12.1'

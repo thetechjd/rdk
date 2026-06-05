@@ -1,0 +1,187 @@
+// packages/rdk-core/src/router.ts
+// Central routing logic. Checks private vault → public network → falls back to LLM.
+// This is the piece that collapses token spend 80-90%.
+
+import { type EmbeddingModel } from './models/embedding.js';
+import { LocalStore, type SearchResult } from './store/local-store.js';
+import { estimateTokens } from './cleaner.js';
+
+export interface RouterConfig {
+  localStore: LocalStore;
+  embeddingModel: EmbeddingModel;
+  centralApiUrl?: string;
+  centralApiKey?: string;
+  topK?: number;
+  minSimilarity?: number;
+  maxPrivateChunks?: number;
+  fallbackToLLM?: boolean;
+  domain?: string;
+}
+
+export interface NetworkChunk {
+  chunkId: string;
+  nodeId: string;
+  providerNodeMcpEndpoint?: string;
+  title: string;
+  summary?: string;
+  content?: string; // fetched from provider node
+  score: number;
+  tipAmountUsdc: number;
+  domain?: string;
+  categories: string[];
+}
+
+export interface TipRecord {
+  chunkId: string;
+  providerNodeId: string;
+  amountUsdc: number;
+  txHash?: string;
+}
+
+export interface QueryResult {
+  source: 'private' | 'network' | 'llm_fallback';
+  chunks: (SearchResult | NetworkChunk)[];
+  context: string;
+  tokenEstimate: number;
+  tipsPaid: TipRecord[];
+  latencyMs: number;
+}
+
+export class RDKRouter {
+  constructor(private config: RouterConfig) {}
+
+  async query(userQuery: string, overrides?: Partial<RouterConfig>): Promise<QueryResult> {
+    const cfg = { ...this.config, ...overrides };
+    const minSim = cfg.minSimilarity ?? 0.72;
+    const topK = cfg.topK ?? 5;
+    const start = Date.now();
+
+    // Step 1: Embed query locally
+    const embedding = await cfg.embeddingModel.embed(userQuery);
+
+    // Step 2: Private vault
+    const privateResults = cfg.localStore.search(embedding, topK, true);
+    const bestPrivate = privateResults[0];
+
+    if (bestPrivate && bestPrivate.score >= minSim) {
+      const context = assembleContext(privateResults.filter(r => r.score >= minSim));
+      const latencyMs = Date.now() - start;
+      cfg.localStore.logQuery({ queryText: userQuery, source: 'private', matchedChunkId: bestPrivate.id, latencyMs });
+      return {
+        source: 'private',
+        chunks: privateResults.filter(r => r.score >= minSim),
+        context,
+        tokenEstimate: estimateTokens(context),
+        tipsPaid: [],
+        latencyMs,
+      };
+    }
+
+    // Step 3: Network query
+    if (cfg.centralApiUrl && cfg.centralApiKey) {
+      try {
+        const networkResults = await this.queryNetwork(embedding, cfg);
+        const bestNetwork = networkResults[0];
+
+        if (bestNetwork && bestNetwork.score >= minSim) {
+          const context = assembleNetworkContext(networkResults.filter(r => r.score >= minSim));
+          const latencyMs = Date.now() - start;
+          cfg.localStore.logQuery({ queryText: userQuery, source: 'network', matchedChunkId: bestNetwork.chunkId, latencyMs });
+
+          // Enqueue tips for matched network chunks
+          const tipsPaid: TipRecord[] = [];
+          for (const chunk of networkResults.filter(r => r.score >= minSim)) {
+            if (chunk.tipAmountUsdc > 0) {
+              cfg.localStore.enqueueTip({
+                chunkId: chunk.chunkId,
+                providerNodeId: chunk.nodeId,
+                amountUsdc: chunk.tipAmountUsdc,
+                chain: 'base',
+              });
+              tipsPaid.push({ chunkId: chunk.chunkId, providerNodeId: chunk.nodeId, amountUsdc: chunk.tipAmountUsdc });
+            }
+          }
+
+          return {
+            source: 'network',
+            chunks: networkResults.filter(r => r.score >= minSim),
+            context,
+            tokenEstimate: estimateTokens(context),
+            tipsPaid,
+            latencyMs,
+          };
+        }
+      } catch (e) {
+        // Network failure → fall through to LLM
+      }
+    }
+
+    // Step 4: LLM fallback signal
+    const latencyMs = Date.now() - start;
+    cfg.localStore.logQuery({ queryText: userQuery, source: 'llm_fallback', latencyMs });
+    return {
+      source: 'llm_fallback',
+      chunks: [],
+      context: '',
+      tokenEstimate: 0,
+      tipsPaid: [],
+      latencyMs,
+    };
+  }
+
+  private async queryNetwork(embedding: Float32Array, cfg: RouterConfig): Promise<NetworkChunk[]> {
+    const response = await fetch(`${cfg.centralApiUrl}/api/v1/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${cfg.centralApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        embedding: Array.from(embedding),
+        topK: cfg.topK ?? 5,
+        domain: cfg.domain,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`Network query failed: ${response.status}`);
+
+    const { results } = (await response.json()) as { results: NetworkChunk[]; queryId: string };
+
+    // Fetch chunk content from provider MCP endpoints where available
+    const enriched = await Promise.allSettled(
+      results.map(r => this.fetchChunkContent(r)),
+    );
+
+    return enriched
+      .map((r, i) => r.status === 'fulfilled' ? r.value : results[i])
+      .filter(Boolean) as NetworkChunk[];
+  }
+
+  private async fetchChunkContent(chunk: NetworkChunk): Promise<NetworkChunk> {
+    if (!chunk.providerNodeMcpEndpoint) return chunk;
+    try {
+      const res = await fetch(`${chunk.providerNodeMcpEndpoint}/chunks/${chunk.chunkId}`, {
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { content?: string };
+        return { ...chunk, content: data.content };
+      }
+    } catch {}
+    // Degrade gracefully — use summary only
+    return { ...chunk, content: chunk.summary };
+  }
+}
+
+function assembleContext(chunks: SearchResult[]): string {
+  return chunks
+    .map((c, i) => `[${i + 1}] ${c.title}\n${c.content}`)
+    .join('\n\n---\n\n');
+}
+
+function assembleNetworkContext(chunks: NetworkChunk[]): string {
+  return chunks
+    .map((c, i) => `[${i + 1}] ${c.title}\n${c.content ?? c.summary ?? ''}`)
+    .join('\n\n---\n\n');
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@rdk/central-api",
+  "version": "1.0.0",
+  "description": "RDK Central — node registry, chunk sync, network query, billing",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "start": "node dist/main.js",
+    "start:prod": "node dist/main.js",
+    "migration:run": "typeorm migration:run -d src/data-source.ts",
+    "migration:generate": "typeorm migration:generate",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/passport": "^10.0.3",
+    "@nestjs/platform-express": "^10.4.15",
+    "@nestjs/typeorm": "^10.0.2",
+    "@nestjs/schedule": "^4.1.2",
+    "@nestjs/bull": "^10.2.3",
+    "bull": "^4.16.5",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "typeorm": "^0.3.20",
+    "pg": "^8.14.1",
+    "bcrypt": "^5.1.1",
+    "stripe": "^17.7.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.21",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/pg": "^8.11.13",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.8.3"
+  }
+}

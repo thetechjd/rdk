@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.turbo/
+*.env
+*.env.local
+*.env.production
+.DS_Store
+*.log
+coverage/
+.next/
+~/.rdk/

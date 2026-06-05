@@ -1,0 +1,25 @@
+{
+  "name": "@rdk/adapter-filesystem",
+  "version": "1.0.0",
+  "description": "RDK vault adapter for plain filesystem (.md, .txt, .mdx files)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rdk/core": "workspace:*",
+    "glob": "^11.0.2",
+    "gray-matter": "^4.0.3",
+    "ignore": "^6.0.2"
+  },
+  "optionalDependencies": {
+    "chokidar": "^3.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "@types/node": "^22.15.21"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "@rdk/cli",
+  "version": "1.0.0",
+  "description": "RDK CLI \u2014 install, configure, and manage your RDK node",
+  "bin": {
+    "rdk": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist",
+    "prepare": "chmod +x dist/cli.js 2>/dev/null || true",
+    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js"
+  },
+  "dependencies": {
+    "@rdk/core": "workspace:*",
+    "better-sqlite3": "^12.0.0",
+    "chalk": "^5.4.1",
+    "commander": "^12.1.0",
+    "open": "^10.1.0",
+    "ora": "^8.2.0",
+    "typescript": "^5.8.3"
+  },
+  "optionalDependencies": {
+    "@rdk/adapter-filesystem": "workspace:*",
+    "@rdk/adapter-obsidian": "workspace:*",
+    "@rdk/adapter-logseq": "workspace:*",
+    "@rdk/adapter-notion": "workspace:*",
+    "@rdk/mcp": "workspace:*",
+    "@rdk/x402": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "esbuild": "^0.28.0"
+  },
+  "files": [
+    "dist/",
+    "package.json",
+    "README.md"
+  ]
+}
