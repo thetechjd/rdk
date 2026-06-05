@@ -2,6 +2,15 @@ packages:
   - 'packages/*'
   - 'apps/*'
 
+allowBuilds:
+  '@nestjs/core': true
+  bcrypt: true
+  better-sqlite3: true
+  esbuild: true
+  msgpackr-extract: true
+  protobufjs: true
+  sharp: true
+
 # These packages pull heavy native binaries.
 # They are installed on-demand by rdk commands, not during workspace install.
 neverBuiltDependencies:

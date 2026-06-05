@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@modelcontextprotocol/sdk': 1.12.1
+
 importers:
 
   .:
@@ -114,10 +117,6 @@ importers:
       ignore:
         specifier: ^6.0.2
         version: 6.0.2
-    optionalDependencies:
-      chokidar:
-        specifier: ^3.6.0
-        version: 3.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
@@ -125,6 +124,10 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+    optionalDependencies:
+      chokidar:
+        specifier: ^3.6.0
+        version: 3.6.0
 
   packages/rdk-adapter-obsidian:
     dependencies:
@@ -137,10 +140,6 @@ importers:
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
-    optionalDependencies:
-      chokidar:
-        specifier: ^3.6.0
-        version: 3.6.0
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
@@ -148,6 +147,10 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+    optionalDependencies:
+      chokidar:
+        specifier: ^3.6.0
+        version: 3.6.0
 
   packages/rdk-cli:
     dependencies:
@@ -172,6 +175,13 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.21
+        version: 22.19.19
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.0
     optionalDependencies:
       '@rdk/adapter-filesystem':
         specifier: workspace:*
@@ -185,23 +195,12 @@ importers:
       '@rdk/x402':
         specifier: workspace:*
         version: link:../rdk-x402
-    devDependencies:
-      '@types/node':
-        specifier: ^22.15.21
-        version: 22.19.19
-      esbuild:
-        specifier: ^0.28.0
-        version: 0.28.0
 
   packages/rdk-core:
     dependencies:
       better-sqlite3:
         specifier: ^12.0.0
         version: 12.10.0
-    optionalDependencies:
-      '@xenova/transformers':
-        specifier: ^2.17.2
-        version: 2.17.2
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.10
@@ -212,6 +211,10 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+    optionalDependencies:
+      '@xenova/transformers':
+        specifier: ^2.17.2
+        version: 2.17.2
 
   packages/rdk-mcp:
     dependencies:
@@ -240,10 +243,6 @@ importers:
       '@rdk/core':
         specifier: workspace:*
         version: link:../rdk-core
-    optionalDependencies:
-      ethers:
-        specifier: ^6.14.1
-        version: 6.16.0
     devDependencies:
       '@types/node':
         specifier: ^22.15.21
@@ -251,6 +250,10 @@ importers:
       typescript:
         specifier: ^5.8.3
         version: 5.9.3
+    optionalDependencies:
+      ethers:
+        specifier: ^6.14.1
+        version: 6.16.0
 
 packages:
 

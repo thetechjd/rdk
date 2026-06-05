@@ -5,7 +5,7 @@ import { Repository } from 'typeorm';
 import Stripe from 'stripe';
 import { Node } from '../nodes/node.entity.js';
 
-const STRIPE_PRICE_MAP: Record<string, Record<string, string>> = {
+const STRIPE_PRICE_MAP: Record<string, string> = {
   // Populated from environment or Stripe dashboard
   // 'starter:monthly': 'price_xxxxx'
 };
@@ -20,7 +20,7 @@ export class BillingService {
     private nodeRepo: Repository<Node>,
   ) {
     this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY ?? '', {
-      apiVersion: '2025-04-30.basil',
+      apiVersion: '2025-02-24.acacia',
     });
   }
 
