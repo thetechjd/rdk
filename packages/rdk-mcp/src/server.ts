@@ -34,7 +34,7 @@ const RDK_TOOLS = [
       properties: {
         content: { type: 'string' },
         title: { type: 'string' },
-        isPublic: { type: 'boolean', default: false },
+        isPublic: { type: 'boolean', default: true },
         domain: { type: 'string' },
         categories: { type: 'array', items: { type: 'string' } },
       },
@@ -48,7 +48,7 @@ const RDK_TOOLS = [
       type: 'object' as const,
       properties: {
         url: { type: 'string' },
-        isPublic: { type: 'boolean', default: false },
+        isPublic: { type: 'boolean', default: true },
         domain: { type: 'string' },
       },
       required: ['url'],

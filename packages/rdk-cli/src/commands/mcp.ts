@@ -1,16 +1,15 @@
 // packages/rdk-cli/src/commands/mcp.ts
-import { requireDeps } from '../require-dep.js';
+import { isInstalled } from '../require-dep.js';
 import { loadConfig, updateConfig } from '../config.js';
 import { t, mark } from '../theme.js';
 
 export async function mcpServe(opts: { port?: number }): Promise<void> {
-  const ready = await requireDeps(
-    ['@rdk/mcp', '@modelcontextprotocol/sdk', '@xenova/transformers'],
-    { label: 'MCP server components' },
-  );
-  if (!ready) {
-    console.log(t.warn('Run rdk network:join to install MCP components first.'));
-    return;
+  // Check the MCP SDK dep before stdio transport starts — never prompt or install mid-session.
+  // Use the /server subpath: v1.29.0+ dropped the root index.js, only subpaths exist.
+  // We do NOT import @rdk/mcp to check — it has a top-level startMcpServer() side-effect.
+  if (!await isInstalled('@modelcontextprotocol/sdk/server')) {
+    console.error('MCP SDK not installed. Run: rdk network:join');
+    process.exit(1);
   }
 
   const config = loadConfig();
@@ -27,32 +26,13 @@ export async function mcpServe(opts: { port?: number }): Promise<void> {
         if (data.verified) {
           updateConfig({ emailVerified: true });
         } else {
-          console.log('');
-          console.log(`  ${mark.warn()} ${t.warn('Email not verified')}`);
-          console.log(t.dim('  Check your inbox and click the verification link.'));
-          console.log(t.dim('  You must verify your email before running the MCP server.'));
-          console.log('');
-
-          const { confirm } = await import('../prompts.js');
-          const resend = await confirm({ message: 'Resend verification email?', default: true });
-
-          if (resend) {
-            try {
-              await fetch(
-                `${config.retrodeckApiUrl}/api/v1/auth/resend-verification`,
-                {
-                  method: 'POST',
-                  headers: { Authorization: `Bearer ${config.retrodeckAccessToken}` },
-                },
-              );
-              console.log(`  ${mark.ok()} ${t.body('Verification email sent')}`);
-            } catch {}
-          }
-
-          console.log('');
-          console.log(t.dim('  Once verified, run: rdk mcp:serve'));
-          console.log('');
-          return;
+          console.error('');
+          console.error(`  ${mark.warn()} ${t.warn('Email not verified')}`);
+          console.error(t.dim('  Check your inbox and click the verification link.'));
+          console.error(t.dim('  You must verify your email before running the MCP server.'));
+          console.error(t.dim('  Once verified, run: rdk mcp:serve'));
+          console.error('');
+          process.exit(1);
         }
       }
     } catch {
@@ -60,15 +40,17 @@ export async function mcpServe(opts: { port?: number }): Promise<void> {
     }
   }
 
-  const port = opts.port ?? config.mcpPort ?? 3000;
-
   const { startHttpServer } = await import('@rdk/mcp');
   const { LocalStore } = await import('@rdk/core');
   const store = new LocalStore();
-  startHttpServer(config as unknown as Parameters<typeof startHttpServer>[0], store);
+  // If --port was passed, use it as the preferred starting port
+  const configWithPort = opts.port ? { ...config, mcpPort: opts.port } : config;
+  const boundPort: number = await (startHttpServer as (c: unknown, s: unknown) => Promise<number>)(configWithPort, store);
 
   console.error(t.green('RDK MCP server starting...'));
-  console.error(t.dim(`  .well-known: http://localhost:${port}/.well-known/mcp.json`));
+  if (boundPort > 0) {
+    console.error(t.dim(`  .well-known: http://localhost:${boundPort}/.well-known/mcp.json`));
+  }
   console.error(t.dim(`  Node:        ${config.nodeId}`));
   console.error(t.dim(`  Domain:      ${config.domain}`));
 
@@ -78,7 +60,7 @@ export async function mcpServe(opts: { port?: number }): Promise<void> {
 
 export async function mcpValidate(): Promise<void> {
   const config = loadConfig();
-  const port = config.mcpPort ?? 3000;
+  const port = config.mcpPort ?? 4242;
   try {
     const res = await fetch(`http://localhost:${port}/.well-known/mcp.json`);
     if (res.ok) {

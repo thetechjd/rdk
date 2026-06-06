@@ -2,7 +2,7 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { saveConfig, ensureRDKDir } from '../config.js';
+import { saveConfig, ensureRDKDir, configExists, loadConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
 import { input, password, confirm, select, pressEnter } from '../prompts.js';
 import {
@@ -11,7 +11,17 @@ import {
 } from '../theme.js';
 
 const RETRODECK_API_URL = process.env.RETRODECK_API_URL ?? 'https://api.retrodeck.ai';
-const CENTRAL_API_URL = process.env.RDK_CENTRAL_URL ?? process.env.RDK_API_URL ?? 'https://api.rdk.network';
+
+function resolveCentralApiUrl(): string {
+  if (process.env.RDK_CENTRAL_URL) return process.env.RDK_CENTRAL_URL;
+  if (process.env.RDK_API_URL) return process.env.RDK_API_URL;
+  try {
+    if (configExists()) return loadConfig().centralApiUrl;
+  } catch {}
+  return 'https://api.rdk.network';
+}
+
+const CENTRAL_API_URL = resolveCentralApiUrl();
 
 type VaultAdapter = 'obsidian' | 'filesystem' | 'logseq' | 'notion';
 
@@ -80,7 +90,10 @@ export async function runInit(nonInteractive?: {
           displayName: nonInteractive.email.split('@')[0],
         }),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const ct = res.headers.get('content-type') ?? '';
+        throw new Error(ct.includes('application/json') ? await res.text() : `HTTP ${res.status} from ${RETRODECK_API_URL} — set RETRODECK_API_URL env var`);
+      }
       const data = await res.json() as { userId: string; accessToken: string; refreshToken: string };
       spinner.succeed('  Account created');
       await runFullSetup({
@@ -216,8 +229,11 @@ export async function runInit(nonInteractive?: {
         body: JSON.stringify({ email, password: pw, displayName }),
       });
       if (!res.ok) {
-        const err = await res.json() as { message?: string };
-        throw new Error(err.message ?? `HTTP ${res.status}`);
+        const ct = res.headers.get('content-type') ?? '';
+        const body = ct.includes('application/json')
+          ? ((await res.json() as { message?: string }).message ?? `HTTP ${res.status}`)
+          : `HTTP ${res.status} — server returned non-JSON (is RETRODECK_API_URL set correctly? got: ${(await res.text()).slice(0, 80)})`;
+        throw new Error(body);
       }
       const data = await res.json() as { userId: string; accessToken: string; refreshToken: string };
       auth.userId = data.userId;
@@ -228,6 +244,10 @@ export async function runInit(nonInteractive?: {
       spinner.succeed(`  Account created — verification email sent to ${email}`);
     } catch (e) {
       spinner.fail(`  Registration failed: ${(e as Error).message}`);
+      if (RETRODECK_API_URL === 'https://api.retrodeck.ai') {
+        console.error(t.dim('  Hint: production API is not deployed. Run with:'));
+        console.error(t.dim('  RETRODECK_API_URL=http://localhost:3001 rdk init'));
+      }
       process.exit(1);
     }
   }
@@ -629,13 +649,15 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
         walletChain: opts.walletChain,
       }),
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     const data = await res.json() as { nodeId: string; apiKey: string };
     nodeId = data.nodeId;
     apiKey = data.apiKey;
     regSpinner.succeed('  RDK node registered');
-  } catch {
-    regSpinner.warn('  RDK Central unreachable — running in offline mode');
+  } catch (e) {
+    regSpinner.fail(`  Node registration failed: ${(e as Error).message}`);
+    regSpinner.warn(`  Tried: ${CENTRAL_API_URL} — set RDK_CENTRAL_URL to override`);
+    regSpinner.warn('  Running in offline mode (vault search only, no network sync)');
   }
 
   importantValue('RDK API key:', apiKey);
@@ -693,7 +715,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     domain: opts.domain,
     walletAddress: opts.walletAddress || undefined,
     walletChain: opts.walletChain,
-    mcpPort: 3000,
+    mcpPort: 4242,
     createdAt: new Date().toISOString(),
   });
   success('Config saved to ~/.rdk/config.json');
@@ -738,7 +760,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
         const mod = await import(adapterKey);
         const adapter = new mod.default();
         await adapter.connect({ vaultPath: opts.vaultPath, domain: opts.domain });
-        const result = await adapter.indexAll({ isPublic: false });
+        const result = await adapter.indexAll({ isPublic: true });
         indexSpinner.succeed(`  Indexed ${result.filesProcessed} files → ${result.chunksIndexed} chunks`);
       } catch (e) {
         indexSpinner.warn(`  Index skipped: ${(e as Error).message}`);

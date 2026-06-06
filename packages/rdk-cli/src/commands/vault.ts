@@ -26,7 +26,7 @@ export async function vaultConnect(adapter: string, vaultPath?: string): Promise
   }
 }
 
-export async function vaultIndex(opts: { force?: boolean; publicOnly?: boolean }): Promise<void> {
+export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }): Promise<void> {
   const ora = (await import('ora')).default;
   const config = loadConfig();
   const adapterKey = `@rdk/adapter-${config.vaultAdapter}`;
@@ -37,6 +37,7 @@ export async function vaultIndex(opts: { force?: boolean; publicOnly?: boolean }
   );
   if (!ready) return;
 
+  const isPublic = opts.isPublic ?? true;
   const spinner = ora(`Indexing vault (${config.vaultAdapter})...`).start();
   try {
     const mod = await import(adapterKey);
@@ -44,13 +45,13 @@ export async function vaultIndex(opts: { force?: boolean; publicOnly?: boolean }
     await adapter.connect({ vaultPath: config.vaultPath, domain: config.domain });
 
     const result = opts.force
-      ? await adapter.indexAll({ isPublic: opts.publicOnly ?? false })
+      ? await adapter.indexAll({ isPublic })
       : await adapter.indexChanged(
           new Date(Date.now() - 24 * 60 * 60 * 1000),
-          { isPublic: opts.publicOnly ?? false },
+          { isPublic },
         );
 
-    spinner.succeed(`${result.filesProcessed} files → ${result.chunksIndexed} chunks indexed`);
+    spinner.succeed(`${result.filesProcessed} files → ${result.chunksIndexed} chunks indexed (${isPublic ? 'public' : 'private'})`);
 
     if (result.errors.length > 0) {
       console.log(t.warn(`\n${result.errors.length} errors:`));
@@ -79,6 +80,101 @@ export async function vaultStatus(): Promise<void> {
   console.log(`  Private:    ${t.body(stats.privateChunks.toLocaleString())}`);
   console.log(`  Public:     ${t.body(stats.publicChunks.toLocaleString())}`);
   console.log(`  Unsynced:   ${t.body(stats.unsyncedChunks.toLocaleString())}`);
+}
+
+export async function vaultSync(): Promise<void> {
+  const ora = (await import('ora')).default;
+  const config = loadConfig();
+
+  if (!config.centralApiUrl || !config.apiKey) {
+    console.log(t.warn('Not connected to network. Run: rdk network:join'));
+    return;
+  }
+
+  const spinner = ora('Authenticating with RDK Central...').start();
+  try {
+    const authRes = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!authRes.ok) throw new Error(`Auth failed: HTTP ${authRes.status}`);
+    const { jwtToken } = await authRes.json() as { jwtToken: string };
+
+    spinner.text = 'Syncing public chunks to network...';
+
+    const { LocalStore } = await import('@rdk/core');
+    const store = new LocalStore();
+    const chunks = store.getUnsyncedPublicChunks(100);
+
+    if (!chunks.length) {
+      store.close();
+      spinner.succeed('Nothing to sync — all public chunks already on network');
+      return;
+    }
+
+    let synced = 0;
+    let failed = 0;
+
+    for (const chunk of chunks) {
+      const embedding = store.getEmbedding(chunk.id);
+      if (!embedding) continue;
+
+      try {
+        const res = await fetch(`${config.centralApiUrl}/api/v1/chunks/sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jwtToken}`,
+          },
+          body: JSON.stringify({
+            chunks: [{
+              chunkHash: chunk.id,
+              title: chunk.title,
+              summary: chunk.summary,
+              domain: chunk.domain ?? config.domain,
+              categories: chunk.categories,
+              embedding: Array.from(embedding),
+              chunkTokens: Math.ceil(chunk.content.length / 4),
+              isPublic: true,
+              freshnessAt: chunk.updatedAt.toISOString(),
+            }],
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+
+        if (res.ok) {
+          store.markSynced(chunk.id);
+          synced++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+    }
+
+    store.close();
+    const failNote = failed > 0 ? t.warn(` (${failed} failed)`) : '';
+    spinner.succeed(`Synced ${synced} chunk${synced !== 1 ? 's' : ''} to network${failNote}`);
+  } catch (err) {
+    spinner.fail((err as Error).message);
+  }
+}
+
+export async function vaultPublish(): Promise<void> {
+  const { LocalStore } = await import('@rdk/core');
+  const store = new LocalStore();
+  const changed = store.markAllPublic();
+  store.close();
+
+  if (changed === 0) {
+    console.log(t.dim('All chunks are already public.'));
+  } else {
+    console.log(t.body(`Marked ${changed} chunk${changed !== 1 ? 's' : ''} as public.`));
+  }
+
+  await vaultSync();
 }
 
 export async function vaultSearch(query: string, opts: { topK?: number }): Promise<void> {

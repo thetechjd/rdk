@@ -3,23 +3,44 @@ import {
   Controller, Post, Get, Patch, Body, Headers,
   UnauthorizedException, BadRequestException, UseGuards, Request,
 } from '@nestjs/common';
+import { IsString, IsEmail, IsOptional } from 'class-validator';
 import { NodesService } from './nodes.service.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 
 export class RegisterNodeDto {
+  @IsEmail()
   email!: string;
+
+  @IsString()
   displayName!: string;
+
+  @IsOptional() @IsString()
   contributionDomain?: string;
+
+  @IsOptional() @IsString()
   nodeRole?: string;
+
+  @IsOptional() @IsString()
   walletAddress?: string;
+
+  @IsOptional() @IsString()
   walletChain?: string;
 }
 
 export class UpdateNodeDto {
+  @IsOptional() @IsString()
   displayName?: string;
+
+  @IsOptional() @IsString()
   domain?: string;
+
+  @IsOptional() @IsString()
   mcpEndpoint?: string;
+
+  @IsOptional() @IsString()
   walletAddress?: string;
+
+  @IsOptional() @IsString()
   contributionDomain?: string;
 }
 

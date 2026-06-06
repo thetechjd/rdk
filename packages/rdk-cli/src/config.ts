@@ -30,7 +30,7 @@ export interface RDKConfig {
   createdAt: string;
 }
 
-const RDK_DIR = path.join(os.homedir(), '.rdk');
+const RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
 const CONFIG_PATH = path.join(RDK_DIR, 'config.json');
 // Machine-specific key: hash of hostname + os username (deters casual reads of config)
 const MACHINE_KEY = crypto.createHash('sha256').update(`${os.hostname()}${os.userInfo().username}`).digest();

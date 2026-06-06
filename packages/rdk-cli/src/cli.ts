@@ -45,12 +45,28 @@ vault
 
 vault
   .command('index')
-  .description('Index vault (incremental by default)')
+  .description('Index vault (incremental by default, public by default)')
   .option('--force', 'Re-index all files')
-  .option('--public-only')
+  .option('--private', 'Index as private (not shared on network)')
   .action(async (opts) => {
     const { vaultIndex } = await import('./commands/vault.js');
-    await vaultIndex({ force: opts.force, publicOnly: opts.publicOnly });
+    await vaultIndex({ force: opts.force, isPublic: !opts.private });
+  });
+
+vault
+  .command('sync')
+  .description('Sync unsynced public chunks to the network')
+  .action(async () => {
+    const { vaultSync } = await import('./commands/vault.js');
+    await vaultSync();
+  });
+
+vault
+  .command('publish')
+  .description('Mark all private chunks as public and sync to network')
+  .action(async () => {
+    const { vaultPublish } = await import('./commands/vault.js');
+    await vaultPublish();
   });
 
 vault
@@ -72,7 +88,9 @@ vault
 
 // Colon shorthands
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
-program.command('vault:index').option('--force').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force }); });
+program.command('vault:index').option('--force').option('--private').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !o.private }); });
+program.command('vault:sync').action(async () => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync(); });
+program.command('vault:publish').action(async () => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish(); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
 program.command('vault:search <query>').action(async (q) => { const { vaultSearch } = await import('./commands/vault.js'); await vaultSearch(q, {}); });
 
@@ -126,16 +144,16 @@ const mcp = program.command('mcp').description('MCP server commands');
 mcp
   .command('serve')
   .description('Start MCP server for Claude Desktop')
-  .option('-p, --port <port>', 'Port', '3000')
+  .option('-p, --port <port>', 'Port')
   .action(async (opts) => {
     const { mcpServe } = await import('./commands/mcp.js');
-    await mcpServe({ port: parseInt(opts.port, 10) });
+    await mcpServe({ port: opts.port ? parseInt(opts.port, 10) : undefined });
   });
 
 mcp.command('validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
 mcp.command('test').action(async () => { const { mcpTest } = await import('./commands/mcp.js'); await mcpTest(); });
 
-program.command('mcp:serve').option('-p, --port <port>', 'Port', '3000').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: parseInt(o.port, 10) }); });
+program.command('mcp:serve').option('-p, --port <port>', 'Port').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: o.port ? parseInt(o.port, 10) : undefined }); });
 program.command('mcp:validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
 
 // ── Tips ──────────────────────────────────────────────────────────────────────
@@ -185,7 +203,7 @@ program.command('account:apikey:rotate').description('Rotate API key').action(as
 program.command('dev').description('Dev mode with verbose logging').action(async () => {
   process.env.RDK_DEBUG = '1';
   const { mcpServe } = await import('./commands/mcp.js');
-  await mcpServe({ port: 3000 });
+  await mcpServe({ port: undefined });
 });
 
 program.command('test:connection').description('Test central API').action(async () => { const { networkConnect } = await import('./commands/network.js'); await networkConnect(); });

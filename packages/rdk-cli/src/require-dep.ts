@@ -127,6 +127,7 @@ export const DEPS: Record<string, DepSpec> = {
     version: '^1.12.1',
     reason: 'MCP server protocol — connects your node to Claude Desktop',
     size: '~2MB',
+    testImport: '@modelcontextprotocol/sdk/server',
   },
   'ethers': {
     package: 'ethers',
@@ -194,16 +195,16 @@ export async function requireDep(
   if (await isInstalled(testPkg)) return true;
 
   if (!opts.silent) {
-    console.log('');
-    console.log(chalk.yellow('  Additional component needed:'));
-    console.log(`  ${chalk.bold(spec.package)} ${chalk.dim(`(${spec.size})`)}`);
-    console.log(`  ${chalk.dim(spec.reason)}`);
-    console.log('');
+    console.error('');
+    console.error(chalk.yellow('  Additional component needed:'));
+    console.error(`  ${chalk.bold(spec.package)} ${chalk.dim(`(${spec.size})`)}`);
+    console.error(`  ${chalk.dim(spec.reason)}`);
+    console.error('');
   }
 
   const confirmed = await confirm(`  Install now?`);
   if (!confirmed) {
-    console.log(chalk.dim(`  Skipped. Install manually: npm install ${spec.package}`));
+    console.error(chalk.dim(`  Skipped. Install manually: npm install ${spec.package}`));
     return false;
   }
 
@@ -229,17 +230,17 @@ export async function requireDeps(
   if (missing.length === 0) return true;
 
   const totalSize = missing.map(d => d.size).join(' + ');
-  console.log('');
-  console.log(chalk.yellow(`  ${opts.label ?? 'Components needed'}:`));
+  console.error('');
+  console.error(chalk.yellow(`  ${opts.label ?? 'Components needed'}:`));
   for (const dep of missing) {
-    console.log(`  ${chalk.bold(dep.package)} ${chalk.dim(`(${dep.size})`)} — ${chalk.dim(dep.reason)}`);
+    console.error(`  ${chalk.bold(dep.package)} ${chalk.dim(`(${dep.size})`)} — ${chalk.dim(dep.reason)}`);
   }
-  console.log(`  ${chalk.dim(`Total: ${totalSize}`)}`);
-  console.log('');
+  console.error(`  ${chalk.dim(`Total: ${totalSize}`)}`);
+  console.error('');
 
   const confirmed = await confirm('  Install now?');
   if (!confirmed) {
-    console.log(chalk.dim('  Skipped. Run again and choose Y when ready.'));
+    console.error(chalk.dim('  Skipped. Run again and choose Y when ready.'));
     return false;
   }
 
@@ -293,7 +294,7 @@ async function installDep(spec: DepSpec): Promise<boolean> {
     return true;
   } catch (e) {
     spinner.fail(`Failed to install ${spec.package}: ${(e as Error).message}`);
-    console.log(chalk.dim(`  Manual install: npm install ${spec.package}`));
+    console.error(chalk.dim(`  Manual install: npm install ${spec.package}`));
     return false;
   }
 }

@@ -45,7 +45,7 @@ export class LocalStore {
   private dbPath: string;
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath ?? path.join(os.homedir(), '.rdk', 'index.db');
+    this.dbPath = dbPath ?? path.join(process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk'), 'index.db');
     this.ensureDir();
     this.db = new Database(this.dbPath);
     this.db.pragma('journal_mode = WAL');
@@ -164,6 +164,13 @@ export class LocalStore {
   markSynced(id: string): void {
     this.db.prepare('UPDATE chunks SET synced_at = ? WHERE id = ?')
       .run(new Date().toISOString(), id);
+  }
+
+  markAllPublic(): number {
+    const result = this.db.prepare(
+      'UPDATE chunks SET is_public = 1, synced_at = NULL WHERE is_public = 0',
+    ).run();
+    return result.changes;
   }
 
   getUnsyncedPublicChunks(limit = 100): StoredChunk[] {

@@ -116,11 +116,11 @@ export class RDKNode {
       title: opts.title,
       domain: opts.domain ?? this.config.domain,
       categories: opts.categories,
-      isPublic: opts.isPublic ?? false,
+      isPublic: opts.isPublic ?? true,
       sourceAdapter: 'manual',
     });
 
-    const syncNote = (opts.isPublic ?? false)
+    const syncNote = (opts.isPublic ?? true)
       ? ' Marked public — will sync to network.'
       : ' Stored privately (not shared with network).';
 
@@ -176,7 +176,7 @@ export class RDKNode {
     return this.handleIndex({
       content,
       title,
-      isPublic: opts.isPublic,
+      isPublic: opts.isPublic ?? true,
       domain: opts.domain,
     });
   }
@@ -291,9 +291,9 @@ export class RDKNode {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   private loadConfig(): NodeConfig {
-    const configPath = path.join(os.homedir(), '.rdk', 'config.json');
+    const rdkHome = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
+    const configPath = path.join(rdkHome, 'config.json');
     if (!fs.existsSync(configPath)) {
-      // Return a minimal offline config so the server starts
       return {
         nodeId: 'uninitialized',
         apiKey: '',
@@ -303,7 +303,7 @@ export class RDKNode {
         vaultPath: path.join(os.homedir(), 'Documents'),
         domain: 'general',
         walletChain: 'base',
-        mcpPort: 3000,
+        mcpPort: 4242,
       };
     }
     return JSON.parse(fs.readFileSync(configPath, 'utf-8')) as NodeConfig;

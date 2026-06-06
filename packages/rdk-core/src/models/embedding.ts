@@ -31,12 +31,15 @@ async function getPipeline() {
   }
 
   const { pipeline, env } = transformers;
-  env.cacheDir = path.join(os.homedir(), '.rdk', 'models');
+  env.cacheDir = path.join(os.homedir(), '.rdk', 'models'); // shared across instances — models are 23MB, no reason to duplicate
   // Disable the remote model check for faster cold start after first download
   env.allowLocalModels = true;
+  // Suppress download progress output — MCP protocol requires clean stdout
+  process.env.TRANSFORMERS_VERBOSITY = 'error';
 
   _pipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
     quantized: true,
+    progress_callback: () => {},
   });
 
   return _pipeline;
