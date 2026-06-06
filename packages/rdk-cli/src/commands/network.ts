@@ -4,11 +4,30 @@ import { requireDeps } from '../require-dep.js';
 import { input } from '../prompts.js';
 import { t, mark, divider } from '../theme.js';
 
-async function registerCentralNode(config: ReturnType<typeof loadConfig>): Promise<{ nodeId: string; apiKey: string; plan: string }> {
-  const email = await input('Email for this RDK node:');
-  const displayName = await input('Node display name:', `RDK ${config.domain} node`);
+function centralUrlOverride(): string | undefined {
+  return process.env.RDK_CENTRAL_URL || process.env.RDK_API_URL;
+}
 
-  const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/register`, {
+async function registerCentralNode(config: ReturnType<typeof loadConfig>): Promise<{ nodeId: string; apiKey: string; centralApiUrl: string; plan: string }> {
+  const centralApiUrl = await input({
+    message: 'RDK Central URL:',
+    default: centralUrlOverride() ?? config.centralApiUrl,
+    validate: value => {
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        return 'Enter a valid URL, for example http://localhost:3000';
+      }
+    },
+  });
+  const email = await input({ message: 'Email for this RDK node:' });
+  const displayName = await input({
+    message: 'Node display name:',
+    default: `RDK ${config.domain} node`,
+  });
+
+  const res = await fetch(`${centralApiUrl}/api/v1/nodes/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -23,7 +42,7 @@ async function registerCentralNode(config: ReturnType<typeof loadConfig>): Promi
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
   const data = await res.json() as { nodeId: string; apiKey: string };
-  return { ...data, plan: 'free' };
+  return { ...data, centralApiUrl, plan: 'free' };
 }
 
 function isLocalNode(config: ReturnType<typeof loadConfig>): boolean {
@@ -51,17 +70,19 @@ export async function networkJoin(): Promise<void> {
       updateConfig({
         nodeId: registered.nodeId,
         apiKey: registered.apiKey,
+        centralApiUrl: registered.centralApiUrl,
         plan: registered.plan,
       });
       spinner.succeed(`Registered — Node: ${registered.nodeId}, Plan: ${registered.plan}`);
     } else {
-      const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
+      const centralApiUrl = centralUrlOverride() ?? config.centralApiUrl;
+      const res = await fetch(`${centralApiUrl}/api/v1/nodes/auth`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${config.apiKey}` },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { nodeId: string; plan: string };
-      updateConfig({ nodeId: data.nodeId, plan: data.plan });
+      updateConfig({ nodeId: data.nodeId, centralApiUrl, plan: data.plan });
       spinner.succeed(`Connected — Node: ${data.nodeId}, Plan: ${data.plan}`);
     }
   } catch (e) {
@@ -82,7 +103,8 @@ export async function networkJoin(): Promise<void> {
 export async function networkConnect(): Promise<void> {
   const ora = (await import('ora')).default;
   const config = loadConfig();
-  const spinner = ora(`Connecting to ${config.centralApiUrl}...`).start();
+  const centralApiUrl = centralUrlOverride() ?? config.centralApiUrl;
+  const spinner = ora(`Connecting to ${centralApiUrl}...`).start();
 
   try {
     if (isLocalNode(config)) {
@@ -90,13 +112,13 @@ export async function networkConnect(): Promise<void> {
       return;
     }
 
-    const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
+    const res = await fetch(`${centralApiUrl}/api/v1/nodes/auth`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}` },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json() as { nodeId: string; plan: string; jwtToken: string };
-    updateConfig({ plan: data.plan });
+    updateConfig({ nodeId: data.nodeId, centralApiUrl, plan: data.plan });
     spinner.succeed(`Connected — Node ID: ${data.nodeId}, Plan: ${data.plan}`);
   } catch (e) {
     spinner.fail(`Authentication failed: ${(e as Error).message}`);
