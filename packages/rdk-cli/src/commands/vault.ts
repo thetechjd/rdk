@@ -91,6 +91,12 @@ export async function vaultSync(): Promise<void> {
     return;
   }
 
+  if (config.nodeId.startsWith('local-') || config.apiKey.startsWith('rdk_local_')) {
+    console.log(t.warn('This node is in offline mode and cannot sync to RDK Central.'));
+    console.log(t.dim('  Run: rdk network:join'));
+    return;
+  }
+
   const spinner = ora('Authenticating with RDK Central...').start();
   try {
     const authRes = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {

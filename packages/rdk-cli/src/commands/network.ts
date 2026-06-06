@@ -1,7 +1,34 @@
 // packages/rdk-cli/src/commands/network.ts
 import { loadConfig, updateConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
+import { input } from '../prompts.js';
 import { t, mark, divider } from '../theme.js';
+
+async function registerCentralNode(config: ReturnType<typeof loadConfig>): Promise<{ nodeId: string; apiKey: string; plan: string }> {
+  const email = await input('Email for this RDK node:');
+  const displayName = await input('Node display name:', `RDK ${config.domain} node`);
+
+  const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      displayName,
+      contributionDomain: config.domain,
+      walletAddress: config.walletAddress || undefined,
+      walletChain: config.walletChain,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+
+  const data = await res.json() as { nodeId: string; apiKey: string };
+  return { ...data, plan: 'free' };
+}
+
+function isLocalNode(config: ReturnType<typeof loadConfig>): boolean {
+  return config.nodeId.startsWith('local-') || config.apiKey.startsWith('rdk_local_');
+}
 
 export async function networkJoin(): Promise<void> {
   const ora = (await import('ora')).default;
@@ -17,14 +44,26 @@ export async function networkJoin(): Promise<void> {
   const spinner = ora('Connecting to RDK Central...').start();
 
   try {
-    const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}` },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json() as { nodeId: string; plan: string };
-    updateConfig({ plan: data.plan });
-    spinner.succeed(`Connected — Node: ${data.nodeId}, Plan: ${data.plan}`);
+    if (isLocalNode(config)) {
+      spinner.stop();
+      console.log(t.warn('This config is in offline mode and needs a real RDK Central node.'));
+      const registered = await registerCentralNode(config);
+      updateConfig({
+        nodeId: registered.nodeId,
+        apiKey: registered.apiKey,
+        plan: registered.plan,
+      });
+      spinner.succeed(`Registered — Node: ${registered.nodeId}, Plan: ${registered.plan}`);
+    } else {
+      const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.apiKey}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { nodeId: string; plan: string };
+      updateConfig({ nodeId: data.nodeId, plan: data.plan });
+      spinner.succeed(`Connected — Node: ${data.nodeId}, Plan: ${data.plan}`);
+    }
   } catch (e) {
     spinner.warn(`Could not reach central: ${(e as Error).message}`);
   }
@@ -46,6 +85,11 @@ export async function networkConnect(): Promise<void> {
   const spinner = ora(`Connecting to ${config.centralApiUrl}...`).start();
 
   try {
+    if (isLocalNode(config)) {
+      spinner.fail('This config is in offline mode. Run: rdk network:join');
+      return;
+    }
+
     const res = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}` },
