@@ -135,8 +135,10 @@ export default class ObsidianAdapter implements VaultAdapter {
 
   watch(callback: (changes: FileChange[]) => void): () => void {
     const vaultPath = this.resolveHome(this.config.vaultPath as string);
-    let watcher: import('chokidar').FSWatcher | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let watcher: any;
 
+    // @ts-ignore — chokidar is optional; resolved at runtime
     import('chokidar').then(chokidar => {
       watcher = chokidar.watch(`${vaultPath}/**/*.md`, {
         ignored: /\.obsidian/,
@@ -149,9 +151,9 @@ export default class ObsidianAdapter implements VaultAdapter {
       const flush = () => { if (pending.length) { callback([...pending]); pending.length = 0; } };
 
       watcher
-        .on('add', p => { pending.push({ path: p, type: 'added' }); clearTimeout(timer); timer = setTimeout(flush, 500); })
-        .on('change', p => { pending.push({ path: p, type: 'modified' }); clearTimeout(timer); timer = setTimeout(flush, 500); })
-        .on('unlink', p => { pending.push({ path: p, type: 'deleted' }); clearTimeout(timer); timer = setTimeout(flush, 500); });
+        .on('add', (p: string) => { pending.push({ path: p, type: 'added' }); clearTimeout(timer); timer = setTimeout(flush, 500); })
+        .on('change', (p: string) => { pending.push({ path: p, type: 'modified' }); clearTimeout(timer); timer = setTimeout(flush, 500); })
+        .on('unlink', (p: string) => { pending.push({ path: p, type: 'deleted' }); clearTimeout(timer); timer = setTimeout(flush, 500); });
     });
 
     return () => { watcher?.close(); };
@@ -205,6 +207,7 @@ export default class ObsidianAdapter implements VaultAdapter {
     const relPath = path.relative(vaultPath, filePath);
     const backlinks = this.linkGraph.get(relPath)?.size ?? 0;
     const qualityHint = Math.min(backlinks * 5, 25); // up to +25 quality from backlinks
+    const isExplicitlyPublic = data.rdk_public === true;
 
     return {
       content,
@@ -213,8 +216,17 @@ export default class ObsidianAdapter implements VaultAdapter {
       sourceAdapter: 'obsidian',
       domain: (this.config.domain as string) ?? options.domain ?? 'general',
       categories: categories.length > 0 ? categories : undefined,
-      isPublic: options.isPublic ?? false,
+      isPublic: isExplicitlyPublic || this.isInPublicFolder(relPath) || (options.isPublic ?? false),
     };
+  }
+
+  private isInPublicFolder(relPath: string): boolean {
+    const publicFolders = (this.config.publicFolders as string[]) ?? [];
+    if (publicFolders.length === 0) return false;
+    return publicFolders.some(folder => {
+      const normalized = folder.endsWith('/') ? folder : `${folder}/`;
+      return relPath.startsWith(normalized);
+    });
   }
 
   private resolveWikilinksInContent(content: string, vaultPath: string, sourceFile: string): string {

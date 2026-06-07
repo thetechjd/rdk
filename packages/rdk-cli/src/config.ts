@@ -28,6 +28,15 @@ export interface RDKConfig {
   walletChain: string;
   mcpPort: number;
   createdAt: string;
+
+  // Auto-sync settings
+  autoSync?: boolean;              // default: true
+  syncIntervalMinutes?: number;    // default: 5
+  publicFolders?: string[];        // relative paths within vault that are public
+
+  // Encryption
+  vaultKeyHex?: string;                      // own vault key (encrypted at rest)
+  sharedVaultKeys?: Record<string, string>;  // ownerNodeId → hex key (encrypted at rest)
 }
 
 const RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
@@ -51,11 +60,21 @@ export function loadConfig(): RDKConfig {
   raw.apiKey = decryptValue(raw.apiKey);
   if (raw.retrodeckAccessToken) raw.retrodeckAccessToken = decryptValue(raw.retrodeckAccessToken);
   if (raw.retrodeckRefreshToken) raw.retrodeckRefreshToken = decryptValue(raw.retrodeckRefreshToken);
+  if (raw.vaultKeyHex) raw.vaultKeyHex = decryptValue(raw.vaultKeyHex);
+  if (raw.sharedVaultKeys) {
+    for (const [nodeId, key] of Object.entries(raw.sharedVaultKeys)) {
+      raw.sharedVaultKeys[nodeId] = decryptValue(key);
+    }
+  }
   return raw;
 }
 
 export function saveConfig(config: RDKConfig): void {
   ensureRDKDir();
+  const encryptedSharedKeys: Record<string, string> = {};
+  for (const [nodeId, key] of Object.entries(config.sharedVaultKeys ?? {})) {
+    encryptedSharedKeys[nodeId] = encryptValue(key);
+  }
   const toSave: RDKConfig = {
     ...config,
     apiKey: encryptValue(config.apiKey),
@@ -65,6 +84,8 @@ export function saveConfig(config: RDKConfig): void {
     retrodeckRefreshToken: config.retrodeckRefreshToken
       ? encryptValue(config.retrodeckRefreshToken)
       : undefined,
+    vaultKeyHex: config.vaultKeyHex ? encryptValue(config.vaultKeyHex) : undefined,
+    sharedVaultKeys: Object.keys(encryptedSharedKeys).length > 0 ? encryptedSharedKeys : undefined,
   };
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(toSave, null, 2), { mode: 0o600 });
 }

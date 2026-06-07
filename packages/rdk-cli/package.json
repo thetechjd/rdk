@@ -1,7 +1,7 @@
 {
   "name": "@rdk/cli",
   "version": "1.0.0",
-  "description": "RDK CLI \u2014 install, configure, and manage your RDK node",
+  "description": "RDK CLI — install, configure, and manage your RDK node",
   "bin": {
     "rdk": "./dist/cli.js"
   },
@@ -10,7 +10,17 @@
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist",
     "prepare": "chmod +x dist/cli.js 2>/dev/null || true",
-    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js"
+    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "build:binary": "npm run build && npm run pkg:prep && npm run pkg:all",
+    "pkg:prep": "node scripts/pkg-prep.js",
+    "pkg:all": "mkdir -p dist/binaries && npm run pkg:mac-arm && npm run pkg:mac-x64 && npm run pkg:linux-x64 && npm run pkg:linux-arm",
+    "pkg:mac-arm": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-macos-arm64  --output dist/binaries/rdk-macos-arm64",
+    "pkg:mac-x64": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-macos-x64    --output dist/binaries/rdk-macos-x64",
+    "pkg:linux-x64": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-linux-x64    --output dist/binaries/rdk-linux-x64",
+    "pkg:linux-arm": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-linux-arm64  --output dist/binaries/rdk-linux-arm64",
+    "pkg:win-x64": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-win-x64       --output dist/binaries/rdk-win-x64.exe",
+    "release:compress": "cd dist/binaries && for f in rdk-*; do tar -czf $f.tar.gz $f && shasum -a 256 $f.tar.gz >> SHA256SUMS; done",
+    "release": "npm run build:binary && npm run release:compress"
   },
   "dependencies": {
     "@rdk/core": "workspace:*",
@@ -23,19 +33,25 @@
   },
   "optionalDependencies": {
     "@rdk/adapter-filesystem": "workspace:*",
-    "@rdk/adapter-obsidian": "workspace:*",
     "@rdk/adapter-logseq": "workspace:*",
     "@rdk/adapter-notion": "workspace:*",
+    "@rdk/adapter-obsidian": "workspace:*",
     "@rdk/mcp": "workspace:*",
     "@rdk/x402": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.21",
+    "@yao-pkg/pkg": "^6.20.0",
     "esbuild": "^0.28.0"
   },
   "files": [
     "dist/",
     "package.json",
     "README.md"
-  ]
+  ],
+  "pkg": {
+    "assets": [
+      "dist/node_modules/better-sqlite3/build/Release/*.node"
+    ]
+  }
 }

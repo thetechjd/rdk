@@ -5,7 +5,9 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { LocalStore, RDKRouter, RDKIndexer, LocalEmbeddingModel } from '@rdk/core';
+import crypto from 'crypto';
+import { LocalStore, RDKRouter, RDKIndexer, LocalEmbeddingModel, keyFromHex, type VaultKey } from '@rdk/core';
+import { SyncService } from './sync-service.js';
 
 export interface NodeConfig {
   nodeId: string;
@@ -18,6 +20,11 @@ export interface NodeConfig {
   walletAddress?: string;
   walletChain: string;
   mcpPort: number;
+  autoSync?: boolean;
+  syncIntervalMinutes?: number;
+  publicFolders?: string[];
+  vaultKeyHex?: string;
+  sharedVaultKeys?: Record<string, string>;
 }
 
 interface McpToolResult {
@@ -32,12 +39,39 @@ export class RDKNode {
   private router!: RDKRouter;
   private indexer!: RDKIndexer;
   private embeddingModel!: LocalEmbeddingModel;
+  private syncService!: SyncService;
   private vaultLastIndexed?: Date;
+  private vaultWatchUnsubscribe?: () => void;
+  private jwtToken?: string;
+  private jwtExpiry = 0;
+
+  private async getJwt(): Promise<string> {
+    if (this.jwtToken && Date.now() < this.jwtExpiry) return this.jwtToken;
+    const res = await fetch(`${this.config.centralApiUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.config.apiKey}` },
+    });
+    if (!res.ok) throw new Error(`Auth failed: HTTP ${res.status}`);
+    const { jwtToken } = await res.json() as { jwtToken: string };
+    this.jwtToken = jwtToken;
+    this.jwtExpiry = Date.now() + 55 * 60 * 1000;
+    return jwtToken;
+  }
 
   async init(): Promise<void> {
     this.config = this.loadConfig();
     this.store = new LocalStore();
     this.embeddingModel = new LocalEmbeddingModel();
+
+    // Load encryption keys
+    const vaultKey: VaultKey | undefined = this.config.vaultKeyHex
+      ? keyFromHex(this.config.vaultKeyHex)
+      : undefined;
+
+    const sharedVaultKeys: Record<string, VaultKey> = {};
+    for (const [nodeId, hexKey] of Object.entries(this.config.sharedVaultKeys ?? {})) {
+      sharedVaultKeys[nodeId] = keyFromHex(hexKey);
+    }
 
     this.router = new RDKRouter({
       localStore: this.store,
@@ -46,8 +80,10 @@ export class RDKNode {
       centralApiKey: this.config.apiKey,
       domain: this.config.domain,
       topK: 5,
-      minSimilarity: 0.72,
+      minSimilarity: 0.50,
       fallbackToLLM: true,
+      vaultKey,
+      sharedVaultKeys,
     });
 
     this.indexer = new RDKIndexer({
@@ -57,7 +93,122 @@ export class RDKNode {
       syncToNetwork: true,
       centralApiUrl: this.config.centralApiUrl,
       centralApiKey: this.config.apiKey,
+      vaultKey,
     });
+
+    this.syncService = new SyncService(
+      {
+        enabled: this.config.autoSync !== false,
+        intervalMinutes: this.config.syncIntervalMinutes ?? 5,
+        centralApiUrl: this.config.centralApiUrl,
+        centralApiKey: this.config.apiKey,
+      },
+      this.store,
+    );
+    this.syncService.start();
+
+    // Start vault file watcher — fires after MCP server is already accepting connections
+    this.startVaultWatch().catch(e => console.error('[watch] init error:', (e as Error).message));
+  }
+
+  // ── Vault file watcher ───────────────────────────────────────────────────
+
+  private resolveHome(p: string): string {
+    if (p?.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+    return p ?? '';
+  }
+
+  private async startVaultWatch(): Promise<void> {
+    if (!this.config.vaultPath) return;
+
+    const vaultPath = this.resolveHome(this.config.vaultPath);
+    if (!fs.existsSync(vaultPath)) {
+      console.error(`[watch] vault path not found: ${vaultPath}`);
+      return;
+    }
+
+    // Start lookback 24h ago — catches files created/modified before this server restart
+    let lastScan = Date.now() - 24 * 60 * 60 * 1000;
+
+    const scan = async () => {
+      const since = new Date(lastScan - 5_000); // 5s overlap catches edge cases
+      lastScan = Date.now();
+      const allFiles = this.listMarkdownFiles(vaultPath);
+      console.error(`[watch] scanning ${allFiles.length} file(s) since ${since.toLocaleTimeString()}`);
+      const changed: string[] = [];
+      for (const fullPath of allFiles) {
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.mtime > since) changed.push(path.relative(vaultPath, fullPath));
+        } catch { /* skip unreadable */ }
+      }
+      if (changed.length > 0) {
+        console.error(`[watch] ${changed.length} file(s) changed: ${changed.map(f => path.basename(f)).join(', ')}`);
+        await this.reindexFiles(vaultPath, changed);
+      }
+    };
+
+    // Poll every 20 seconds — reliable on all filesystems (Obsidian atomic writes can miss fs.watch)
+    const pollInterval = setInterval(() => {
+      scan().catch(e => console.error('[watch] scan error:', (e as Error).message));
+    }, 20_000);
+
+    // Also wire up fs.watch for faster detection when it does fire
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let fsWatcher: ReturnType<typeof fs.watch> | null = null;
+    try {
+      fsWatcher = fs.watch(vaultPath, { recursive: true }, (_, filename) => {
+        if (!filename?.match(/\.(md|txt|mdx)$/)) return;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          scan().catch(e => console.error('[watch] scan error:', (e as Error).message));
+        }, 500);
+      });
+    } catch {
+      // fs.watch unsupported on this filesystem — polling-only mode is fine
+    }
+
+    this.vaultWatchUnsubscribe = () => {
+      clearInterval(pollInterval);
+      fsWatcher?.close();
+    };
+    console.error(`[watch] watching vault at ${vaultPath}`);
+  }
+
+  private async reindexFiles(vaultPath: string, relPaths: string[]): Promise<void> {
+    let chunksIndexed = 0;
+    const errors: string[] = [];
+
+    for (const relPath of relPaths) {
+      const fullPath = path.join(vaultPath, relPath);
+      try {
+        if (!fs.existsSync(fullPath)) continue;
+        const raw = fs.readFileSync(fullPath, 'utf-8');
+        const { title: fmTitle, content } = this.parseFrontmatter(raw);
+        const title = fmTitle || path.basename(fullPath, path.extname(fullPath));
+        const isPublic = this.isPublicFile(relPath);
+
+        const result = await this.indexer.indexDocument({
+          content: content || raw,
+          title,
+          domain: this.config.domain,
+          isPublic,
+          sourceAdapter: this.config.vaultAdapter,
+        });
+        chunksIndexed += result.chunksIndexed;
+        if (result.errors.length > 0) errors.push(...result.errors);
+      } catch (e) {
+        errors.push(`${path.basename(relPath)}: ${(e as Error).message}`);
+      }
+    }
+
+    console.error(`[watch] indexed ${relPaths.length} file(s) → ${chunksIndexed} chunk(s)`);
+    if (errors.length > 0) {
+      console.error(`[watch] errors: ${errors.slice(0, 3).join('; ')}`);
+    }
+    if (chunksIndexed > 0) {
+      this.syncService.syncOnce().catch(e => console.error('[watch] sync error:', (e as Error).message));
+    }
   }
 
   // ── Tool Handlers ────────────────────────────────────────────────────────
@@ -186,30 +337,54 @@ export class RDKNode {
       return this.errorResult('No vault configured. Run rdk init to set up a vault.');
     }
 
+    const vaultPath = this.resolveHome(this.config.vaultPath);
+    if (!fs.existsSync(vaultPath)) {
+      return this.errorResult(`Vault path not found: ${vaultPath}`);
+    }
+
     try {
-      const adapterModule = await this.loadVaultAdapter();
-      if (!adapterModule) {
-        return this.errorResult(`Vault adapter "${this.config.vaultAdapter}" not found. Install @rdk/adapter-${this.config.vaultAdapter}`);
-      }
+      const since = (!opts.forceReindex && this.vaultLastIndexed) ? this.vaultLastIndexed : undefined;
+      const allFiles = this.listMarkdownFiles(vaultPath);
 
-      const adapter = new adapterModule.default();
-      await adapter.connect({
-        rootPath: this.config.vaultPath,
-        domain: this.config.domain,
-      });
+      let filesProcessed = 0;
+      let chunksIndexed = 0;
+      const errors: string[] = [];
 
-      let result;
-      if (opts.forceReindex || !this.vaultLastIndexed) {
-        result = await adapter.indexAll({ isPublic: opts.publicOnly ?? false });
-      } else {
-        result = await adapter.indexChanged(this.vaultLastIndexed, { isPublic: opts.publicOnly ?? false });
+      for (const fullPath of allFiles) {
+        try {
+          const relPath = path.relative(vaultPath, fullPath);
+          const isPublic = this.isPublicFile(relPath);
+          if (opts.publicOnly && !isPublic) continue;
+
+          if (since) {
+            const stat = fs.statSync(fullPath);
+            if (stat.mtime <= since) continue;
+          }
+
+          const raw = fs.readFileSync(fullPath, 'utf-8');
+          const { title: fmTitle, content } = this.parseFrontmatter(raw);
+          const title = fmTitle || path.basename(fullPath, path.extname(fullPath));
+
+          const result = await this.indexer.indexDocument({
+            content: content || raw,
+            title,
+            domain: this.config.domain,
+            isPublic,
+            sourceAdapter: this.config.vaultAdapter,
+          });
+          filesProcessed++;
+          chunksIndexed += result.chunksIndexed;
+          if (result.errors.length > 0) errors.push(...result.errors);
+        } catch (e) {
+          errors.push(`${path.basename(fullPath)}: ${(e as Error).message}`);
+        }
       }
 
       this.vaultLastIndexed = new Date();
 
-      const errNote = result.errors.length > 0 ? `\n${result.errors.length} error(s): ${result.errors.slice(0, 3).join('; ')}` : '';
+      const errNote = errors.length > 0 ? `\n${errors.length} error(s): ${errors.slice(0, 3).join('; ')}` : '';
       return this.textResult(
-        `Vault indexed: ${result.filesProcessed} files → ${result.chunksIndexed} chunks.${errNote}`,
+        `Vault indexed: ${filesProcessed} files → ${chunksIndexed} chunks.${errNote}`,
       );
     } catch (e) {
       return this.errorResult(`Vault index failed: ${(e as Error).message}`);
@@ -223,6 +398,8 @@ export class RDKNode {
     const configExists = fs.existsSync(configPath);
 
     const networkStatus = await this.checkNetworkConnectivity();
+
+    const sync = this.syncService.getStatus();
 
     return this.textResult([
       `RDK Node Status`,
@@ -239,6 +416,10 @@ export class RDKNode {
       `  Public:       ${stats.publicChunks.toLocaleString()}`,
       `  Unsynced:     ${stats.unsyncedChunks.toLocaleString()}`,
       ``,
+      `Auto-sync:      ${sync.enabled ? 'enabled' : 'disabled'}`,
+      `Sync interval:  ${sync.intervalMinutes} minutes`,
+      `Sync loop:      ${sync.running ? 'running' : 'stopped'}`,
+      ``,
       `Tips pending:   $${pendingTips.toFixed(4)} USDC`,
       `Network:        ${networkStatus}`,
       `Config:         ${configExists ? configPath : 'not found — run rdk init'}`,
@@ -251,8 +432,9 @@ export class RDKNode {
     }
 
     try {
+      const jwt = await this.getJwt();
       const response = await fetch(`${this.config.centralApiUrl}/api/v1/tips/earnings`, {
-        headers: { Authorization: `Bearer ${this.config.apiKey}` },
+        headers: { Authorization: `Bearer ${jwt}` },
       });
 
       if (!response.ok) {
@@ -297,7 +479,7 @@ export class RDKNode {
       return {
         nodeId: 'uninitialized',
         apiKey: '',
-        centralApiUrl: 'https://api.rdk.network',
+        centralApiUrl: 'https://rdk.retrodeck.ai',
         plan: 'free',
         vaultAdapter: 'filesystem',
         vaultPath: path.join(os.homedir(), 'Documents'),
@@ -306,25 +488,61 @@ export class RDKNode {
         mcpPort: 4242,
       };
     }
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8')) as NodeConfig;
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as NodeConfig;
+    raw.apiKey = this.decryptValue(raw.apiKey);
+    if (raw.vaultKeyHex) raw.vaultKeyHex = this.decryptValue(raw.vaultKeyHex);
+    if (raw.sharedVaultKeys) {
+      for (const [nodeId, key] of Object.entries(raw.sharedVaultKeys)) {
+        raw.sharedVaultKeys[nodeId] = this.decryptValue(key);
+      }
+    }
+    return raw;
   }
 
-  private async loadVaultAdapter() {
-    const adapterMap: Record<string, string> = {
-      filesystem: '@rdk/adapter-filesystem',
-      obsidian:   '@rdk/adapter-obsidian',
-      logseq:     '@rdk/adapter-logseq',
-      notion:     '@rdk/adapter-notion',
-    };
+  private decryptValue(stored: string): string {
+    if (!stored?.startsWith('enc:')) return stored;
+    const machineKey = crypto.createHash('sha256')
+      .update(`${os.hostname()}${os.userInfo().username}`)
+      .digest();
+    const buf = Buffer.from(stored.slice(4), 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', machineKey, buf.subarray(0, 12));
+    decipher.setAuthTag(buf.subarray(12, 28));
+    return decipher.update(buf.subarray(28)).toString('utf-8') + decipher.final('utf-8');
+  }
 
-    const pkgName = adapterMap[this.config.vaultAdapter];
-    if (!pkgName) return null;
+  private parseFrontmatter(raw: string): { title: string; content: string } {
+    const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)/.exec(raw);
+    if (!match) return { title: '', content: raw };
+    const fm = match[1];
+    const content = match[2];
+    const titleMatch = /^title:\s*(.+)$/m.exec(fm);
+    const title = titleMatch ? titleMatch[1].trim().replace(/^['"]|['"]$/g, '') : '';
+    return { title, content };
+  }
 
+  private listMarkdownFiles(dir: string): string[] {
+    const results: string[] = [];
     try {
-      return await import(pkgName);
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          results.push(...this.listMarkdownFiles(fullPath));
+        } else if (/\.(md|txt|mdx)$/.test(entry.name)) {
+          results.push(fullPath);
+        }
+      }
     } catch {
-      return null;
+      // skip unreadable dirs
     }
+    return results;
+  }
+
+  private isPublicFile(relPath: string): boolean {
+    const publicFolders = this.config.publicFolders ?? [];
+    if (publicFolders.length === 0) return false;
+    return publicFolders.some(f => relPath.startsWith(f + '/') || relPath.startsWith(f + path.sep));
   }
 
   private async checkNetworkConnectivity(): Promise<string> {

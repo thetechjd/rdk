@@ -138,16 +138,14 @@ export class FilesystemAdapter implements VaultAdapter {
   }
 
   watch(callback: (changes: FileChange[]) => void): () => void {
-    // Use chokidar for filesystem watching
-    let chokidar: typeof import('chokidar');
-    let watcher: import('chokidar').FSWatcher;
-
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let watcher: any;
     const rootPath = this.resolveHome(this.config.rootPath as string);
 
+    // @ts-ignore — chokidar is optional; resolved at runtime
     import('chokidar').then((mod) => {
-      chokidar = mod;
-      watcher = chokidar.watch(rootPath, {
-        ignored: /(^|[/\\])\../, // hidden files
+      watcher = mod.watch(rootPath, {
+        ignored: /(^|[/\\])\../,
         persistent: true,
         ignoreInitial: true,
       });
@@ -168,9 +166,9 @@ export class FilesystemAdapter implements VaultAdapter {
       };
 
       watcher
-        .on('add', p => { pendingChanges.push({ path: p, type: 'added' }); scheduleFlush(); })
-        .on('change', p => { pendingChanges.push({ path: p, type: 'modified' }); scheduleFlush(); })
-        .on('unlink', p => { pendingChanges.push({ path: p, type: 'deleted' }); scheduleFlush(); });
+        .on('add', (p: string) => { pendingChanges.push({ path: p, type: 'added' }); scheduleFlush(); })
+        .on('change', (p: string) => { pendingChanges.push({ path: p, type: 'modified' }); scheduleFlush(); })
+        .on('unlink', (p: string) => { pendingChanges.push({ path: p, type: 'deleted' }); scheduleFlush(); });
     });
 
     const unsubscribe = () => { watcher?.close(); };
@@ -196,6 +194,7 @@ export class FilesystemAdapter implements VaultAdapter {
     let content = raw;
     let title = path.basename(filePath, ext);
     let frontmatterCategories: string[] | undefined;
+    let isExplicitlyPublic = false;
 
     // Parse frontmatter for .md/.mdx
     if (ext === '.md' || ext === '.mdx') {
@@ -208,10 +207,10 @@ export class FilesystemAdapter implements VaultAdapter {
             ? (parsed.data.tags as string[])
             : [String(parsed.data.tags)];
         }
+        if (parsed.data.rdk_public === true) isExplicitlyPublic = true;
       } catch {}
     }
 
-    // Directory path → category hints
     const relPath = path.relative(rootPath, filePath);
     const dirParts = path.dirname(relPath).split(path.sep).filter(p => p !== '.');
 
@@ -222,8 +221,17 @@ export class FilesystemAdapter implements VaultAdapter {
       sourceAdapter: 'filesystem',
       domain: (this.config.domain as string) ?? options.domain ?? 'general',
       categories: frontmatterCategories ?? dirParts,
-      isPublic: options.isPublic ?? false,
+      isPublic: isExplicitlyPublic || this.isInPublicFolder(relPath) || (options.isPublic ?? false),
     };
+  }
+
+  private isInPublicFolder(relPath: string): boolean {
+    const publicFolders = (this.config.publicFolders as string[]) ?? [];
+    if (publicFolders.length === 0) return false;
+    return publicFolders.some(folder => {
+      const normalized = folder.endsWith('/') ? folder : `${folder}/`;
+      return relPath.startsWith(normalized);
+    });
   }
 
   private async getFiles(rootPath: string, extensions: string[]): Promise<string[]> {

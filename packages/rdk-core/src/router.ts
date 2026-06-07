@@ -2,6 +2,7 @@
 // Central routing logic. Checks private vault → public network → falls back to LLM.
 // This is the piece that collapses token spend 80-90%.
 
+import { decrypt, type VaultKey } from './crypto.js';
 import { type EmbeddingModel } from './models/embedding.js';
 import { LocalStore, type SearchResult } from './store/local-store.js';
 import { estimateTokens } from './cleaner.js';
@@ -16,6 +17,8 @@ export interface RouterConfig {
   maxPrivateChunks?: number;
   fallbackToLLM?: boolean;
   domain?: string;
+  vaultKey?: VaultKey;
+  sharedVaultKeys?: Record<string, VaultKey>;
 }
 
 export interface NetworkChunk {
@@ -24,7 +27,8 @@ export interface NetworkChunk {
   providerNodeMcpEndpoint?: string;
   title: string;
   summary?: string;
-  content?: string; // fetched from provider node
+  content?: string;
+  isEncrypted?: boolean;
   score: number;
   tipAmountUsdc: number;
   domain?: string;
@@ -60,7 +64,15 @@ export class RDKRouter {
     const embedding = await cfg.embeddingModel.embed(userQuery);
 
     // Step 2: Private vault
-    const privateResults = cfg.localStore.search(embedding, topK, true);
+    const rawPrivateResults = cfg.localStore.search(embedding, topK, true);
+    const privateResults = rawPrivateResults.map(chunk => {
+      if (!chunk.isEncrypted || !cfg.vaultKey) return chunk;
+      try {
+        return { ...chunk, content: decrypt(chunk.content, cfg.vaultKey) };
+      } catch {
+        return { ...chunk, content: '[encrypted — cannot decrypt]' };
+      }
+    });
     const bestPrivate = privateResults[0];
 
     if (bestPrivate && bestPrivate.score >= minSim) {
@@ -80,7 +92,17 @@ export class RDKRouter {
     // Step 3: Network query
     if (cfg.centralApiUrl && cfg.centralApiKey) {
       try {
-        const networkResults = await this.queryNetwork(embedding, cfg);
+        const rawNetworkResults = await this.queryNetwork(embedding, cfg);
+        const networkResults = rawNetworkResults.map(chunk => {
+          if (!chunk.isEncrypted) return chunk;
+          const key = cfg.sharedVaultKeys?.[chunk.nodeId];
+          if (!key) return { ...chunk, content: '[private — no decryption key]' };
+          try {
+            return { ...chunk, content: decrypt(chunk.content ?? '', key) };
+          } catch {
+            return { ...chunk, content: '[private — decryption failed]' };
+          }
+        });
         const bestNetwork = networkResults[0];
 
         if (bestNetwork && bestNetwork.score >= minSim) {
@@ -129,11 +151,28 @@ export class RDKRouter {
     };
   }
 
+  private jwtToken?: string;
+  private jwtExpiry = 0;
+
+  private async getJwt(cfg: RouterConfig): Promise<string> {
+    if (this.jwtToken && Date.now() < this.jwtExpiry) return this.jwtToken;
+    const authRes = await fetch(`${cfg.centralApiUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cfg.centralApiKey}` },
+    });
+    if (!authRes.ok) throw new Error(`Auth failed: ${authRes.status}`);
+    const { jwtToken } = await authRes.json() as { jwtToken: string };
+    this.jwtToken = jwtToken;
+    this.jwtExpiry = Date.now() + 55 * 60 * 1000; // refresh 5 min before 1h expiry
+    return jwtToken;
+  }
+
   private async queryNetwork(embedding: Float32Array, cfg: RouterConfig): Promise<NetworkChunk[]> {
+    const jwt = await this.getJwt(cfg);
     const response = await fetch(`${cfg.centralApiUrl}/api/v1/query`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${cfg.centralApiKey}`,
+        Authorization: `Bearer ${jwt}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

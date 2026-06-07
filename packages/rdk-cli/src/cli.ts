@@ -7,6 +7,20 @@
 //   Tier 3  rdk network:join    → @xenova/transformers + MCP SDK (~50MB)
 //   Tier 4  rdk tips:enable     → ethers for on-chain settlement (~15MB)
 
+// Shim: when running as a pkg binary, pkg automatically extracts .node assets
+// when require()'d via an absolute path. We set the env var to the virtual
+// snapshot path; better-sqlite3's nativeBinding option calls require() on it,
+// and pkg handles extraction to the real filesystem transparently.
+import path from 'path';
+{
+  const proc = process as typeof process & { pkg?: object };
+  if (proc.pkg) {
+    process.env.BETTER_SQLITE3_NATIVE_BINDING = path.join(
+      __dirname, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node',
+    );
+  }
+}
+
 import { Command } from 'commander';
 
 const program = new Command();
@@ -86,6 +100,22 @@ vault
     await vaultSearch(query, { topK: parseInt(opts.topK, 10) });
   });
 
+vault
+  .command('set-public [folders...]')
+  .description('Designate vault folders as public (auto-synced to network)')
+  .action(async (folders: string[]) => {
+    const { vaultSetPublic } = await import('./commands/vault.js');
+    await vaultSetPublic(folders ?? []);
+  });
+
+vault
+  .command('list-public')
+  .description('Show which vault folders are designated as public')
+  .action(async () => {
+    const { vaultListPublic } = await import('./commands/vault.js');
+    await vaultListPublic();
+  });
+
 // Colon shorthands
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
 program.command('vault:index').option('--force').option('--private').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !o.private }); });
@@ -93,6 +123,8 @@ program.command('vault:sync').action(async () => { const { vaultSync } = await i
 program.command('vault:publish').action(async () => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish(); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
 program.command('vault:search <query>').action(async (q) => { const { vaultSearch } = await import('./commands/vault.js'); await vaultSearch(q, {}); });
+program.command('vault:set-public [folders...]').action(async (f: string[]) => { const { vaultSetPublic } = await import('./commands/vault.js'); await vaultSetPublic(f ?? []); });
+program.command('vault:list-public').action(async () => { const { vaultListPublic } = await import('./commands/vault.js'); await vaultListPublic(); });
 
 // ── Network ──────────────────────────────────────────────────────────────────
 
@@ -136,6 +168,10 @@ program.command('network:join').action(async () => { const { networkJoin } = awa
 program.command('network:connect').action(async () => { const { networkConnect } = await import('./commands/network.js'); await networkConnect(); });
 program.command('network:status').action(async () => { const { networkStatus } = await import('./commands/network.js'); await networkStatus(); });
 program.command('network:query <query>').action(async (q) => { const { networkQuery } = await import('./commands/network.js'); await networkQuery(q, {}); });
+program.command('network:sync').description('Sync public chunks to network now').action(async () => { const { networkSync } = await import('./commands/network.js'); await networkSync(); });
+
+// Top-level shorthand
+program.command('sync').description('Sync public chunks to network now').action(async () => { const { networkSync } = await import('./commands/network.js'); await networkSync(); });
 
 // ── MCP ───────────────────────────────────────────────────────────────────────
 
@@ -197,6 +233,14 @@ program.command('account').description('Show plan, node ID, stats').action(async
 program.command('account:login').description('Log in to RetroDecks account').action(async () => { const { accountLogin } = await import('./commands/account.js'); await accountLogin(); });
 program.command('account:upgrade').description('Open billing portal').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
 program.command('account:apikey:rotate').description('Rotate API key').action(async () => { const { rotateApiKey } = await import('./commands/account.js'); await rotateApiKey(); });
+
+// ── Team ──────────────────────────────────────────────────────────────────────
+
+program.command('team:invite <email>').description('Invite a team member to access your private vault').action(async (email: string) => { const { teamInvite } = await import('./commands/team.js'); await teamInvite(email); });
+program.command('team:accept <inviteId>').description('Accept a team vault access invite').action(async (id: string) => { const { teamAccept } = await import('./commands/team.js'); await teamAccept(id); });
+program.command('team:list').description('List team members with vault access').action(async () => { const { teamList } = await import('./commands/team.js'); await teamList(); });
+program.command('team:revoke <email>').description('Revoke team member vault access').action(async (email: string) => { const { teamRevoke } = await import('./commands/team.js'); await teamRevoke(email); });
+program.command('vault:rotate-key').description('Rotate vault encryption key (invalidates all team access)').action(async () => { const { rotateVaultKey } = await import('./commands/team.js'); await rotateVaultKey(); });
 
 // ── Dev / Testing ─────────────────────────────────────────────────────────────
 

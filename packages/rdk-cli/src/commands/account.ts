@@ -32,10 +32,10 @@ export async function showAccount(): Promise<void> {
         headers: { Authorization: `Bearer ${config.retrodeckAccessToken}` },
       });
       if (res.ok) {
-        const data = await res.json() as { balance: number; creditLimit: number };
-        console.log(`Balance:      ${t.green(`$${Number(data.balance).toFixed(4)} USDC`)}`);
-        if (data.creditLimit > 0) {
-          console.log(`Credit limit: ${t.body(`$${Number(data.creditLimit).toFixed(2)}`)}`);
+        const data = await res.json() as { balanceUsdc: number; creditLimitUsd: number };
+        console.log(`Balance:      ${t.green(`$${Number(data.balanceUsdc).toFixed(4)} USDC`)}`);
+        if (data.creditLimitUsd > 0) {
+          console.log(`Credit limit: ${t.body(`$${Number(data.creditLimitUsd).toFixed(2)}`)}`);
         }
       }
     } catch {}

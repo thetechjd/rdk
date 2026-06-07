@@ -18,7 +18,7 @@ function resolveCentralApiUrl(): string {
   try {
     if (configExists()) return loadConfig().centralApiUrl;
   } catch {}
-  return 'https://api.rdk.network';
+  return 'https://rdk.retrodeck.ai';
 }
 
 const CENTRAL_API_URL = resolveCentralApiUrl();
@@ -626,11 +626,15 @@ export async function runInit(nonInteractive?: {
 
 async function runFullSetup(opts: SetupOptions): Promise<void> {
   const ora = (await import('ora')).default;
-
   console.log('');
   console.log(`  ${divider(46)}`);
   console.log('');
   ensureRDKDir();
+
+  // Generate vault encryption key for private chunk storage
+  const { generateVaultKey, keyToHex } = await import('@rdk/core');
+  const vaultKey = generateVaultKey();
+  const vaultKeyHex = keyToHex(vaultKey);
 
   let nodeId = `local-${Date.now()}`;
   let apiKey  = `rdk_local_${Math.random().toString(36).slice(2)}`;
@@ -717,7 +721,18 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     walletChain: opts.walletChain,
     mcpPort: 4242,
     createdAt: new Date().toISOString(),
+    vaultKeyHex,
   });
+  console.log('');
+  console.log(`  ${mark.ok()} ${t.green('Vault encryption key generated')}`);
+  console.log(t.dim('  Your private vault content is encrypted on your machine.'));
+  console.log(t.dim('  RDK Central cannot read your private knowledge.'));
+  console.log('');
+  console.log(t.warn('  ⚠ Backup your vault key'));
+  console.log(t.dim('  If you lose ~/.rdk/config.json your private'));
+  console.log(t.dim('  vault content cannot be recovered.'));
+  console.log(t.dim(`  Key fingerprint: ${vaultKeyHex.slice(0, 16)}...`));
+  console.log('');
   success('Config saved to ~/.rdk/config.json');
 
   if (opts.connectVault && opts.createVault && opts.vaultPath && opts.vaultAdapter !== 'notion') {

@@ -4,6 +4,7 @@
 import crypto from 'crypto';
 import { cleanText, estimateTokens } from './cleaner.js';
 import { chunkText, type Chunk } from './chunker.js';
+import { encrypt, type VaultKey } from './crypto.js';
 import { type EmbeddingModel } from './models/embedding.js';
 import { LocalStore } from './store/local-store.js';
 import { categorizeChunk, scoreInformationDensity } from './taxonomy.js';
@@ -26,6 +27,7 @@ export interface IndexerConfig {
   syncToNetwork?: boolean;
   centralApiUrl?: string;
   centralApiKey?: string;
+  vaultKey?: VaultKey;
 }
 
 export type { IndexResult };
@@ -88,15 +90,22 @@ export class RDKIndexer {
             }
           }
 
-          // 7. Store locally
+          // 7. Store locally — encrypt content if private and vault key is configured
+          const isPublic = doc.isPublic ?? false;
+          const isEncrypted = !isPublic && !!this.config.vaultKey;
+          const contentToStore = isEncrypted
+            ? encrypt(chunk.text, this.config.vaultKey!)
+            : chunk.text;
+
           this.config.localStore.saveChunk({
             id: chunkId,
             title: this.buildTitle(doc.title, chunk),
-            content: chunk.text,
+            content: contentToStore,
             summary,
             domain,
             categories,
-            isPublic: doc.isPublic ?? false,
+            isPublic,
+            isEncrypted,
             qualityScore: density * 100,
             sourcePath: doc.sourcePath,
             sourceAdapter: doc.sourceAdapter,
@@ -108,9 +117,9 @@ export class RDKIndexer {
         }
       }
 
-      // 8. Sync public chunks to central if configured
-      if ((doc.isPublic ?? false) && this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
-        await this.syncTocentral();
+      // 8. Sync to central if configured (public chunks always, private encrypted chunks for team access)
+      if (this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
+        await this.syncTocentral(doc.isPublic ?? false);
       }
     } catch (e) {
       errors.push(`Fatal: ${(e as Error).message}`);
@@ -143,8 +152,11 @@ export class RDKIndexer {
     return docTitle;
   }
 
-  private async syncTocentral(): Promise<void> {
-    const unsynced = this.config.localStore.getUnsyncedPublicChunks(100);
+  private async syncTocentral(isPublicDoc: boolean): Promise<void> {
+    const unsynced = isPublicDoc
+      ? this.config.localStore.getUnsyncedPublicChunks(100)
+      : this.config.localStore.getUnsyncedEncryptedChunks(100);
+
     if (unsynced.length === 0) return;
 
     const payload = unsynced.map(chunk => {
@@ -157,6 +169,8 @@ export class RDKIndexer {
         categories: chunk.categories,
         embedding: embedding ? Array.from(embedding) : [],
         isPublic: chunk.isPublic,
+        isEncrypted: chunk.isEncrypted,
+        content: chunk.isEncrypted ? chunk.content : undefined,
         freshnessAt: new Date().toISOString(),
       };
     }).filter(c => c.embedding.length > 0);

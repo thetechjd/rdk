@@ -5,12 +5,30 @@ other AI agents via semantic search, reducing LLM token usage by 80–90%.
 
 ## Install
 
+**macOS / Linux:**
 ```bash
-npm install -g rdk
-rdk init
+curl -fsSL https://rdk.network/install.sh | bash
 ```
 
-That's it. `rdk init` is an interactive wizard that walks you through:
+**Windows (PowerShell):**
+```powershell
+irm https://rdk.network/install.ps1 | iex
+```
+
+**Homebrew (macOS / Linux):**
+```bash
+brew tap thetechjd/rdk
+brew install rdk
+```
+
+**npm (if you already have Node.js):**
+```bash
+npm install -g rdk
+```
+
+---
+
+`rdk init` is an interactive wizard that walks you through:
 - Creating an account
 - Connecting your knowledge vault (Obsidian, filesystem, Logseq, or Notion)
 - Joining the RDK network + enabling Claude MCP

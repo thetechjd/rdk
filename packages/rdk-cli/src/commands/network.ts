@@ -168,10 +168,18 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     const model = new LocalEmbeddingModel();
     const embedding = await model.embed(query);
 
+    // Exchange API key for JWT before querying
+    const authRes = await fetch(`${config.centralApiUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    });
+    if (!authRes.ok) throw new Error(`Auth failed: HTTP ${authRes.status}`);
+    const { jwtToken } = await authRes.json() as { jwtToken: string };
+
     const res = await fetch(`${config.centralApiUrl}/api/v1/query`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        Authorization: `Bearer ${jwtToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -204,6 +212,53 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
       console.log('');
     });
   } catch (e) {
+    spinner.fail((e as Error).message);
+  }
+}
+
+export async function networkSync(): Promise<void> {
+  const ora = (await import('ora')).default;
+  const config = loadConfig();
+
+  if (config.nodeId.startsWith('local-') || config.apiKey.startsWith('rdk_local_')) {
+    console.log(t.warn('This node is in offline mode. Run: rdk network:join'));
+    return;
+  }
+
+  const { LocalStore } = await import('@rdk/core');
+  const store = new LocalStore();
+  const stats = store.getStats();
+
+  if (stats.unsyncedChunks === 0) {
+    console.log(t.dim('  No unsynced public chunks.'));
+    store.close();
+    return;
+  }
+
+  const spinner = ora(`  Syncing ${stats.unsyncedChunks} public chunk(s)...`).start();
+
+  try {
+    const { SyncService } = await import('@rdk/mcp');
+    const sync = new SyncService(
+      {
+        enabled: true,
+        intervalMinutes: 0,
+        centralApiUrl: config.centralApiUrl,
+        centralApiKey: config.apiKey,
+      },
+      store,
+    );
+
+    const result = await sync.syncOnce();
+    store.close();
+
+    if (result.errors > 0) {
+      spinner.warn(`  Synced ${result.synced}, ${result.errors} error(s)`);
+    } else {
+      spinner.succeed(`  ${result.synced} chunk(s) synced to network`);
+    }
+  } catch (e) {
+    store.close();
     spinner.fail((e as Error).message);
   }
 }

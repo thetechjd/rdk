@@ -16,6 +16,7 @@ export interface StoredChunk {
   domain?: string;
   categories: string[];
   isPublic: boolean;
+  isEncrypted: boolean;
   syncedAt?: Date;
   qualityScore: number;
   sourcePath?: string;
@@ -47,7 +48,9 @@ export class LocalStore {
   constructor(dbPath?: string) {
     this.dbPath = dbPath ?? path.join(process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk'), 'index.db');
     this.ensureDir();
-    this.db = new Database(this.dbPath);
+    const nativeBinding = process.env.BETTER_SQLITE3_NATIVE_BINDING;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this.db = new Database(this.dbPath, nativeBinding ? { nativeBinding } as any : undefined);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.init();
@@ -68,6 +71,7 @@ export class LocalStore {
         domain        TEXT,
         categories    TEXT DEFAULT '[]',
         is_public     INTEGER DEFAULT 0,
+        is_encrypted  INTEGER DEFAULT 0,
         synced_at     DATETIME,
         quality_score REAL DEFAULT 0.0,
         source_path   TEXT,
@@ -84,6 +88,16 @@ export class LocalStore {
       CREATE INDEX IF NOT EXISTS idx_chunks_public ON chunks(is_public, domain);
       CREATE INDEX IF NOT EXISTS idx_chunks_synced ON chunks(synced_at, is_public);
       CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_path, source_adapter);
+    `);
+
+    // Migration: add is_encrypted column to existing databases
+    try {
+      this.db.exec(`ALTER TABLE chunks ADD COLUMN is_encrypted INTEGER DEFAULT 0`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
+    this.db.exec(`
 
       CREATE TABLE IF NOT EXISTS tip_queue (
         id               TEXT PRIMARY KEY,
@@ -119,25 +133,25 @@ export class LocalStore {
     if (existing) {
       this.db.prepare(`
         UPDATE chunks SET
-          title = ?, summary = ?, domain = ?, categories = ?,
-          is_public = ?, quality_score = ?, source_path = ?,
+          title = ?, content = ?, summary = ?, domain = ?, categories = ?,
+          is_public = ?, is_encrypted = ?, quality_score = ?, source_path = ?,
           source_adapter = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        chunk.title, chunk.summary ?? null, chunk.domain ?? null,
+        chunk.title, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
-        chunk.qualityScore, chunk.sourcePath ?? null,
+        chunk.isEncrypted ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
         chunk.sourceAdapter ?? null, now, id,
       );
     } else {
       this.db.prepare(`
         INSERT INTO chunks (id, title, content, summary, domain, categories,
-          is_public, quality_score, source_path, source_adapter, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          is_public, is_encrypted, quality_score, source_path, source_adapter, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories),
-        chunk.isPublic ? 1 : 0, chunk.qualityScore,
+        chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null, now, now,
       );
     }
@@ -278,6 +292,7 @@ export class LocalStore {
       domain: row.domain as string | undefined,
       categories: JSON.parse((row.categories as string) || '[]') as string[],
       isPublic: (row.is_public as number) === 1,
+      isEncrypted: (row.is_encrypted as number) === 1,
       syncedAt: row.synced_at ? new Date(row.synced_at as string) : undefined,
       qualityScore: row.quality_score as number,
       sourcePath: row.source_path as string | undefined,
@@ -299,6 +314,29 @@ export class LocalStore {
       createdAt: new Date(row.created_at as string),
       settledAt: row.settled_at ? new Date(row.settled_at as string) : undefined,
     };
+  }
+
+  getAllPrivateEncryptedChunks(): StoredChunk[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM chunks WHERE is_public = 0 AND is_encrypted = 1
+    `).all() as Record<string, unknown>[];
+    return rows.map(r => this.rowToChunk(r));
+  }
+
+  updateChunkContent(id: string, newContent: string): void {
+    this.db.prepare(`
+      UPDATE chunks SET content = ?, updated_at = ? WHERE id = ?
+    `).run(newContent, new Date().toISOString(), id);
+  }
+
+  getUnsyncedEncryptedChunks(limit = 100): StoredChunk[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM chunks
+      WHERE is_public = 0 AND is_encrypted = 1 AND synced_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map(r => this.rowToChunk(r));
   }
 
   close() {

@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon (arm64)
+            pkg_target: node20-macos-arm64
+            binary: rdk-macos-arm64
+          - os: macos-13          # Intel (x86_64)
+            pkg_target: node20-macos-x64
+            binary: rdk-macos-x64
+          - os: ubuntu-22.04      # Linux x86_64
+            pkg_target: node20-linux-x64
+            binary: rdk-linux-x64
+          - os: ubuntu-22.04-arm  # Linux arm64
+            pkg_target: node20-linux-arm64
+            binary: rdk-linux-arm64
+          - os: windows-latest    # Windows x64
+            pkg_target: node20-win-x64
+            binary: rdk-win-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Install workspace deps
+        run: pnpm install
+
+      - name: Install rdk-cli deps (for pkg)
+        working-directory: packages/rdk-cli
+        run: npm install
+
+      - name: Build JS bundle
+        working-directory: packages/rdk-cli
+        shell: bash
+        run: |
+          ./node_modules/esbuild/bin/esbuild src/cli.ts \
+            --bundle --platform=node --format=cjs --target=node20 \
+            --outfile=dist/cli.js \
+            --external:@xenova/transformers --external:ethers \
+            --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem \
+            --external:@rdk/adapter-logseq --external:@rdk/adapter-notion \
+            --external:@rdk/mcp --external:@rdk/x402 \
+            --external:@modelcontextprotocol/sdk \
+            --external:better-sqlite3 --external:chokidar \
+            --banner:js="#!/usr/bin/env node"
+
+      - name: Prep native deps (rebuild better-sqlite3 for node20)
+        working-directory: packages/rdk-cli
+        run: node scripts/pkg-prep.js
+
+      - name: Build pkg binary (${{ matrix.binary }})
+        working-directory: packages/rdk-cli
+        run: |
+          mkdir -p dist/binaries
+          node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets ${{ matrix.pkg_target }} --output dist/binaries/${{ matrix.binary }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: packages/rdk-cli/dist/binaries/${{ matrix.binary }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/binaries
+
+      - name: Flatten artifact dirs + compress
+        run: |
+          mkdir -p release-assets
+          for dir in dist/binaries/*/; do
+            name=$(basename "$dir")
+            cp "$dir/$name" "release-assets/$name"
+            # .exe stays as-is; others get +x
+            [[ "$name" == *.exe ]] || chmod +x "release-assets/$name"
+          done
+          cd release-assets
+          for f in rdk-*; do
+            tar -czf "${f}.tar.gz" "$f"
+            sha256sum "${f}.tar.gz" >> SHA256SUMS
+          done
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/*.tar.gz
+            release-assets/SHA256SUMS
+          body: |
+            ## Install
+
+            **macOS / Linux:**
+            ```bash
+            curl -fsSL https://rdk.network/install.sh | bash
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            irm https://rdk.network/install.ps1 | iex
+            ```
+
+            **Homebrew:**
+            ```bash
+            brew tap thetechjd/rdk
+            brew install rdk
+            ```
+
+            **Manual:** download the binary for your platform below, `chmod +x` (macOS/Linux), and place in your `$PATH`.
+
+      - name: Update Homebrew formula
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          BASE_URL="https://github.com/thetechjd/rdk/releases/download/${VERSION}"
+
+          MAC_ARM_SHA=$(grep rdk-macos-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
+          MAC_X64_SHA=$(grep rdk-macos-x64.tar.gz   release-assets/SHA256SUMS | awk '{print $1}')
+          LNX_X64_SHA=$(grep rdk-linux-x64.tar.gz   release-assets/SHA256SUMS | awk '{print $1}')
+          LNX_ARM_SHA=$(grep rdk-linux-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/thetechjd/homebrew-rdk.git" tap
+          cat > tap/Formula/rdk.rb <<FORMULA
+          class Rdk < Formula
+            desc "Retrieval Development Kit — distributed knowledge infrastructure"
+            homepage "https://rdk.network"
+            version "${VERSION#v}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "${BASE_URL}/rdk-macos-arm64.tar.gz"
+                sha256 "${MAC_ARM_SHA}"
+              end
+              on_intel do
+                url "${BASE_URL}/rdk-macos-x64.tar.gz"
+                sha256 "${MAC_X64_SHA}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE_URL}/rdk-linux-arm64.tar.gz"
+                sha256 "${LNX_ARM_SHA}"
+              end
+              on_intel do
+                url "${BASE_URL}/rdk-linux-x64.tar.gz"
+                sha256 "${LNX_X64_SHA}"
+              end
+            end
+
+            def install
+              bin.install "rdk-#{OS.mac? ? 'macos' : 'linux'}-#{Hardware::CPU.arm? ? 'arm64' : 'x64'}" => "rdk"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/rdk --version")
+            end
+          end
+          FORMULA
+
+          cd tap
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/rdk.rb
+          git commit -m "chore: bump rdk to ${VERSION}"
+          git push

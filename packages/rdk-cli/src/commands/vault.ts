@@ -1,7 +1,7 @@
 // packages/rdk-cli/src/commands/vault.ts
-import { loadConfig } from '../config.js';
+import { loadConfig, updateConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
-import { t, divider } from '../theme.js';
+import { t, mark, divider } from '../theme.js';
 
 export async function vaultConnect(adapter: string, vaultPath?: string): Promise<void> {
   const ora = (await import('ora')).default;
@@ -42,7 +42,11 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
   try {
     const mod = await import(adapterKey);
     const adapter = new mod.default();
-    await adapter.connect({ vaultPath: config.vaultPath, domain: config.domain });
+    await adapter.connect({
+      vaultPath: config.vaultPath,
+      domain: config.domain,
+      publicFolders: config.publicFolders ?? [],
+    });
 
     const result = opts.force
       ? await adapter.indexAll({ isPublic })
@@ -216,4 +220,38 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
   } finally {
     store.close();
   }
+}
+
+export async function vaultSetPublic(folders: string[]): Promise<void> {
+  updateConfig({ publicFolders: folders });
+
+  console.log(t.heading('\n  Public folders updated\n'));
+  if (folders.length === 0) {
+    console.log(t.dim('  No folders designated as public.'));
+    console.log(t.dim('  Use rdk_index --public for individual chunks.'));
+  } else {
+    for (const folder of folders) {
+      console.log(`  ${mark.ok()} ${t.body(folder)}`);
+    }
+    console.log('');
+    console.log(t.dim('  Files in these folders will be marked public when indexed'));
+    console.log(t.dim('  and synced automatically when rdk mcp:serve is running.'));
+  }
+  console.log('');
+}
+
+export async function vaultListPublic(): Promise<void> {
+  const config = loadConfig();
+  const folders = config.publicFolders ?? [];
+
+  console.log(t.heading('\n  Public folders\n'));
+  if (folders.length === 0) {
+    console.log(t.dim('  None configured.'));
+    console.log(t.dim('  Set with: rdk vault:set-public research/ published/'));
+  } else {
+    for (const folder of folders) {
+      console.log(`  ${mark.ok()} ${t.body(folder)}`);
+    }
+  }
+  console.log('');
 }

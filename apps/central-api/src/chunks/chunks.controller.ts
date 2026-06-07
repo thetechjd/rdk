@@ -2,22 +2,47 @@
 import {
   Controller, Post, Delete, Get, Body, Param, UseGuards, Request,
 } from '@nestjs/common';
+import {
+  IsString, IsOptional, IsArray, IsBoolean, IsNumber, ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import { ChunksService } from './chunks.service.js';
 import { NodesService } from '../nodes/nodes.service.js';
 
 export class SyncChunkDto {
+  @IsString()
   chunkHash!: string;
+
+  @IsOptional() @IsString()
   title?: string;
+
+  @IsOptional() @IsString()
   summary?: string;
+
+  @IsOptional() @IsString()
   domain?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true })
   categories?: string[];
+
+  @IsArray() @IsNumber({}, { each: true })
   embedding!: number[];
+
+  @IsOptional() @IsNumber()
+  chunkTokens?: number;
+
+  @IsOptional() @IsBoolean()
   isPublic?: boolean;
+
+  @IsOptional() @IsString()
   freshnessAt?: string;
 }
 
 export class SyncChunksDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SyncChunkDto)
   chunks!: SyncChunkDto[];
 }
 

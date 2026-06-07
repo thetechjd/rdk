@@ -228,7 +228,7 @@ POLYGON_RPC_URL=https://polygon-rpc.com
 - Central API: `api.rdk.network`
 - Dashboard: `app.rdk.network`
 - Marketing: `rdk.network`
-- GitHub: `github.com/cryptocadet/rdk`
+- GitHub: `github.com/thetechjd/rdk`
 
 ---
 
