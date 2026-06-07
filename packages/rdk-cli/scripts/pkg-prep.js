@@ -4,48 +4,66 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-// 1. Copy better-sqlite3 (dereference pnpm symlinks)
 fs.mkdirSync('dist/node_modules', { recursive: true });
-const src = fs.realpathSync('node_modules/better-sqlite3');
-fs.cpSync(src, 'dist/node_modules/better-sqlite3', { recursive: true, dereference: true, force: true });
-console.log('[pkg:prep] copied better-sqlite3 from', src);
 
-// 2. Find a Node.js 20.x binary to rebuild the native addon with the right ABI
-//    (pkg embeds Node 20; the .node file must match ABI 115)
-const current = process.version; // e.g. 'v20.20.0'
+// ── 1. Copy better-sqlite3 (dereference pnpm symlinks) ──────────────────────
+const sqliteSrc = fs.realpathSync('node_modules/better-sqlite3');
+fs.cpSync(sqliteSrc, 'dist/node_modules/better-sqlite3', { recursive: true, dereference: true, force: true });
+console.log('[pkg:prep] copied better-sqlite3 from', sqliteSrc);
+
+// ── 2. Rebuild better-sqlite3 native addon for Node.js 20 (ABI 115) ─────────
 let nodeBin;
-
-if (current.startsWith('v20.')) {
+if (process.version.startsWith('v20.')) {
   nodeBin = process.execPath;
 } else {
-  // Try nvm directory (local dev machines)
-  const nvmDir = process.env.NVM_DIR || path.join(process.env.HOME || '', '.nvm');
+  const nvmDir = process.env.NVM_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '', '.nvm');
   const versionsDir = path.join(nvmDir, 'versions', 'node');
   if (fs.existsSync(versionsDir)) {
-    const v20s = fs.readdirSync(versionsDir)
-      .filter(v => v.startsWith('v20.'))
-      .sort()
-      .reverse();
-    if (v20s.length > 0) {
-      nodeBin = path.join(versionsDir, v20s[0], 'bin', 'node');
-    }
+    const v20s = fs.readdirSync(versionsDir).filter(v => v.startsWith('v20.')).sort().reverse();
+    if (v20s.length > 0) nodeBin = path.join(versionsDir, v20s[0], 'bin', 'node');
   }
 }
+if (!nodeBin) throw new Error('Node.js 20.x not found. Install via nvm: nvm install 20');
 
-if (!nodeBin) {
-  throw new Error(
-    'Node.js 20.x not found. Install it via nvm: nvm install 20\n' +
-    'The pkg binary embeds Node.js 20 — better-sqlite3 must be compiled against it.'
-  );
+const npxBin = path.join(path.dirname(nodeBin), process.platform === 'win32' ? 'npx.cmd' : 'npx');
+console.log(`[pkg:prep] rebuilding better-sqlite3 with ${execSync(`"${nodeBin}" --version`).toString().trim()}`);
+try {
+  execSync(`"${npxBin}" node-gyp rebuild --release`, {
+    cwd: 'dist/node_modules/better-sqlite3',
+    stdio: 'inherit',
+  });
+  console.log('[pkg:prep] better-sqlite3 rebuilt for node20 (ABI 115)');
+} catch (e) {
+  // On Windows, better-sqlite3 is compiled for Windows natively — the rebuild
+  // may fail if build tools are unavailable, but the copied .node still works.
+  console.warn('[pkg:prep] WARNING: better-sqlite3 rebuild failed:', e.message.split('\n')[0]);
+  console.warn('[pkg:prep] Continuing with pre-compiled .node file — verify ABI matches pkg target.');
 }
 
-const npxBin = path.join(path.dirname(nodeBin), 'npx');
-const nodeVersion = execSync(`"${nodeBin}" --version`).toString().trim();
-console.log(`[pkg:prep] rebuilding better-sqlite3 with ${nodeVersion} (${nodeBin})`);
+// ── 3. Copy workspace packages into dist/node_modules/ ──────────────────────
+// pkg on Windows cannot follow pnpm symlinks/junctions. We copy directly from
+// the package directory using the known monorepo layout (../../../packages/<name>).
+// Only dist/ + package.json are needed — transitive npm deps resolve normally.
+const repoRoot = path.resolve(__dirname, '..', '..', '..');
+const workspacePkgs = [
+  { name: '@rdk/mcp',                dir: 'rdk-mcp' },
+  { name: '@rdk/x402',               dir: 'rdk-x402' },
+  { name: '@rdk/adapter-filesystem', dir: 'rdk-adapter-filesystem' },
+  { name: '@rdk/adapter-obsidian',   dir: 'rdk-adapter-obsidian' },
+];
 
-execSync(`"${npxBin}" node-gyp rebuild --release`, {
-  cwd: 'dist/node_modules/better-sqlite3',
-  stdio: 'inherit',
-});
+for (const { name, dir } of workspacePkgs) {
+  const srcDir = path.join(repoRoot, 'packages', dir);
+  const distSrc = path.join(srcDir, 'dist');
 
-console.log('[pkg:prep] better-sqlite3 rebuilt for node20 (ABI 115)');
+  if (!fs.existsSync(distSrc)) {
+    console.warn(`[pkg:prep] WARNING: ${name} has no dist/ — skipping (run: pnpm --filter ${name} build)`);
+    continue;
+  }
+
+  const destBase = path.join('dist', 'node_modules', ...name.split('/'));
+  fs.mkdirSync(destBase, { recursive: true });
+  fs.cpSync(distSrc, path.join(destBase, 'dist'), { recursive: true, dereference: true, force: true });
+  fs.copyFileSync(path.join(srcDir, 'package.json'), path.join(destBase, 'package.json'));
+  console.log(`[pkg:prep] copied ${name}`);
+}
