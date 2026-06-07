@@ -33,8 +33,6 @@
   },
   "optionalDependencies": {
     "@rdk/adapter-filesystem": "workspace:*",
-    "@rdk/adapter-logseq": "workspace:*",
-    "@rdk/adapter-notion": "workspace:*",
     "@rdk/adapter-obsidian": "workspace:*",
     "@rdk/mcp": "workspace:*",
     "@rdk/x402": "workspace:*"
