@@ -45,6 +45,9 @@ jobs:
       - name: Install workspace deps
         run: pnpm install
 
+      - name: Build workspace dependencies
+        run: pnpm --filter @rdk/core build
+
       - name: Build JS bundle
         working-directory: packages/rdk-cli
         shell: bash
