@@ -25,9 +25,11 @@ jobs:
           - os: ubuntu-22.04-arm  # Linux arm64
             pkg_target: node20-linux-arm64
             binary: rdk-linux-arm64
-          - os: windows-latest    # Windows x64
-            pkg_target: node20-win-x64
-            binary: rdk-win-x64.exe
+          # Windows: @yao-pkg/pkg crashes on dynamic workspace imports (PE binary
+          # patching bug). Windows users should install via npm for now.
+          # - os: windows-latest
+          #   pkg_target: node20-win-x64
+          #   binary: rdk-win-x64.exe
 
     runs-on: ${{ matrix.os }}
 
@@ -131,9 +133,9 @@ jobs:
             curl -fsSL https://rdk.network/install.sh | bash
             ```
 
-            **Windows (PowerShell):**
-            ```powershell
-            irm https://rdk.network/install.ps1 | iex
+            **Windows:** install via npm (requires Node.js)
+            ```
+            npm install -g rdk
             ```
 
             **Homebrew:**
