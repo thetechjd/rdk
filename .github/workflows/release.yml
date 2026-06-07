@@ -52,7 +52,12 @@ jobs:
           key: pkg-cache-${{ matrix.pkg_target }}-node20.20.2
 
       - name: Build workspace dependencies
-        run: pnpm --filter @rdk/core build
+        run: |
+          pnpm --filter @rdk/core build
+          pnpm --filter @rdk/mcp build
+          pnpm --filter @rdk/x402 build
+          pnpm --filter "@rdk/adapter-filesystem" build
+          pnpm --filter "@rdk/adapter-obsidian" build
 
       - name: Build JS bundle
         working-directory: packages/rdk-cli
