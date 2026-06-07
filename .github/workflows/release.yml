@@ -16,9 +16,11 @@ jobs:
           - os: macos-14          # Apple Silicon (arm64)
             pkg_target: node20-macos-arm64
             binary: rdk-macos-arm64
-          - os: macos-13          # Intel (x86_64)
-            pkg_target: node20-macos-x64
-            binary: rdk-macos-x64
+          # macos-13 (Intel) runner pool is near-deprecated and rarely picks up jobs.
+          # Intel Mac users can install via npm. Re-enable if GitHub restores the pool.
+          # - os: macos-13
+          #   pkg_target: node20-macos-x64
+          #   binary: rdk-macos-x64
           - os: ubuntu-22.04      # Linux x86_64
             pkg_target: node20-linux-x64
             binary: rdk-linux-x64
