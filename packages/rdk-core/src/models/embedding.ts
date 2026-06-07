@@ -19,8 +19,7 @@ let _pipeline: unknown = null;
 async function getPipeline() {
   if (_pipeline) return _pipeline;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let transformers: any;
+  let transformers: typeof import('@xenova/transformers');
   try {
     transformers = await import('@xenova/transformers');
   } catch {
