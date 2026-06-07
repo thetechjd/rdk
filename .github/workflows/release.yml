@@ -45,6 +45,12 @@ jobs:
       - name: Install workspace deps
         run: pnpm install
 
+      - name: Cache pkg base binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.pkg-cache
+          key: pkg-cache-${{ matrix.pkg_target }}-node20.20.2
+
       - name: Build workspace dependencies
         run: pnpm --filter @rdk/core build
 
