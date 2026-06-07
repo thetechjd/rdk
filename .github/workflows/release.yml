@@ -45,10 +45,6 @@ jobs:
       - name: Install workspace deps
         run: pnpm install
 
-      - name: Install rdk-cli deps (for pkg)
-        working-directory: packages/rdk-cli
-        run: npm install
-
       - name: Build JS bundle
         working-directory: packages/rdk-cli
         shell: bash
