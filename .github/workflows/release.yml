@@ -58,10 +58,10 @@ jobs:
       - name: Build workspace dependencies
         run: |
           pnpm --filter @rdk/core build
-          pnpm --filter @rdk/mcp build
-          pnpm --filter @rdk/x402 build
-          pnpm --filter "@rdk/adapter-filesystem" build
-          pnpm --filter "@rdk/adapter-obsidian" build
+          pnpm --filter @retrodeck/mcp build
+          pnpm --filter @retrodeck/x402 build
+          pnpm --filter "@retrodeck/adapter-filesystem" build
+          pnpm --filter "@retrodeck/adapter-obsidian" build
 
       - name: Build JS bundle
         working-directory: packages/rdk-cli
@@ -71,11 +71,11 @@ jobs:
             --bundle --platform=node --format=cjs --target=node20 \
             --outfile=dist/cli.js \
             --external:@xenova/transformers --external:ethers \
-            --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem \
-            --external:@rdk/adapter-logseq --external:@rdk/adapter-notion \
-            --external:@rdk/mcp --external:@rdk/x402 \
+            --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem \
+            --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion \
+            --external:@retrodeck/mcp --external:@retrodeck/x402 \
             --external:@modelcontextprotocol/sdk \
-            --external:better-sqlite3 --external:chokidar \
+            --external:better-sqlite3 --external:chokidar --external:ws \
             --banner:js="#!/usr/bin/env node"
 
       - name: Prep native deps (rebuild better-sqlite3 for node20)
@@ -86,7 +86,9 @@ jobs:
         working-directory: packages/rdk-cli
         run: |
           mkdir -p dist/binaries
-          node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets ${{ matrix.pkg_target }} --output dist/binaries/${{ matrix.binary }}
+          node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js \
+            --targets ${{ matrix.pkg_target }} \
+            --output dist/binaries/${{ matrix.binary }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -111,7 +113,6 @@ jobs:
           for dir in dist/binaries/*/; do
             name=$(basename "$dir")
             cp "$dir/$name" "release-assets/$name"
-            # .exe stays as-is; others get +x
             [[ "$name" == *.exe ]] || chmod +x "release-assets/$name"
           done
           cd release-assets
@@ -130,14 +131,9 @@ jobs:
           body: |
             ## Install
 
-            **macOS / Linux:**
+            **macOS / Linux (recommended):**
             ```bash
             curl -fsSL https://rdk.network/install.sh | bash
-            ```
-
-            **Windows:** install via npm (requires Node.js)
-            ```
-            npm install -g rdk
             ```
 
             **Homebrew:**
@@ -146,14 +142,19 @@ jobs:
             brew install rdk
             ```
 
+            **npm (requires Node.js 20+):**
+            ```bash
+            npm install -g @retrodeck/rdk
+            ```
+
             **Manual:** download the binary for your platform below, `chmod +x` (macOS/Linux), and place in your `$PATH`.
 
       - name: Update Homebrew formula
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          BASE_URL="https://github.com/thetechjd/rdk/releases/download/${VERSION}"
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE_URL="https://github.com/thetechjd/rdk/releases/download/${GITHUB_REF_NAME}"
 
           MAC_ARM_SHA=$(grep rdk-macos-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
           MAC_X64_SHA=$(grep rdk-macos-x64.tar.gz   release-assets/SHA256SUMS | awk '{print $1}')
@@ -161,48 +162,13 @@ jobs:
           LNX_ARM_SHA=$(grep rdk-linux-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/thetechjd/homebrew-rdk.git" tap
-          cat > tap/Formula/rdk.rb <<FORMULA
-          class Rdk < Formula
-            desc "Retrieval Development Kit — distributed knowledge infrastructure"
-            homepage "https://rdk.network"
-            version "${VERSION#v}"
-            license "MIT"
 
-            on_macos do
-              on_arm do
-                url "${BASE_URL}/rdk-macos-arm64.tar.gz"
-                sha256 "${MAC_ARM_SHA}"
-              end
-              on_intel do
-                url "${BASE_URL}/rdk-macos-x64.tar.gz"
-                sha256 "${MAC_X64_SHA}"
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "${BASE_URL}/rdk-linux-arm64.tar.gz"
-                sha256 "${LNX_ARM_SHA}"
-              end
-              on_intel do
-                url "${BASE_URL}/rdk-linux-x64.tar.gz"
-                sha256 "${LNX_X64_SHA}"
-              end
-            end
-
-            def install
-              bin.install "rdk-#{OS.mac? ? 'macos' : 'linux'}-#{Hardware::CPU.arm? ? 'arm64' : 'x64'}" => "rdk"
-            end
-
-            test do
-              assert_match version.to_s, shell_output("#{bin}/rdk --version")
-            end
-          end
-          FORMULA
+          export VERSION BASE_URL MAC_ARM_SHA MAC_X64_SHA LNX_X64_SHA LNX_ARM_SHA
+          bash .github/scripts/write-formula.sh tap/Formula/rdk.rb
 
           cd tap
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/rdk.rb
-          git commit -m "chore: bump rdk to ${VERSION}"
+          git diff --staged --quiet || git commit -m "chore: bump rdk to v${VERSION}"
           git push
