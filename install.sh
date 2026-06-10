@@ -77,6 +77,7 @@ if [ ! -w "${INSTALL_DIR}" ]; then
 fi
 
 ${NEED_SUDO} install -m 755 "${TMP}/${BINARY}" "${INSTALL_DIR}/rdk"
+${NEED_SUDO} install -m 644 "${TMP}/better_sqlite3.node" "${INSTALL_DIR}/better_sqlite3.node"
 
 echo ""
 echo "✓ rdk v${VERSION} installed to ${INSTALL_DIR}/rdk"

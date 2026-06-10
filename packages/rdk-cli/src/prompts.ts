@@ -40,32 +40,77 @@ export async function password(opts: {
   message: string;
   validate?: (v: string) => string | boolean;
 }): Promise<string> {
+  const prompt = `  ${t.dim('›')} ${t.body(opts.message)} `;
+
+  const read = process.stdin.isTTY && typeof process.stdin.setRawMode === 'function'
+    ? readHiddenTTY(prompt)
+    : readHiddenFallback(prompt);
+
+  const value = (await read).trim();
+  if (opts.validate) {
+    const result = opts.validate(value);
+    if (result !== true) {
+      console.log(`  ${t.error(String(result))}`);
+      return password(opts);
+    }
+  }
+  return value;
+}
+
+function readHiddenFallback(prompt: string): Promise<string> {
   return new Promise((resolve) => {
     const iface = rl();
-    const prompt = `  ${t.dim('›')} ${t.body(opts.message)} `;
+    iface.question(prompt, (answer) => {
+      iface.close();
+      resolve(answer);
+    });
+  });
+}
 
-    // Override _writeToOutput to suppress echoing typed characters
-    (iface as any)._writeToOutput = (char: string) => {
-      if (char.startsWith('  ')) {
-        process.stdout.write(char);
-      } else if (char === '\r\n' || char === '\n' || char === '\r') {
-        process.stdout.write('\n');
+function readHiddenTTY(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const previousRawMode = stdin.isRaw;
+    let value = '';
+    let settled = false;
+
+    const cleanup = () => {
+      stdin.off('data', onData);
+      if (typeof stdin.setRawMode === 'function') stdin.setRawMode(previousRawMode);
+      stdin.pause();
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      process.stdout.write('\n');
+      resolve(value);
+    };
+
+    const abort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      process.stdout.write('\n');
+      process.exit(130);
+    };
+
+    const onData = (chunk: Buffer | string) => {
+      const input = chunk.toString('utf8');
+      for (const char of input) {
+        if (char === '\u0003') abort(); // Ctrl+C
+        else if (char === '\r' || char === '\n') finish();
+        else if (char === '\u007f' || char === '\b') value = value.slice(0, -1);
+        else if (char >= ' ') value += char;
       }
     };
 
-    iface.question(prompt, (answer) => {
-      iface.close();
-      const value = answer.trim();
-      if (opts.validate) {
-        const result = opts.validate(value);
-        if (result !== true) {
-          console.log(`  ${t.error(String(result))}`);
-          resolve(password(opts));
-          return;
-        }
-      }
-      resolve(value);
-    });
+    process.stdout.write(prompt);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    stdin.setRawMode(true);
+    stdin.on('data', onData);
   });
 }
 

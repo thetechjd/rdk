@@ -29,6 +29,7 @@ class Rdk < Formula
   def install
     binary = "rdk-#{OS.mac? ? 'macos' : 'linux'}-#{Hardware::CPU.arm? ? 'arm64' : 'x64'}"
     bin.install binary => "rdk"
+    bin.install "better_sqlite3.node"
   end
 
   test do

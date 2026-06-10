@@ -44,6 +44,7 @@ try {
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     $Dest = Join-Path $InstallDir "rdk.exe"
     Copy-Item (Join-Path $TmpDir $Binary) $Dest -Force
+    Copy-Item (Join-Path $TmpDir "better_sqlite3.node") (Join-Path $InstallDir "better_sqlite3.node") -Force
 
     # ── Add to PATH (user scope) ──────────────────────────────────────────────
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")

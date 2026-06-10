@@ -19,7 +19,7 @@
     "pkg:linux-x64": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-linux-x64    --output dist/binaries/rdk-linux-x64",
     "pkg:linux-arm": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-linux-arm64  --output dist/binaries/rdk-linux-arm64",
     "pkg:win-x64": "node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js --targets node20-win-x64       --output dist/binaries/rdk-win-x64.exe",
-    "release:compress": "cd dist/binaries && for f in rdk-*; do tar -czf $f.tar.gz $f && shasum -a 256 $f.tar.gz >> SHA256SUMS; done",
+    "release:compress": "cd dist/binaries && rm -f SHA256SUMS *.tar.gz && for f in rdk-*; do tar -czf $f.tar.gz $f better_sqlite3.node && shasum -a 256 $f.tar.gz >> SHA256SUMS; done",
     "release": "npm run build:binary && npm run release:compress"
   },
   "dependencies": {

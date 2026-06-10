@@ -40,6 +40,18 @@ try {
   console.warn('[pkg:prep] Continuing with pre-compiled .node file — verify ABI matches pkg target.');
 }
 
+const sqliteReleaseDir = path.join('dist', 'node_modules', 'better-sqlite3', 'build', 'Release');
+const sqliteBinding = fs.readdirSync(sqliteReleaseDir).find(file => file.endsWith('.node'));
+if (!sqliteBinding) {
+  throw new Error(`No better-sqlite3 native binding found in ${sqliteReleaseDir}`);
+}
+fs.mkdirSync(path.join('dist', 'binaries'), { recursive: true });
+fs.copyFileSync(
+  path.join(sqliteReleaseDir, sqliteBinding),
+  path.join('dist', 'binaries', 'better_sqlite3.node'),
+);
+console.log('[pkg:prep] copied better-sqlite3 native binding to dist/binaries/better_sqlite3.node');
+
 // ── 3. Copy workspace packages into dist/node_modules/ ──────────────────────
 // pkg on Windows cannot follow pnpm symlinks/junctions. We copy directly from
 // the package directory using the known monorepo layout (../../../packages/<name>).
