@@ -316,6 +316,13 @@ export class LocalStore {
     };
   }
 
+  getSourcePaths(): string[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT source_path FROM chunks WHERE source_path IS NOT NULL',
+    ).all() as { source_path: string }[];
+    return rows.map(r => r.source_path);
+  }
+
   getAllPrivateEncryptedChunks(): StoredChunk[] {
     const rows = this.db.prepare(`
       SELECT * FROM chunks WHERE is_public = 0 AND is_encrypted = 1

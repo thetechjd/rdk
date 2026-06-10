@@ -284,8 +284,8 @@ export async function runInit(nonInteractive?: {
 
   // ── Step 2: Vault ─────────────────────────────────────────────────────────
   stepHeader(2, 6, 'Knowledge Vault');
-  note('A vault is a folder of notes RDK can learn from.');
-  note('Works with Obsidian, Logseq, or any .md file folder.');
+  note('Connect your local vault (Obsidian, filesystem, etc.).');
+  note('RDK will index files from your vault into encrypted private chunks on the network.');
   console.log('');
 
   const connectVault = await confirm({ message: 'Connect a vault?', default: true });
@@ -725,8 +725,8 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
   });
   console.log('');
   console.log(`  ${mark.ok()} ${t.green('Vault encryption key generated')}`);
-  console.log(t.dim('  Your private vault content is encrypted on your machine.'));
-  console.log(t.dim('  RDK Central cannot read your private knowledge.'));
+  console.log(t.dim('  Files indexed from your local vault are encrypted on your machine'));
+  console.log(t.dim('  before syncing to the network. RetroDeck cannot read them.'));
   console.log('');
   console.log(t.warn('  ⚠ Backup your vault key'));
   console.log(t.dim('  If you lose ~/.rdk/config.json your private'));
@@ -752,7 +752,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
   if (opts.connectVault) {
     console.log('');
     adapterReady = await requireDeps(
-      [`@rdk/adapter-${opts.vaultAdapter}`],
+      [`@retrodeck/adapter-${opts.vaultAdapter}`],
       { label: `Vault adapter (${opts.vaultAdapter})` },
     );
   }
@@ -771,7 +771,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     if (fileCount > 0) {
       const indexSpinner = ora(`  Indexing vault (${fileCount} files)...`).start();
       try {
-        const adapterKey = `@rdk/adapter-${opts.vaultAdapter}`;
+        const adapterKey = `@retrodeck/adapter-${opts.vaultAdapter}`;
         const mod = await import(adapterKey);
         const adapter = new mod.default();
         await adapter.connect({ vaultPath: opts.vaultPath, domain: opts.domain });
@@ -801,6 +801,15 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     note('  "command": "rdk", "args": ["mcp:serve"] } } }');
   }
 
+  console.log('');
+  console.log(t.heading('  One more thing...'));
+  console.log('');
+  console.log(t.body('  Want RDK to start automatically when your computer boots?'));
+  console.log(t.dim('  Run this once:'));
+  console.log('');
+  console.log(t.green('  rdk service:install'));
+  console.log('');
+  console.log(t.dim('  Or skip it and start manually with rdk mcp:serve.'));
   console.log('');
   console.log(`  ${t.dim('Manage your account:')} ${link('https://retrodeck.ai/dashboard')}`);
   console.log(`  ${divider(48)}\n`);

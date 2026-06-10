@@ -46,10 +46,10 @@ try {
 // Only dist/ + package.json are needed — transitive npm deps resolve normally.
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const workspacePkgs = [
-  { name: '@rdk/mcp',                dir: 'rdk-mcp' },
-  { name: '@rdk/x402',               dir: 'rdk-x402' },
-  { name: '@rdk/adapter-filesystem', dir: 'rdk-adapter-filesystem' },
-  { name: '@rdk/adapter-obsidian',   dir: 'rdk-adapter-obsidian' },
+  { name: '@retrodeck/mcp',                dir: 'rdk-mcp' },
+  { name: '@retrodeck/x402',               dir: 'rdk-x402' },
+  { name: '@retrodeck/adapter-filesystem', dir: 'rdk-adapter-filesystem' },
+  { name: '@retrodeck/adapter-obsidian',   dir: 'rdk-adapter-obsidian' },
 ];
 
 for (const { name, dir } of workspacePkgs) {

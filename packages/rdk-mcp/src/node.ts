@@ -228,7 +228,7 @@ export class RDKNode {
 
     if (result.source === 'llm_fallback' || result.chunks.length === 0) {
       return this.textResult(
-        `No relevant knowledge found in ${opts.includeNetwork !== false ? 'private vault or network' : 'private vault'}.\n` +
+        `No relevant knowledge found in ${opts.includeNetwork !== false ? 'your indexed chunks or the public network' : 'your indexed chunks'}.\n` +
         `Source: llm_fallback — proceed with your training data or request more context.\n` +
         `Latency: ${result.latencyMs}ms`,
       );

@@ -1,16 +1,16 @@
 {
-  "name": "@rdk/cli",
-  "version": "1.0.0",
+  "name": "@retrodeck/rdk",
+  "version": "1.0.3",
   "description": "RDK CLI — install, configure, and manage your RDK node",
   "bin": {
     "rdk": "./dist/cli.js"
   },
   "scripts": {
-    "build": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "build": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/mcp --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist",
     "prepare": "chmod +x dist/cli.js 2>/dev/null || true",
-    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@rdk/adapter-obsidian --external:@rdk/adapter-filesystem --external:@rdk/adapter-logseq --external:@rdk/adapter-notion --external:@rdk/mcp --external:@rdk/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/mcp --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
     "build:binary": "npm run build && npm run pkg:prep && npm run pkg:all",
     "pkg:prep": "node scripts/pkg-prep.js",
     "pkg:all": "mkdir -p dist/binaries && npm run pkg:mac-arm && npm run pkg:mac-x64 && npm run pkg:linux-x64 && npm run pkg:linux-arm",
@@ -23,22 +23,17 @@
     "release": "npm run build:binary && npm run release:compress"
   },
   "dependencies": {
-    "@rdk/core": "workspace:*",
     "better-sqlite3": "^12.0.0",
     "chalk": "^5.4.1",
     "commander": "^12.1.0",
     "open": "^10.1.0",
     "ora": "^8.2.0",
-    "typescript": "^5.8.3"
-  },
-  "optionalDependencies": {
-    "@rdk/adapter-filesystem": "workspace:*",
-    "@rdk/adapter-obsidian": "workspace:*",
-    "@rdk/mcp": "workspace:*",
-    "@rdk/x402": "workspace:*"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@rdk/core": "workspace:*",
     "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
     "@yao-pkg/pkg": "^6.20.0",
     "esbuild": "^0.28.0"
   },

@@ -119,8 +119,8 @@ export async function teamAccept(inviteId: string): Promise<void> {
     });
 
     console.log('');
-    console.log(t.green(`  ✓ Access granted to ${data.ownerEmail}'s private vault`));
-    console.log(t.dim('  Their private knowledge is now queryable by your node.'));
+    console.log(t.green(`  ✓ Access granted to ${data.ownerEmail}'s private chunks`));
+    console.log(t.dim('  They can now decrypt and query your private chunks.'));
     console.log('');
   } catch (e) {
     console.log(t.error(`Failed: ${(e as Error).message}`));
@@ -152,7 +152,7 @@ export async function teamList(): Promise<void> {
     };
 
     console.log('');
-    console.log(t.heading('  Team members with vault access'));
+    console.log(t.heading('  Team members with access to your private chunks'));
     console.log(divider(40));
     console.log('');
 
@@ -254,7 +254,8 @@ export async function rotateVaultKey(): Promise<void> {
 
     spinner.succeed(`  Re-encrypted ${reencrypted} chunks`);
     console.log('');
-    console.log(t.warn('  ⚠ All team access has been invalidated.'));
+    console.log(t.warn('  ⚠ All team access to your private chunks has been invalidated.'));
+    console.log(t.dim('  Your local vault files are unchanged.'));
     console.log(t.dim('  Re-invite team members with: rdk team:invite <email>'));
     console.log('');
   } catch (e) {

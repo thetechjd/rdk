@@ -1,5 +1,6 @@
 // packages/rdk-core/src/indexer.ts
-// Orchestrates: clean → chunk → embed → categorize → local store → central sync
+// Orchestrates: clean → chunk → embed → categorize → local store → sync to RDK Central
+// Private chunks are encrypted before sync; public chunks sync as plaintext.
 
 import crypto from 'crypto';
 import { cleanText, estimateTokens } from './cleaner.js';
@@ -28,6 +29,9 @@ export interface IndexerConfig {
   centralApiUrl?: string;
   centralApiKey?: string;
   vaultKey?: VaultKey;
+  // Called immediately after each chunk is stored locally, before network sync.
+  // Used by rdk-cli to push real-time WebSocket events to RDK Central.
+  onChunkIndexed?: (chunk: { id: string; title: string; isPublic: boolean }) => void;
 }
 
 export type { IndexResult };
@@ -97,9 +101,10 @@ export class RDKIndexer {
             ? encrypt(chunk.text, this.config.vaultKey!)
             : chunk.text;
 
+          const chunkTitle = this.buildTitle(doc.title, chunk);
           this.config.localStore.saveChunk({
             id: chunkId,
-            title: this.buildTitle(doc.title, chunk),
+            title: chunkTitle,
             content: contentToStore,
             summary,
             domain,
@@ -111,13 +116,14 @@ export class RDKIndexer {
             sourceAdapter: doc.sourceAdapter,
           }, embedding);
 
+          this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });
           chunksIndexed++;
         } catch (e) {
           errors.push(`Chunk ${chunk.index}: ${(e as Error).message}`);
         }
       }
 
-      // 8. Sync to central if configured (public chunks always, private encrypted chunks for team access)
+      // 8. Sync indexed chunks to RDK Central (private chunks encrypted, public chunks as plaintext)
       if (this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
         await this.syncTocentral(doc.isPublic ?? false);
       }

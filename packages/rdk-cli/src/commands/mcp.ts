@@ -6,7 +6,7 @@ import { t, mark } from '../theme.js';
 export async function mcpServe(opts: { port?: number }): Promise<void> {
   // Check the MCP SDK dep before stdio transport starts — never prompt or install mid-session.
   // Use the /server subpath: v1.29.0+ dropped the root index.js, only subpaths exist.
-  // We do NOT import @rdk/mcp to check — it has a top-level startMcpServer() side-effect.
+  // We do NOT import @retrodeck/mcp to check — it has a top-level startMcpServer() side-effect.
   if (!await isInstalled('@modelcontextprotocol/sdk/server')) {
     console.error('MCP SDK not installed. Run: rdk network:join');
     process.exit(1);
@@ -40,7 +40,7 @@ export async function mcpServe(opts: { port?: number }): Promise<void> {
     }
   }
 
-  const { startHttpServer } = await import('@rdk/mcp');
+  const { startHttpServer } = await import('@retrodeck/mcp');
   const { LocalStore } = await import('@rdk/core');
   const store = new LocalStore();
   // If --port was passed, use it as the preferred starting port
@@ -54,7 +54,30 @@ export async function mcpServe(opts: { port?: number }): Promise<void> {
   console.error(t.dim(`  Node:        ${config.nodeId}`));
   console.error(t.dim(`  Domain:      ${config.domain}`));
 
-  const { startMcpServer } = await import('@rdk/mcp');
+  // ── WebSocket connection to RDK Central ─────────────────────────────────
+  const { getWsClient } = await import('../ws/client.js');
+  const ws = getWsClient();
+  if (ws) {
+    ws.on('connected', () => {
+      console.error(t.dim('  ✓ live sync active'));
+    });
+    ws.on('disconnected', ({ code, reason }: { code: number; reason: string }) => {
+      if (code !== 1000) {
+        console.error(t.dim(`  · disconnected from RDK Central (${code})${reason ? ': ' + reason : ''}`));
+      }
+    });
+    ws.connect();
+  }
+
+  // ── Clean shutdown ───────────────────────────────────────────────────────
+  const shutdown = () => {
+    ws?.disconnect();
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+
+  const { startMcpServer } = await import('@retrodeck/mcp');
   await startMcpServer();
 }
 

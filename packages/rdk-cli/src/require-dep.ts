@@ -6,7 +6,7 @@
 //
 // Tiers:
 //   Tier 1 (always installed): commander, chalk, ora, better-sqlite3, gray-matter, glob
-//   Tier 2 (vault:connect):    @rdk/adapter-obsidian, @rdk/adapter-notion, chokidar
+//   Tier 2 (vault:connect):    @retrodeck/adapter-obsidian, @retrodeck/adapter-notion, chokidar
 //   Tier 3 (network:join):     @xenova/transformers, @modelcontextprotocol/sdk
 //   Tier 4 (tips:enable):      ethers
 
@@ -28,7 +28,7 @@ const CLI_PKG_DIR = path.resolve(__dirname, '..');
  * Returns null when running outside a workspace (e.g. after a real npm install -g).
  */
 function findLocalWorkspacePackage(packageName: string): string | null {
-  const dirName = packageName.replace('@rdk/', 'rdk-');
+  const dirName = packageName.replace('@retrodeck/', 'rdk-');
   const realDir = (() => { try { return fs.realpathSync(__dirname); } catch { return __dirname; } })();
   let dir = realDir;
   for (let i = 0; i < 7; i++) {
@@ -135,33 +135,33 @@ export const DEPS: Record<string, DepSpec> = {
     reason: 'on-chain USDC tip settlement (Base / Ethereum / Polygon)',
     size: '~15MB',
   },
-  '@rdk/adapter-obsidian': {
-    package: '@rdk/adapter-obsidian',
+  '@retrodeck/adapter-obsidian': {
+    package: '@retrodeck/adapter-obsidian',
     reason: 'Obsidian vault adapter — wikilinks, frontmatter, graph indexing',
     size: '~1MB',
   },
-  '@rdk/adapter-filesystem': {
-    package: '@rdk/adapter-filesystem',
+  '@retrodeck/adapter-filesystem': {
+    package: '@retrodeck/adapter-filesystem',
     reason: 'filesystem vault adapter — .md, .txt, .mdx file indexing',
     size: '~1MB',
   },
-  '@rdk/adapter-notion': {
-    package: '@rdk/adapter-notion',
+  '@retrodeck/adapter-notion': {
+    package: '@retrodeck/adapter-notion',
     reason: 'Notion vault adapter — database + page indexing via Notion API',
     size: '~2MB',
   },
-  '@rdk/adapter-logseq': {
-    package: '@rdk/adapter-logseq',
+  '@retrodeck/adapter-logseq': {
+    package: '@retrodeck/adapter-logseq',
     reason: 'Logseq vault adapter — block format, page references',
     size: '~1MB',
   },
-  '@rdk/mcp': {
-    package: '@rdk/mcp',
+  '@retrodeck/mcp': {
+    package: '@retrodeck/mcp',
     reason: 'MCP server — exposes vault tools to Claude Desktop',
     size: '~1MB',
   },
-  '@rdk/x402': {
-    package: '@rdk/x402',
+  '@retrodeck/x402': {
+    package: '@retrodeck/x402',
     reason: 'x402 tip client — on-chain USDC batch settlement',
     size: '~1MB',
   },
@@ -257,11 +257,11 @@ async function installDep(spec: DepSpec): Promise<boolean> {
   const spinner = ora(`Installing ${spec.package}...`).start();
 
   try {
-    // @rdk/* packages: in a workspace context these live on disk already.
+    // @retrodeck/* packages: in a workspace context these live on disk already.
     // Create a symlink into the CLI's node_modules so Node can resolve them.
-    // Their transitive deps (glob, gray-matter, @rdk/core, etc.) are already
-    // wired up by pnpm in their own node_modules/ directories.
-    if (spec.package.startsWith('@rdk/')) {
+    // In production (npm global install) they are installed from npm — bundled
+    // with all transitive deps (glob, gray-matter, @rdk/core) except better-sqlite3.
+    if (spec.package.startsWith('@retrodeck/')) {
       const localPath = findLocalWorkspacePackage(spec.package);
       if (localPath) {
         linkWorkspacePackage(spec.package, localPath);

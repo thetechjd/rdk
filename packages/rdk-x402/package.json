@@ -1,22 +1,25 @@
 {
-  "name": "@rdk/x402",
+  "name": "@retrodeck/x402",
   "version": "1.0.0",
   "description": "RDK x402 micropayment tip protocol — on-chain USDC tips for knowledge retrieval",
-  "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/index.js --external:ethers --external:better-sqlite3 --external:@xenova/transformers",
+    "prepublishOnly": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/index.js --external:ethers --external:better-sqlite3 --external:@xenova/transformers",
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@rdk/core": "workspace:*"
   },
   "optionalDependencies": {
     "ethers": "^6.14.1"
   },
   "devDependencies": {
+    "@rdk/core": "workspace:*",
     "@types/node": "^22.15.21",
+    "esbuild": "^0.28.0",
     "typescript": "^5.8.3"
-  }
+  },
+  "files": [
+    "dist/",
+    "package.json"
+  ]
 }

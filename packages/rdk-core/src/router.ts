@@ -1,5 +1,6 @@
 // packages/rdk-core/src/router.ts
-// Central routing logic. Checks private vault → public network → falls back to LLM.
+// Query routing: checks private chunks → public network → falls back to LLM.
+// "Private chunks" = encrypted on RDK Central, decrypted locally at query time.
 // This is the piece that collapses token spend 80-90%.
 
 import { decrypt, type VaultKey } from './crypto.js';

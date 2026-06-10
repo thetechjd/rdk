@@ -1,8 +1,8 @@
 {
-  "name": "rdk",
-  "version": "1.0.0",
+  "name": "@retrodeck/rdk",
+  "version": "1.1.1",
   "private": true,
-  "description": "Retrieval Development Kit \u2014 distributed knowledge infrastructure",
+  "description": "Retrieval Development Kit — distributed knowledge infrastructure",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -15,6 +15,7 @@
     "clean": "turbo clean"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "turbo": "^2.5.4",
     "typescript": "^5.8.3",
     "@types/node": "^22.15.21"

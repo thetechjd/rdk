@@ -1,25 +1,28 @@
 {
-  "name": "@rdk/adapter-filesystem",
+  "name": "@retrodeck/adapter-filesystem",
   "version": "1.0.0",
   "description": "RDK vault adapter for plain filesystem (.md, .txt, .mdx files)",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/index.js --external:better-sqlite3 --external:chokidar --external:@xenova/transformers",
+    "prepublishOnly": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/index.js --external:better-sqlite3 --external:chokidar --external:@xenova/transformers",
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@rdk/core": "workspace:*",
-    "glob": "^11.0.2",
-    "gray-matter": "^4.0.3",
-    "ignore": "^6.0.2"
   },
   "optionalDependencies": {
     "chokidar": "^3.6.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "@types/node": "^22.15.21"
-  }
+    "@rdk/core": "workspace:*",
+    "@types/node": "^22.15.21",
+    "esbuild": "^0.28.0",
+    "glob": "^11.0.2",
+    "gray-matter": "^4.0.3",
+    "ignore": "^6.0.2",
+    "typescript": "^5.8.3"
+  },
+  "files": [
+    "dist/",
+    "package.json"
+  ]
 }

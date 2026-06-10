@@ -22,13 +22,15 @@ import path from 'path';
 }
 
 import { Command } from 'commander';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { version } = require('../package.json') as { version: string };
 
 const program = new Command();
 
 program
   .name('rdk')
   .description('Retrieval Development Kit — distributed knowledge infrastructure')
-  .version('1.0.0');
+  .version(version);
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -50,7 +52,7 @@ const vault = program.command('vault').description('Vault management');
 
 vault
   .command('connect <adapter>')
-  .description('Connect a vault: filesystem | obsidian | logseq | notion')
+  .description('Connect a local vault (Obsidian, filesystem, etc.) for indexing')
   .option('-p, --path <path>', 'Vault path')
   .action(async (adapter, opts) => {
     const { vaultConnect } = await import('./commands/vault.js');
@@ -59,12 +61,12 @@ vault
 
 vault
   .command('index')
-  .description('Index vault (incremental by default, public by default)')
+  .description('Index files from your local vault. Private by default; public if in a folder marked via vault:set-public')
   .option('--force', 'Re-index all files')
-  .option('--private', 'Index as private (not shared on network)')
+  .option('--public', 'Index as public (shared on network, earns tips)')
   .action(async (opts) => {
     const { vaultIndex } = await import('./commands/vault.js');
-    await vaultIndex({ force: opts.force, isPublic: !opts.private });
+    await vaultIndex({ force: opts.force, isPublic: !!opts.public });
   });
 
 vault
@@ -85,7 +87,7 @@ vault
 
 vault
   .command('status')
-  .description('Show vault index stats')
+  .description('Show local vault stats and indexed chunk counts')
   .action(async () => {
     const { vaultStatus } = await import('./commands/vault.js');
     await vaultStatus();
@@ -93,7 +95,7 @@ vault
 
 vault
   .command('search <query>')
-  .description('Search private vault')
+  .description('Search your indexed chunks (private + public) from this node')
   .option('-k, --top-k <n>', 'Results', '5')
   .action(async (query, opts) => {
     const { vaultSearch } = await import('./commands/vault.js');
@@ -118,7 +120,7 @@ vault
 
 // Colon shorthands
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
-program.command('vault:index').option('--force').option('--private').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !o.private }); });
+program.command('vault:index').option('--force').option('--public').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !!o.public }); });
 program.command('vault:sync').action(async () => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync(); });
 program.command('vault:publish').action(async () => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish(); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
@@ -156,7 +158,7 @@ network
 
 network
   .command('query <query>')
-  .description('Test network query')
+  .description('Search the public network and your indexed chunks for relevant knowledge')
   .option('-d, --domain <domain>')
   .option('-k, --top-k <n>', 'Results', '5')
   .action(async (query, opts) => {
@@ -210,15 +212,23 @@ program
     await tipsStatus();
   });
 
-// ── Publish ───────────────────────────────────────────────────────────────────
+// ── Index (private) ───────────────────────────────────────────────────────────
 
-const publish = program.command('publish').description('Publish content to vault');
+const indexCmd = program.command('index').description('Index content as private encrypted chunks');
 
-publish.command('chunk <text>').requiredOption('-t, --title <title>').option('--public').option('-d, --domain <d>').action(async (text, opts) => { const { publishChunk } = await import('./commands/publish.js'); await publishChunk(text, { title: opts.title, public: opts.public, domain: opts.domain }); });
+indexCmd.command('chunk <text>').requiredOption('-t, --title <title>').option('-d, --domain <d>').description('Index text content as a private encrypted chunk on the network').action(async (text, opts) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(text, { title: opts.title, domain: opts.domain }); });
+
+program.command('index:chunk <text>').requiredOption('-t, --title <t>').option('-d, --domain <d>').description('Index text content as a private encrypted chunk on the network').action(async (t, o) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(t, { title: o.title, domain: o.domain }); });
+
+// ── Publish (public) ──────────────────────────────────────────────────────────
+
+const publish = program.command('publish').description('Publish content publicly on the network');
+
+publish.command('chunk <text>').requiredOption('-t, --title <title>').option('--public').option('-d, --domain <d>').description('Publish text content publicly on the network. Earns tips when retrieved. Immutable.').action(async (text, opts) => { const { publishChunk } = await import('./commands/publish.js'); await publishChunk(text, { title: opts.title, public: opts.public, domain: opts.domain }); });
 publish.command('url <url>').option('--public').option('-d, --domain <d>').action(async (url, opts) => { const { publishUrl } = await import('./commands/publish.js'); await publishUrl(url, { public: opts.public, domain: opts.domain }); });
 publish.command('file <path>').option('--public').option('-d, --domain <d>').action(async (p, opts) => { const { publishFile } = await import('./commands/publish.js'); await publishFile(p, { public: opts.public, domain: opts.domain }); });
 
-program.command('publish:chunk <text>').requiredOption('-t, --title <t>').option('--public').action(async (t, o) => { const { publishChunk } = await import('./commands/publish.js'); await publishChunk(t, { title: o.title, public: o.public }); });
+program.command('publish:chunk <text>').requiredOption('-t, --title <t>').option('--public').description('Publish text content publicly on the network. Earns tips when retrieved. Immutable.').action(async (t, o) => { const { publishChunk } = await import('./commands/publish.js'); await publishChunk(t, { title: o.title, public: o.public }); });
 program.command('publish:url <url>').option('--public').action(async (url, o) => { const { publishUrl } = await import('./commands/publish.js'); await publishUrl(url, { public: o.public }); });
 program.command('publish:file <path>').option('--public').action(async (p, o) => { const { publishFile } = await import('./commands/publish.js'); await publishFile(p, { public: o.public }); });
 
@@ -236,11 +246,48 @@ program.command('account:apikey:rotate').description('Rotate API key').action(as
 
 // ── Team ──────────────────────────────────────────────────────────────────────
 
-program.command('team:invite <email>').description('Invite a team member to access your private vault').action(async (email: string) => { const { teamInvite } = await import('./commands/team.js'); await teamInvite(email); });
+program.command('team:invite <email>').description('Grant a team member access to decrypt your private chunks').action(async (email: string) => { const { teamInvite } = await import('./commands/team.js'); await teamInvite(email); });
 program.command('team:accept <inviteId>').description('Accept a team vault access invite').action(async (id: string) => { const { teamAccept } = await import('./commands/team.js'); await teamAccept(id); });
-program.command('team:list').description('List team members with vault access').action(async () => { const { teamList } = await import('./commands/team.js'); await teamList(); });
-program.command('team:revoke <email>').description('Revoke team member vault access').action(async (email: string) => { const { teamRevoke } = await import('./commands/team.js'); await teamRevoke(email); });
-program.command('vault:rotate-key').description('Rotate vault encryption key (invalidates all team access)').action(async () => { const { rotateVaultKey } = await import('./commands/team.js'); await rotateVaultKey(); });
+program.command('team:list').description('List team members with access to your private chunks').action(async () => { const { teamList } = await import('./commands/team.js'); await teamList(); });
+program.command('team:revoke <email>').description('Revoke a team member\'s access to your private chunks').action(async (email: string) => { const { teamRevoke } = await import('./commands/team.js'); await teamRevoke(email); });
+program.command('vault:rotate-key').description('Generate a new encryption key for your private chunks. Invalidates all existing team access.').action(async () => { const { rotateVaultKey } = await import('./commands/team.js'); await rotateVaultKey(); });
+
+// ── Service ───────────────────────────────────────────────────────────────────
+
+program.command('service:install')
+  .description('Register RDK to auto-start on boot')
+  .action(async () => {
+    const { serviceInstall } = await import('./commands/service/index.js');
+    await serviceInstall();
+  });
+
+program.command('service:start')
+  .description('Start RDK service')
+  .action(async () => {
+    const { serviceStart } = await import('./commands/service/index.js');
+    await serviceStart();
+  });
+
+program.command('service:stop')
+  .description('Stop RDK service')
+  .action(async () => {
+    const { serviceStop } = await import('./commands/service/index.js');
+    await serviceStop();
+  });
+
+program.command('service:status')
+  .description('Show RDK service status')
+  .action(async () => {
+    const { serviceStatus } = await import('./commands/service/index.js');
+    await serviceStatus();
+  });
+
+program.command('service:uninstall')
+  .description('Remove RDK auto-start')
+  .action(async () => {
+    const { serviceUninstall } = await import('./commands/service/index.js');
+    await serviceUninstall();
+  });
 
 // ── Dev / Testing ─────────────────────────────────────────────────────────────
 
@@ -297,19 +344,32 @@ program.command('status').description('Show full node status').action(async () =
   const hasMcp    = await checkImport('@modelcontextprotocol/sdk');
   const hasEthers = await checkImport('ethers');
 
+  // Check if mcp:serve is running by probing the HTTP server
+  let mcpRunning = false;
+  try {
+    const res = await fetch(`http://localhost:${config.mcpPort ?? 4242}/.well-known/mcp.json`, {
+      signal: AbortSignal.timeout(500),
+    });
+    mcpRunning = res.ok;
+  } catch {}
+
   console.log(t.heading('\nRDK Node Status'));
   console.log(divider(42));
-  console.log(`Node ID:   ${t.body(config.nodeId)}`);
-  console.log(`Plan:      ${t.green(config.plan)}`);
-  console.log(`Domain:    ${t.body(config.domain)}`);
+  console.log(`${t.dim('node id:')}   ${t.body(config.nodeId)}`);
+  console.log(`${t.dim('plan:')}      ${t.green(config.plan)}`);
+  console.log(`${t.dim('domain:')}    ${t.body(config.domain)}`);
   console.log('');
-  console.log(`Vault:     ${t.body(`${config.vaultAdapter} @ ${config.vaultPath}`)}`);
-  console.log(`Chunks:    ${t.body(`${stats.totalChunks.toLocaleString()} (${stats.privateChunks} private, ${stats.publicChunks} public)`)}`);
+  console.log(t.heading('Content'));
+  console.log(`  ${t.dim('local vault:')}    ${t.body(`${config.vaultAdapter} @ ${config.vaultPath}`)}`);
+  console.log(`  ${t.dim('indexed chunks:')} ${t.body(stats.totalChunks.toLocaleString())}`);
+  console.log(`    ${t.dim('private:')}      ${t.body(stats.privateChunks.toLocaleString())}  ${t.dim('(encrypted on network)')}`);
+  console.log(`    ${t.dim('public:')}       ${t.body(stats.publicChunks.toLocaleString())}  ${t.dim('(plaintext, earning)')}`);
   console.log('');
   console.log(t.body('Components:'));
   console.log(`  Embedding model  ${hasXenova ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk network:join')}`);
   console.log(`  MCP server       ${hasMcp    ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk network:join')}`);
   console.log(`  Tip settlement   ${hasEthers ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk tips:enable')}`);
+  console.log(`  ${t.dim('live sync:')}      ${mcpRunning ? t.green('● connected') : t.dim('○ offline')}${!mcpRunning ? t.dim('  (start with rdk mcp:serve)') : ''}`);
   if (pendingTips > 0) {
     console.log('');
     console.log(`Pending tips: ${t.green(`$${pendingTips.toFixed(4)} USDC`)}`);

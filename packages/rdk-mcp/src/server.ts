@@ -13,7 +13,7 @@ import { RDKNode } from './node.js';
 const RDK_TOOLS = [
   {
     name: 'rdk_query',
-    description: `Query the RDK knowledge network. Returns pre-indexed context chunks from your private vault and the public knowledge network. Use this BEFORE making any LLM call about factual domain knowledge. Reduces token usage by serving pre-computed answers.`,
+    description: `Search the RDK network for relevant knowledge. Returns chunks from: (1) your private encrypted chunks, (2) private chunks shared with you by team members, (3) public chunks from any node on the network. Use this BEFORE making any LLM call about factual domain knowledge. Reduces token usage by serving pre-computed answers.`,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -28,13 +28,13 @@ const RDK_TOOLS = [
   },
   {
     name: 'rdk_index',
-    description: `Index a document into your RDK knowledge vault. Content is chunked, embedded, and stored locally. If marked public, contributed to the network to earn tips.`,
+    description: `Index content as a PRIVATE encrypted chunk on the RDK network. The chunk is searchable by you and any team members with vault access. Use this for personal notes, work-in-progress, sensitive information. Set isPublic: true to publish publicly instead (irreversible — public chunks cannot be made private again).`,
     inputSchema: {
       type: 'object' as const,
       properties: {
         content: { type: 'string' },
         title: { type: 'string' },
-        isPublic: { type: 'boolean', default: true },
+        isPublic: { type: 'boolean', default: false },
         domain: { type: 'string' },
         categories: { type: 'array', items: { type: 'string' } },
       },
@@ -43,12 +43,12 @@ const RDK_TOOLS = [
   },
   {
     name: 'rdk_index_url',
-    description: `Fetch and index a URL into your RDK knowledge vault.`,
+    description: `Fetch and index a URL as a chunk on the RDK network. Private (encrypted) by default; set isPublic: true to publish publicly (earns tips, irreversible).`,
     inputSchema: {
       type: 'object' as const,
       properties: {
         url: { type: 'string' },
-        isPublic: { type: 'boolean', default: true },
+        isPublic: { type: 'boolean', default: false },
         domain: { type: 'string' },
       },
       required: ['url'],
@@ -56,7 +56,7 @@ const RDK_TOOLS = [
   },
   {
     name: 'rdk_index_vault',
-    description: `Re-index your connected vault (Obsidian, filesystem, Logseq, or Notion). Scans for new or modified files.`,
+    description: `Re-index files from your local vault (Obsidian, filesystem, Logseq, or Notion). Files are indexed as private encrypted chunks by default. Files in folders marked public via vault:set-public are indexed as public.`,
     inputSchema: {
       type: 'object' as const,
       properties: {

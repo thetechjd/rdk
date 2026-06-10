@@ -55,7 +55,7 @@ export interface VaultAdapter {
   /** Incremental index — only changed files since last run */
   indexChanged(since: Date, options: IndexOptions): Promise<IndexResult>;
 
-  /** Semantic search within private vault */
+  /** Semantic search within indexed chunks */
   search(embedding: Float32Array, topK: number): Promise<RetrievedChunk[]>;
 
   /** Watch for changes (returns unsubscribe function) */

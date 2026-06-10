@@ -5,7 +5,7 @@ import { t, mark, divider } from '../theme.js';
 
 export async function vaultConnect(adapter: string, vaultPath?: string): Promise<void> {
   const ora = (await import('ora')).default;
-  const adapterKey = `@rdk/adapter-${adapter}`;
+  const adapterKey = `@retrodeck/adapter-${adapter}`;
   console.log('');
   const ready = await requireDeps([adapterKey], { label: `Vault adapter for ${adapter}` });
   if (!ready) return;
@@ -29,7 +29,7 @@ export async function vaultConnect(adapter: string, vaultPath?: string): Promise
 export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }): Promise<void> {
   const ora = (await import('ora')).default;
   const config = loadConfig();
-  const adapterKey = `@rdk/adapter-${config.vaultAdapter}`;
+  const adapterKey = `@retrodeck/adapter-${config.vaultAdapter}`;
 
   const ready = await requireDeps(
     [adapterKey, '@xenova/transformers'],
@@ -37,7 +37,7 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
   );
   if (!ready) return;
 
-  const isPublic = opts.isPublic ?? true;
+  const isPublic = opts.isPublic ?? false;
   const spinner = ora(`Indexing vault (${config.vaultAdapter})...`).start();
   try {
     const mod = await import(adapterKey);
@@ -55,7 +55,11 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
           { isPublic },
         );
 
-    spinner.succeed(`${result.filesProcessed} files → ${result.chunksIndexed} chunks indexed (${isPublic ? 'public' : 'private'})`);
+    spinner.succeed(`Indexed ${result.chunksIndexed} chunks`);
+    console.log(t.dim(`  ${result.chunksIndexed} chunks indexed (${isPublic ? 'public' : 'private by default'})`));
+    if (!isPublic) {
+      console.log(t.dim('  Files in folders marked public via vault:set-public are indexed as public.'));
+    }
 
     if (result.errors.length > 0) {
       console.log(t.warn(`\n${result.errors.length} errors:`));
@@ -76,14 +80,13 @@ export async function vaultStatus(): Promise<void> {
 
   console.log(t.heading('\nVault Status'));
   console.log(divider(40));
-  console.log(`Adapter:      ${t.body(config.vaultAdapter)}`);
-  console.log(`Path:         ${t.body(config.vaultPath)}`);
-  console.log(`Domain:       ${t.body(config.domain)}`);
+  console.log(`${t.dim('adapter:')}     ${t.body(config.vaultAdapter)}`);
+  console.log(`${t.dim('path:')}        ${t.body(config.vaultPath)}`);
+  console.log(`${t.dim('domain:')}      ${t.body(config.domain)}`);
   console.log('');
-  console.log(`Total chunks: ${t.body(stats.totalChunks.toLocaleString())}`);
-  console.log(`  Private:    ${t.body(stats.privateChunks.toLocaleString())}`);
-  console.log(`  Public:     ${t.body(stats.publicChunks.toLocaleString())}`);
-  console.log(`  Unsynced:   ${t.body(stats.unsyncedChunks.toLocaleString())}`);
+  console.log(`${t.dim('private chunks:')}  ${t.body(stats.privateChunks.toLocaleString())}  ${t.dim('(encrypted on network)')}`);
+  console.log(`${t.dim('public chunks:')}   ${t.body(stats.publicChunks.toLocaleString())}  ${t.dim('(plaintext on network)')}`);
+  console.log(`${t.dim('unsynced:')}        ${t.body(stats.unsyncedChunks.toLocaleString())}`);
 }
 
 export async function vaultSync(): Promise<void> {
@@ -203,7 +206,7 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
     spinner.stop();
 
     if (!results.length) {
-      console.log(t.warn('No results in private vault.'));
+      console.log(t.warn('No results found in your indexed chunks.'));
       return;
     }
 

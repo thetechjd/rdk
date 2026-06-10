@@ -281,3 +281,184 @@ rdk tips:enable             # explicit Tier 4
 - If missing: shows package name, size, reason, asks Y/n
 - Runs `npm install <package>` in cwd on confirm
 - Non-TTY (piped/scripted): defaults to Y automatically
+
+
+# RDK Terminology — Canonical Glossary
+## Source of truth for LOCAL / PRIVATE / PUBLIC distinctions
+
+---
+
+## The Three States
+
+All user-facing language across RDK, RetroDeck API, RDK Central, the
+dashboard, the landing page, and the docs must use these definitions
+consistently.
+
+### LOCAL
+
+Files that live in the user's own vault — Obsidian, filesystem, Logseq,
+Notion. The user edits these directly. They are **not indexed**, **not
+synced**, and **not visible to anyone but the user (and whoever has
+access to their machine)**.
+
+Examples of LOCAL content:
+- A note in `~/Documents/ObsidianVault/projects/auth-system.md`
+- A markdown file in a folder watched by RDK that hasn't been indexed yet
+- A new file the user just created
+
+**Key property**: LOCAL means "owned and edited by the user, off-network."
+
+### PRIVATE
+
+Content that has been **indexed and synced** to RDK Central, encrypted
+with the user's vault key (AES-256-GCM). Lives on the network as
+ciphertext. Accessible to the user and any team members who have been
+granted access to the vault key. RetroDeck cannot decrypt it.
+
+Examples of PRIVATE content:
+- A chunk that was indexed from an Obsidian note marked private
+- An encrypted chunk on RDK Central that the user's node decrypts at
+  query time
+
+**Key property**: PRIVATE means "on the network, encrypted, restricted access."
+
+### PUBLIC
+
+Content that has been **indexed and synced** to RDK Central as
+plaintext. Accessible to all nodes on the network. Earns USDC tips
+when retrieved by other agents. **Immutable** once synced — cannot be
+made private again.
+
+Examples of PUBLIC content:
+- A chunk in the user's `vault/published/` folder (designated public)
+- A chunk explicitly published via `rdk publish:chunk`
+
+**Key property**: PUBLIC means "on the network, plaintext, anyone can read."
+
+---
+
+## State Transitions
+
+```
+   ┌────────┐                    ┌────────┐
+   │ LOCAL  │  rdk vault:index   │PRIVATE │
+   │ (file) │ ─────────────────► │(chunk) │
+   └────────┘   (default mode)   └────┬───┘
+                                      │
+                                      │  rdk publish:chunk
+                                      │  OR vault:make-public
+                                      ▼
+                                 ┌────────┐
+                                 │ PUBLIC │ (irreversible)
+                                 │(chunk) │
+                                 └────────┘
+```
+
+**LOCAL → PRIVATE**: indexing a file syncs the encrypted chunk to RDK Central
+**LOCAL → PUBLIC**: indexing a file in a designated public folder, OR
+publishing directly with `--public`
+**PRIVATE → PUBLIC**: promote a private chunk to public (one-way)
+**PUBLIC → PRIVATE**: not possible (immutable)
+**PUBLIC → LOCAL**: not possible (public chunks are network-owned)
+**PRIVATE → LOCAL**: removing the chunk from the network deletes the
+PRIVATE state; the LOCAL file remains untouched
+
+---
+
+## What "Vault" Means
+
+"Vault" refers to the **LOCAL** source — the user's Obsidian/filesystem
+folder. When we say "your vault," we mean the files on the user's
+machine that they edit themselves.
+
+Avoid using "vault" to mean "indexed knowledge" or "network chunks."
+Those are PRIVATE/PUBLIC chunks, not vault.
+
+The CLI's `rdk vault:*` commands operate on the LOCAL vault and the
+indexing pipeline that pushes content from LOCAL → PRIVATE/PUBLIC.
+
+---
+
+## What the Local SQLite Cache Is (and Isn't)
+
+`~/.rdk/index.db` is a **cache** of the network state for fast local
+search. It's not a separate state — its contents are always either
+PRIVATE or PUBLIC chunks (mirroring what's on RDK Central).
+
+**Never surface the SQLite cache as "local" in user-facing language.**
+It's an implementation detail.
+
+---
+
+## Forbidden Phrases (Find and Replace)
+
+These ambiguous phrases must be eliminated from all user-facing copy
+(UI labels, CLI output, docs, marketing):
+
+| Bad | Why | Use instead |
+|---|---|---|
+| "your private vault" | Conflates LOCAL and PRIVATE | "your local vault" OR "your private chunks" — pick based on which one you mean |
+| "stored locally" (referring to network chunks) | The user thinks LOCAL means their files | "stored privately" OR "encrypted on the network" |
+| "local chunks" | All chunks are on the network | "private chunks" |
+| "private files" | Files don't have a private/public state, chunks do | "files in your vault" OR "private chunks indexed from your files" |
+| "publish privately" | "Publish" implies public | "index privately" OR "index to private" |
+| "your knowledge" (ambiguous) | Could mean LOCAL files or indexed chunks | Specify: "your local vault" / "your private chunks" / "your published content" |
+
+---
+
+## Approved Phrasing Templates
+
+Use these as starting points for any user-facing copy:
+
+**For LOCAL files:**
+- "files in your local vault"
+- "your vault files"
+- "content on your machine"
+- "what you've written in Obsidian"
+
+**For PRIVATE chunks:**
+- "your private chunks"
+- "your encrypted knowledge on the network"
+- "indexed privately"
+- "private to you (and your team if shared)"
+
+**For PUBLIC chunks:**
+- "your published content"
+- "public chunks"
+- "published to the network"
+- "publicly indexed"
+
+**For both PRIVATE and PUBLIC together:**
+- "your indexed chunks"
+- "your knowledge on the network"
+- "what you've indexed"
+
+---
+
+## Visibility State Display
+
+Across all surfaces (CLI output, dashboard, docs), use these consistent
+state indicators:
+
+| State | Icon | Color | Label |
+|---|---|---|---|
+| LOCAL | ◯ (hollow circle) | muted gray | `local` |
+| PRIVATE | ● (filled circle) | phosphor dim | `private` |
+| PUBLIC | ● (filled circle) | phosphor bright | `public` |
+
+Always lowercase. Always monospace. The visual difference between the
+hollow circle (LOCAL) and filled circle (PRIVATE/PUBLIC) reinforces
+that LOCAL exists off-network while the others are on-network.
+
+---
+
+## Future Consideration (NOT in this cleanup)
+
+We currently don't support a "LOCAL-INDEXED" state — content indexed
+into the local SQLite cache but never synced to RDK Central. Some
+users with extremely sensitive material may want this someday. If we
+add it, the term would be `local-indexed` or `air-gapped` and we'd
+introduce a fourth state. For now, all indexed content goes to RDK
+Central as either PRIVATE (encrypted) or PUBLIC (plaintext).
+
+Tagging here so the language work doesn't need redoing if/when we add it.
