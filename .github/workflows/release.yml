@@ -90,10 +90,18 @@ jobs:
             --targets ${{ matrix.pkg_target }} \
             --output dist/binaries/${{ matrix.binary }}
 
+      - name: Copy native addon alongside binary
+        working-directory: packages/rdk-cli
+        run: |
+          cp dist/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
+             dist/binaries/better_sqlite3.node
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}
-          path: packages/rdk-cli/dist/binaries/${{ matrix.binary }}
+          path: |
+            packages/rdk-cli/dist/binaries/${{ matrix.binary }}
+            packages/rdk-cli/dist/binaries/better_sqlite3.node
 
   release:
     needs: build
@@ -111,16 +119,23 @@ jobs:
         run: |
           mkdir -p release-assets
           for dir in dist/binaries/*/; do
-            name=$(basename "$dir")
-            cp "$dir/$name" "release-assets/$name"
-            [[ "$name" == *.exe ]] || chmod +x "release-assets/$name"
+            binary=$(basename "$dir")
+            cp "$dir/$binary" "release-assets/$binary"
+            [[ "$binary" == *.exe ]] || chmod +x "release-assets/$binary"
+            # Bundle platform-specific native addon inside the tarball
+            cd release-assets
+            if [[ -f "../$dir/better_sqlite3.node" ]]; then
+              cp "../$dir/better_sqlite3.node" ./better_sqlite3.node
+              tar -czf "${binary}.tar.gz" "$binary" better_sqlite3.node
+              rm better_sqlite3.node
+            else
+              tar -czf "${binary}.tar.gz" "$binary"
+            fi
+            sha256sum "${binary}.tar.gz" >> SHA256SUMS
+            rm "$binary"
+            cd ..
           done
-          cd release-assets
-          for f in rdk-*; do
-            tar -czf "${f}.tar.gz" "$f"
-            sha256sum "${f}.tar.gz" >> SHA256SUMS
-          done
-          cat SHA256SUMS
+          cat release-assets/SHA256SUMS
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

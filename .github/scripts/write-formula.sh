@@ -37,7 +37,16 @@ class Rdk < Formula
   end
 
   def install
-    bin.install "rdk-#{OS.mac? ? 'macos' : 'linux'}-#{Hardware::CPU.arm? ? 'arm64' : 'x64'}" => "rdk"
+    os  = OS.mac? ? "macos" : "linux"
+    cpu = Hardware::CPU.arm? ? "arm64" : "x64"
+    libexec.install "rdk-#{os}-#{cpu}" => "rdk-bin"
+    libexec.install "better_sqlite3.node"
+    (bin/"rdk").write <<~SH
+      #!/bin/bash
+      export BETTER_SQLITE3_NATIVE_BINDING="#{libexec}/better_sqlite3.node"
+      exec "#{libexec}/rdk-bin" "\$@"
+    SH
+    chmod 0755, bin/"rdk"
   end
 
   test do

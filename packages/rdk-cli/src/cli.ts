@@ -15,8 +15,10 @@ import path from 'path';
 {
   const proc = process as typeof process & { pkg?: object };
   if (proc.pkg) {
+    // Point to a real file next to the binary — pkg's snapshot paths can't be dlopen'd
     process.env.BETTER_SQLITE3_NATIVE_BINDING = path.join(
-      __dirname, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node',
+      path.dirname(process.execPath),
+      'better_sqlite3.node',
     );
   }
 }
