@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
+import { resolveLaunch } from './platform.js';
 
 const execAsync = promisify(exec);
 
@@ -16,7 +17,14 @@ const PLIST_PATH = path.join(
   `${LABEL}.plist`,
 );
 
-function buildPlist(rdkPath: string, logDir: string): string {
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function buildPlist(command: string, args: string[], logDir: string): string {
+  const programArgs = [command, ...args]
+    .map(a => `      <string>${xmlEscape(a)}</string>`)
+    .join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -26,8 +34,7 @@ function buildPlist(rdkPath: string, logDir: string): string {
 
     <key>ProgramArguments</key>
     <array>
-      <string>${rdkPath}</string>
-      <string>mcp:serve</string>
+${programArgs}
     </array>
 
     <key>RunAtLoad</key>
@@ -59,23 +66,14 @@ function buildPlist(rdkPath: string, logDir: string): string {
 </plist>`;
 }
 
-async function findRdkBinary(): Promise<string> {
-  try {
-    const { stdout } = await execAsync('which rdk');
-    return stdout.trim();
-  } catch {
-    throw new Error('Cannot find rdk binary. Is RDK installed and in your PATH?');
-  }
-}
-
 export const MacOSAdapter = {
   async install() {
-    const rdkPath = await findRdkBinary();
+    const { command, args } = resolveLaunch('mcp:serve');
     const logDir = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
     await fs.mkdir(path.dirname(PLIST_PATH), { recursive: true });
 
-    const plistContent = buildPlist(rdkPath, logDir);
+    const plistContent = buildPlist(command, args, logDir);
     await fs.writeFile(PLIST_PATH, plistContent, 'utf8');
 
     try {

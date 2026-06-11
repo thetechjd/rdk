@@ -8,7 +8,7 @@ async function getIndexer() {
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
   if (!ready) return null;
 
-  const { LocalStore, LocalEmbeddingModel, RDKIndexer } = await import('@rdk/core');
+  const { LocalStore, LocalEmbeddingModel, RDKIndexer, keyFromHex } = await import('@rdk/core');
   const { pushChunkIndexed } = await import('../ws/events.js');
   const config = loadConfig();
   const model = new LocalEmbeddingModel();
@@ -20,6 +20,7 @@ async function getIndexer() {
     syncToNetwork: true,
     centralApiUrl: config.centralApiUrl,
     centralApiKey: config.apiKey,
+    vaultKey: config.vaultKeyHex ? keyFromHex(config.vaultKeyHex) : undefined,
     onChunkIndexed: pushChunkIndexed,
   });
 }

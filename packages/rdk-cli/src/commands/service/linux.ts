@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
+import { resolveLaunch } from './platform.js';
 
 const execAsync = promisify(exec);
 
@@ -12,7 +13,10 @@ const UNIT_NAME = 'rdk.service';
 const UNIT_DIR  = path.join(os.homedir(), '.config', 'systemd', 'user');
 const UNIT_PATH = path.join(UNIT_DIR, UNIT_NAME);
 
-function buildUnit(rdkPath: string, logDir: string): string {
+function buildUnit(command: string, args: string[], logDir: string): string {
+  // systemd ExecStart supports double-quoted tokens; quoting every token keeps
+  // absolute paths with spaces intact.
+  const execStart = [command, ...args].map(tok => `"${tok}"`).join(' ');
   return `[Unit]
 Description=RDK — Retrieval Development Kit node
 After=network-online.target
@@ -20,7 +24,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${rdkPath} mcp:serve
+ExecStart=${execStart}
 Restart=on-failure
 RestartSec=10
 StandardOutput=append:${path.join(logDir, 'rdk.out.log')}
@@ -32,23 +36,14 @@ WantedBy=default.target
 `;
 }
 
-async function findRdkBinary(): Promise<string> {
-  try {
-    const { stdout } = await execAsync('which rdk');
-    return stdout.trim();
-  } catch {
-    throw new Error('Cannot find rdk binary. Is RDK installed and in your PATH?');
-  }
-}
-
 export const LinuxAdapter = {
   async install() {
-    const rdkPath = await findRdkBinary();
+    const { command, args } = resolveLaunch('mcp:serve');
     const logDir  = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
     await fs.mkdir(UNIT_DIR, { recursive: true });
 
-    const unitContent = buildUnit(rdkPath, logDir);
+    const unitContent = buildUnit(command, args, logDir);
     await fs.writeFile(UNIT_PATH, unitContent, 'utf8');
 
     execSync('systemctl --user daemon-reload', { stdio: 'inherit' });

@@ -16,11 +16,12 @@ import type {
   VaultAdapter, AdapterConfig, IndexOptions, IndexResult,
   RetrievedChunk, FileChange, VaultMetadata,
 } from '@rdk/core';
-import { LocalStore, RDKIndexer, LocalEmbeddingModel } from '@rdk/core';
+import { LocalStore, RDKIndexer, LocalEmbeddingModel, keyFromHex } from '@rdk/core';
 
 export interface ObsidianAdapterConfig extends AdapterConfig {
   vaultPath: string;
   domain?: string;
+  vaultKeyHex?: string;         // hex vault key — encrypts private chunks at rest
   resolveWikilinks?: boolean;   // default true
   includeJournals?: boolean;    // default false
   maxWikilinkDepth?: number;    // default 1 (don't recurse wikilinks of wikilinks)
@@ -51,10 +52,12 @@ export default class ObsidianAdapter implements VaultAdapter {
 
     this.store = new LocalStore();
     const model = new LocalEmbeddingModel();
+    const vaultKeyHex = this.config.vaultKeyHex as string | undefined;
     this.indexer = new RDKIndexer({
       embeddingModel: model,
       localStore: this.store,
       domain: (this.config.domain as string) ?? 'general',
+      vaultKey: vaultKeyHex ? keyFromHex(vaultKeyHex) : undefined,
     });
   }
 

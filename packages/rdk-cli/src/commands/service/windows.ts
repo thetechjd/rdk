@@ -5,13 +5,20 @@ import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
+import { resolveLaunch } from './platform.js';
 
 const execAsync = promisify(exec);
 
 const TASK_NAME     = 'RetroDeck-RDK';
 const TASK_XML_PATH = path.join(os.tmpdir(), 'rdk-task.xml');
 
-function buildTaskXml(rdkPath: string, _logDir: string): string {
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function buildTaskXml(command: string, args: string[], _logDir: string): string {
+  // Quote any argument containing spaces so the absolute cli.js path survives.
+  const argLine = args.map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -57,29 +64,20 @@ function buildTaskXml(rdkPath: string, _logDir: string): string {
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>${rdkPath}</Command>
-      <Arguments>mcp:serve</Arguments>
+      <Command>${xmlEscape(command)}</Command>
+      <Arguments>${xmlEscape(argLine)}</Arguments>
     </Exec>
   </Actions>
 </Task>`;
 }
 
-async function findRdkBinary(): Promise<string> {
-  try {
-    const { stdout } = await execAsync('where rdk');
-    return stdout.split('\n')[0].trim();
-  } catch {
-    throw new Error('Cannot find rdk binary. Is RDK installed and in your PATH?');
-  }
-}
-
 export const WindowsAdapter = {
   async install() {
-    const rdkPath = await findRdkBinary();
+    const { command, args } = resolveLaunch('mcp:serve');
     const logDir  = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
 
-    const taskXml = buildTaskXml(rdkPath, logDir);
+    const taskXml = buildTaskXml(command, args, logDir);
     // Windows requires UTF-16 LE with BOM for schtasks XML import
     await fs.writeFile(TASK_XML_PATH, '﻿' + taskXml, 'utf16le');
 

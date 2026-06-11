@@ -16,12 +16,13 @@ import type {
   FileChange,
   VaultMetadata,
 } from '@rdk/core';
-import { LocalStore, RDKIndexer } from '@rdk/core';
+import { LocalStore, RDKIndexer, keyFromHex } from '@rdk/core';
 
 export interface FilesystemAdapterConfig extends AdapterConfig {
   rootPath: string;
   extensions?: string[];
   domain?: string;
+  vaultKeyHex?: string;   // hex vault key — encrypts private chunks at rest
 }
 
 export class FilesystemAdapter implements VaultAdapter {
@@ -48,11 +49,13 @@ export class FilesystemAdapter implements VaultAdapter {
     const { LocalEmbeddingModel } = await import('@rdk/core');
     const embeddingModel = new LocalEmbeddingModel();
 
+    const vaultKeyHex = this.config.vaultKeyHex as string | undefined;
     this.indexer = new RDKIndexer({
       embeddingModel,
       localStore: this.store,
       domain: (this.config.domain as string) ?? 'general',
       syncToNetwork: false, // sync is triggered separately
+      vaultKey: vaultKeyHex ? keyFromHex(vaultKeyHex) : undefined,
     });
   }
 

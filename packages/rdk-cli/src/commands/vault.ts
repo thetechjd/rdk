@@ -1,6 +1,7 @@
 // packages/rdk-cli/src/commands/vault.ts
 import { loadConfig, updateConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
+import { loadAdapter } from '../load-adapter.js';
 import { t, mark, divider } from '../theme.js';
 
 export async function vaultConnect(adapter: string, vaultPath?: string): Promise<void> {
@@ -15,9 +16,8 @@ export async function vaultConnect(adapter: string, vaultPath?: string): Promise
 
   const spinner = ora(`Connecting ${adapter} vault at ${resolvedPath}...`).start();
   try {
-    const mod = await import(adapterKey);
-    const adapterInst = new mod.default();
-    await adapterInst.connect({ vaultPath: resolvedPath, domain: config.domain });
+    const adapterInst = await loadAdapter(adapterKey);
+    await adapterInst.connect({ vaultPath: resolvedPath, domain: config.domain, vaultKeyHex: config.vaultKeyHex });
     const meta = adapterInst.getMetadata();
     spinner.succeed(`Connected — ${meta.documentCount} documents found`);
     console.log(t.dim('  Run rdk vault:index to index them'));
@@ -40,12 +40,12 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
   const isPublic = opts.isPublic ?? false;
   const spinner = ora(`Indexing vault (${config.vaultAdapter})...`).start();
   try {
-    const mod = await import(adapterKey);
-    const adapter = new mod.default();
+    const adapter = await loadAdapter(adapterKey);
     await adapter.connect({
       vaultPath: config.vaultPath,
       domain: config.domain,
       publicFolders: config.publicFolders ?? [],
+      vaultKeyHex: config.vaultKeyHex,
     });
 
     const result = opts.force
@@ -195,7 +195,9 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
   if (!ready) return;
 
-  const { LocalStore, LocalEmbeddingModel } = await import('@rdk/core');
+  const { LocalStore, LocalEmbeddingModel, decrypt, keyFromHex } = await import('@rdk/core');
+  const config = loadConfig();
+  const vaultKey = config.vaultKeyHex ? keyFromHex(config.vaultKeyHex) : undefined;
   const store = new LocalStore();
   const spinner = ora(`Searching: "${query}"...`).start();
 
@@ -213,9 +215,19 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
     console.log(t.heading(`\nTop ${results.length} results for: "${query}"\n`));
     results.forEach((r, i) => {
       const score = (r.score * 100).toFixed(1);
+      // Private chunks are encrypted at rest — decrypt for display with the vault key.
+      let content = r.content;
+      if (r.isEncrypted) {
+        if (vaultKey) {
+          try { content = decrypt(r.content, vaultKey); }
+          catch { content = t.dim('[encrypted — decryption failed]'); }
+        } else {
+          content = t.dim('[encrypted — no vault key configured]');
+        }
+      }
       console.log(t.bold(`[${i + 1}] ${r.title}`) + t.dim(` (${score}% match)`));
       if (r.sourcePath) console.log(t.dim(`    ${r.sourcePath}`));
-      console.log(t.body(r.content.slice(0, 200) + (r.content.length > 200 ? '...' : '')));
+      console.log(t.body(content.slice(0, 200) + (content.length > 200 ? '...' : '')));
       console.log('');
     });
   } catch (e) {

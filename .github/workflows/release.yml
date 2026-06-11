@@ -169,16 +169,10 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          BASE_URL="https://github.com/thetechjd/rdk/releases/download/${GITHUB_REF_NAME}"
-
-          MAC_ARM_SHA=$(grep rdk-macos-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
-          MAC_X64_SHA=$(grep rdk-macos-x64.tar.gz   release-assets/SHA256SUMS | awk '{print $1}')
-          LNX_X64_SHA=$(grep rdk-linux-x64.tar.gz   release-assets/SHA256SUMS | awk '{print $1}')
-          LNX_ARM_SHA=$(grep rdk-linux-arm64.tar.gz release-assets/SHA256SUMS | awk '{print $1}')
 
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/thetechjd/homebrew-rdk.git" tap
 
-          export VERSION BASE_URL MAC_ARM_SHA MAC_X64_SHA LNX_X64_SHA LNX_ARM_SHA
+          export VERSION
           bash .github/scripts/write-formula.sh tap/Formula/rdk.rb
 
           cd tap

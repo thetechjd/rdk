@@ -4,6 +4,7 @@ import os from 'os';
 import fs from 'fs';
 import { saveConfig, ensureRDKDir, configExists, loadConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
+import { loadAdapter } from '../load-adapter.js';
 import { input, password, confirm, select, pressEnter } from '../prompts.js';
 import {
   splash, stepHeader, t, divider, importantValue,
@@ -772,10 +773,9 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
       const indexSpinner = ora(`  Indexing vault (${fileCount} files)...`).start();
       try {
         const adapterKey = `@retrodeck/adapter-${opts.vaultAdapter}`;
-        const mod = await import(adapterKey);
-        const adapter = new mod.default();
-        await adapter.connect({ vaultPath: opts.vaultPath, domain: opts.domain });
-        const result = await adapter.indexAll({ isPublic: true });
+        const adapter = await loadAdapter(adapterKey);
+        await adapter.connect({ vaultPath: opts.vaultPath, domain: opts.domain, vaultKeyHex });
+        const result = await adapter.indexAll({ isPublic: false });
         indexSpinner.succeed(`  Indexed ${result.filesProcessed} files → ${result.chunksIndexed} chunks`);
       } catch (e) {
         indexSpinner.warn(`  Index skipped: ${(e as Error).message}`);
@@ -793,24 +793,43 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
   ]);
 
   if (mcpReady) {
-    console.log(`  ${t.heading('Start the MCP server:')}`);
-    console.log(`  ${t.green('rdk mcp:serve')}`);
-    console.log('');
     note('Add to claude_desktop_config.json:');
     note('{ "mcpServers": { "rdk": {');
     note('  "command": "rdk", "args": ["mcp:serve"] } } }');
+    console.log('');
+
+    // ── Start / auto-start the MCP server ──────────────────────────────────
+    const runNow = await confirm({
+      message: 'Run the MCP server now?',
+      default: true,
+    });
+
+    const autoStart = await confirm({
+      message: 'Start RDK automatically on startup? (recommended)',
+      default: true,
+    });
+
+    if (autoStart) {
+      // service:install installs the boot hook AND starts the server
+      // immediately, so it covers "run now" too.
+      const { serviceInstall } = await import('./service/index.js');
+      await serviceInstall();
+    } else if (runNow) {
+      const { startDetached } = await import('./service/index.js');
+      await startDetached();
+    } else {
+      console.log('');
+      console.log(`  ${t.heading('Start the MCP server when you’re ready:')}`);
+      console.log(`  ${t.green('rdk mcp:serve')}`);
+      console.log(t.dim('  Enable auto-start later with: rdk service:install'));
+      console.log('');
+    }
+  } else {
+    console.log('');
+    console.log(t.dim('  Enable the MCP server later with: rdk network:join'));
+    console.log('');
   }
 
-  console.log('');
-  console.log(t.heading('  One more thing...'));
-  console.log('');
-  console.log(t.body('  Want RDK to start automatically when your computer boots?'));
-  console.log(t.dim('  Run this once:'));
-  console.log('');
-  console.log(t.green('  rdk service:install'));
-  console.log('');
-  console.log(t.dim('  Or skip it and start manually with rdk mcp:serve.'));
-  console.log('');
   console.log(`  ${t.dim('Manage your account:')} ${link('https://retrodeck.ai/dashboard')}`);
   console.log(`  ${divider(48)}\n`);
 }

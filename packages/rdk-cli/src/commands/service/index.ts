@@ -1,7 +1,37 @@
 // packages/rdk-cli/src/commands/service/index.ts
 
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { spawn } from 'child_process';
 import { t, mark } from '../../theme.js';
-import { getAdapter, detectPlatform } from './platform.js';
+import { getAdapter, detectPlatform, resolveLaunch } from './platform.js';
+
+/**
+ * Start the MCP server in the background for this boot only (no auto-start
+ * hook installed). Uses the same absolute launch spec as the service adapters,
+ * so it works regardless of how RDK was installed.
+ */
+export async function startDetached(): Promise<void> {
+  const logDir = path.join(os.homedir(), '.rdk', 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  const out = fs.openSync(path.join(logDir, 'rdk.out.log'), 'a');
+  const err = fs.openSync(path.join(logDir, 'rdk.err.log'), 'a');
+
+  const { command, args } = resolveLaunch('mcp:serve');
+  const child = spawn(command, args, {
+    detached: true,
+    windowsHide: true,
+    stdio: ['ignore', out, err],
+  });
+  child.unref();
+
+  console.error('');
+  console.error(t.green(`  ${mark.ok()} RDK MCP server started (pid: ${child.pid})`));
+  console.error(t.dim(`  Logs: ${path.join(logDir, 'rdk.out.log')}`));
+  console.error(t.dim('  Runs until you reboot. Enable auto-start: rdk service:install'));
+  console.error('');
+}
 
 export async function serviceInstall(): Promise<void> {
   const platform = detectPlatform();
