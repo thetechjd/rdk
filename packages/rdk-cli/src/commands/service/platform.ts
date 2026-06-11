@@ -39,20 +39,16 @@ export interface LaunchSpec {
  * Resolve exactly how to re-invoke this rdk binary, derived from the
  * currently-running process rather than a PATH lookup.
  *
- * This is what makes auto-start identical across install methods:
- *   - brew  → standalone @yao-pkg/pkg binary; `process.execPath` IS rdk.
- *   - curl  → bundled node under ~/.rdk/runtime; execPath + cli.js are absolute.
+ * Every install method is node-based, so execPath is the absolute Node and
+ * argv[1] is the absolute cli.js:
+ *   - brew  → node@22 under the Cellar; execPath + cli.js are absolute.
+ *   - curl  → bundled node under ~/.rdk/runtime; both absolute.
  *   - npm   → global cli.js; execPath is the absolute node (even nvm/fnm/volta).
  *
  * Because every path is absolute, the service survives a minimal launchd /
  * systemd PATH and never depends on `node` being discoverable at boot.
  */
 export function resolveLaunch(...extraArgs: string[]): LaunchSpec {
-  // @yao-pkg/pkg sets process.pkg on the packaged standalone binary.
-  if ((process as unknown as { pkg?: unknown }).pkg) {
-    return { command: process.execPath, args: [...extraArgs] };
-  }
-  // node-based install: execPath is the absolute node, argv[1] the cli.js.
   return { command: process.execPath, args: [process.argv[1], ...extraArgs] };
 }
 

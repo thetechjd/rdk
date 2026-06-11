@@ -7,21 +7,6 @@
 //   Tier 3  rdk network:join    → @xenova/transformers + MCP SDK (~50MB)
 //   Tier 4  rdk tips:enable     → ethers for on-chain settlement (~15MB)
 
-// Shim: when running as a pkg binary, pkg automatically extracts .node assets
-// when require()'d via an absolute path. We set the env var to the virtual
-// snapshot path; better-sqlite3's nativeBinding option calls require() on it,
-// and pkg handles extraction to the real filesystem transparently.
-import path from 'path';
-{
-  const proc = process as typeof process & { pkg?: object };
-  if (proc.pkg) {
-    // Point to a real file next to the binary — pkg's snapshot paths can't be dlopen'd
-    process.env.BETTER_SQLITE3_NATIVE_BINDING = path.join(
-      path.dirname(process.execPath),
-      'better_sqlite3.node',
-    );
-  }
-}
 
 import { Command } from 'commander';
 // eslint-disable-next-line @typescript-eslint/no-require-imports

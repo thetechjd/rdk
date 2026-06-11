@@ -1,5 +1,16 @@
 name: Release
 
+# Install is npm-based across all channels:
+#   - npm:  npm install -g @retrodeck/rdk
+#   - brew: formula installs @retrodeck/rdk from the npm registry (node@22)
+#   - curl: install.sh installs @retrodeck/rdk@latest under a bundled Node
+# So a release only needs to: publish to npm (done manually before tagging),
+# then point the Homebrew formula at the new version. No standalone binaries.
+#
+# Release flow:
+#   1. pnpm --filter @retrodeck/rdk publish   (manual, OTP-gated)
+#   2. git tag vX.Y.Z && git push origin vX.Y.Z   → this workflow runs
+
 on:
   push:
     tags:
@@ -9,146 +20,21 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-14          # Apple Silicon (arm64)
-            pkg_target: node20-macos-arm64
-            binary: rdk-macos-arm64
-          # macos-13 (Intel) runner pool is near-deprecated and rarely picks up jobs.
-          # Intel Mac users can install via npm. Re-enable if GitHub restores the pool.
-          # - os: macos-13
-          #   pkg_target: node20-macos-x64
-          #   binary: rdk-macos-x64
-          - os: ubuntu-22.04      # Linux x86_64
-            pkg_target: node20-linux-x64
-            binary: rdk-linux-x64
-          - os: ubuntu-22.04-arm  # Linux arm64
-            pkg_target: node20-linux-arm64
-            binary: rdk-linux-arm64
-          # Windows: @yao-pkg/pkg crashes on dynamic workspace imports (PE binary
-          # patching bug). Windows users should install via npm for now.
-          # - os: windows-latest
-          #   pkg_target: node20-win-x64
-          #   binary: rdk-win-x64.exe
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - uses: pnpm/action-setup@v3
-        with:
-          version: 9
-
-      - name: Install workspace deps
-        run: pnpm install
-
-      - name: Cache pkg base binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/.pkg-cache
-          key: pkg-cache-${{ matrix.pkg_target }}-node20.20.2
-
-      - name: Build workspace dependencies
-        run: |
-          pnpm --filter @rdk/core build
-          pnpm --filter @retrodeck/mcp build
-          pnpm --filter @retrodeck/x402 build
-          pnpm --filter "@retrodeck/adapter-filesystem" build
-          pnpm --filter "@retrodeck/adapter-obsidian" build
-
-      - name: Build JS bundle
-        working-directory: packages/rdk-cli
-        shell: bash
-        run: |
-          ./node_modules/esbuild/bin/esbuild src/cli.ts \
-            --bundle --platform=node --format=cjs --target=node20 \
-            --outfile=dist/cli.js \
-            --external:@xenova/transformers --external:ethers \
-            --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem \
-            --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion \
-            --external:@retrodeck/mcp --external:@retrodeck/x402 \
-            --external:@modelcontextprotocol/sdk \
-            --external:better-sqlite3 --external:chokidar --external:ws \
-            --banner:js="#!/usr/bin/env node"
-
-      - name: Prep native deps (rebuild better-sqlite3 for node20)
-        working-directory: packages/rdk-cli
-        run: node scripts/pkg-prep.js
-
-      - name: Build pkg binary (${{ matrix.binary }})
-        working-directory: packages/rdk-cli
-        run: |
-          mkdir -p dist/binaries
-          node node_modules/@yao-pkg/pkg/lib-es5/bin.js dist/cli.js \
-            --targets ${{ matrix.pkg_target }} \
-            --output dist/binaries/${{ matrix.binary }}
-
-      - name: Copy native addon alongside binary
-        working-directory: packages/rdk-cli
-        run: |
-          cp dist/node_modules/better-sqlite3/build/Release/better_sqlite3.node \
-             dist/binaries/better_sqlite3.node
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.binary }}
-          path: |
-            packages/rdk-cli/dist/binaries/${{ matrix.binary }}
-            packages/rdk-cli/dist/binaries/better_sqlite3.node
-
   release:
-    needs: build
     runs-on: ubuntu-22.04
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download all binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: dist/binaries
-
-      - name: Flatten artifact dirs + compress
-        run: |
-          mkdir -p release-assets
-          for dir in dist/binaries/*/; do
-            binary=$(basename "$dir")
-            cp "$dir/$binary" "release-assets/$binary"
-            [[ "$binary" == *.exe ]] || chmod +x "release-assets/$binary"
-            # Bundle platform-specific native addon inside the tarball
-            cd release-assets
-            if [[ -f "../$dir/better_sqlite3.node" ]]; then
-              cp "../$dir/better_sqlite3.node" ./better_sqlite3.node
-              tar -czf "${binary}.tar.gz" "$binary" better_sqlite3.node
-              rm better_sqlite3.node
-            else
-              tar -czf "${binary}.tar.gz" "$binary"
-            fi
-            sha256sum "${binary}.tar.gz" >> SHA256SUMS
-            rm "$binary"
-            cd ..
-          done
-          cat release-assets/SHA256SUMS
-
-      - name: Publish GitHub Release
+      - name: Create GitHub release (notes only)
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release-assets/*.tar.gz
-            release-assets/SHA256SUMS
+          generate_release_notes: true
           body: |
             ## Install
 
-            **macOS / Linux (recommended):**
+            **npm** (requires Node.js 20+):
             ```bash
-            curl -fsSL https://rdk.network/install.sh | bash
+            npm install -g @retrodeck/rdk
             ```
 
             **Homebrew:**
@@ -157,12 +43,10 @@ jobs:
             brew install rdk
             ```
 
-            **npm (requires Node.js 20+):**
+            **macOS / Linux (curl — bundles its own Node):**
             ```bash
-            npm install -g @retrodeck/rdk
+            curl -fsSL https://rdk.network/install.sh | bash
             ```
-
-            **Manual:** download the binary for your platform below, `chmod +x` (macOS/Linux), and place in your `$PATH`.
 
       - name: Update Homebrew formula
         env:
