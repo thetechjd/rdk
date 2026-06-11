@@ -188,6 +188,9 @@ importers:
       '@rdk/core':
         specifier: workspace:*
         version: link:../rdk-core
+      '@retrodeck/mcp':
+        specifier: workspace:*
+        version: link:../rdk-mcp
       '@types/node':
         specifier: ^22.15.21
         version: 22.19.19

@@ -143,5 +143,3 @@ export async function startMcpServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-
-startMcpServer().catch(console.error);

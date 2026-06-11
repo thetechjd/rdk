@@ -14,21 +14,58 @@ export class RdkWebSocketClient extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private shouldReconnect = true;
+  private jwt: string | null = null;
   private pendingAcks = new Map<string, (response: unknown) => void>();
 
   constructor(
-    private readonly url: string,
-    private readonly token: string,
+    private readonly wsUrl: string,
+    private readonly apiBaseUrl: string,  // e.g. https://rdk.retrodeck.ai
+    private readonly apiKey: string,      // long-lived API key from config
   ) {
     super();
+    // Safety net: an EventEmitter that emits 'error' with no listener throws and
+    // would crash the whole mcp:serve process. Live sync is best-effort, so never
+    // let a Central connection problem be fatal.
+    this.on('error', () => {});
   }
 
-  connect(): void {
+  /**
+   * Exchange the long-lived API key for a short-lived JWT, exactly as
+   * `rdk vault:sync` does. WebSocket auth is verified once at upgrade, so a
+   * fresh JWT per connect/reconnect is sufficient — no mid-connection refresh.
+   */
+  private async fetchJwt(): Promise<string> {
+    const res = await fetch(`${this.apiBaseUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) {
+      throw new Error(`auth exchange failed: HTTP ${res.status}`);
+    }
+    const data = await res.json() as { jwtToken?: string };
+    if (!data.jwtToken) {
+      throw new Error('auth exchange returned no jwtToken');
+    }
+    return data.jwtToken;
+  }
+
+  async connect(): Promise<void> {
     if (this.ws) return;
 
-    this.ws = new WebSocket(this.url, {
-      headers: { Authorization: `Bearer ${this.token}` },
-    });
+    // Fetch a fresh JWT, then open the socket with it. Both steps are guarded so
+    // connect() never rejects — callers (mcp:serve, scheduleReconnect) fire-and-forget.
+    try {
+      this.jwt = await this.fetchJwt();
+      this.ws = new WebSocket(this.wsUrl, {
+        headers: { Authorization: `Bearer ${this.jwt}` },
+      });
+    } catch (e) {
+      console.error(t.dim(`  · RDK Central auth failed: ${(e as Error).message}`));
+      this.emit('error', e);
+      if (this.shouldReconnect) this.scheduleReconnect();
+      return;
+    }
 
     this.ws.on('open', () => {
       this.reconnectAttempt = 0;
@@ -49,8 +86,9 @@ export class RdkWebSocketClient extends EventEmitter {
     });
 
     this.ws.on('error', (err) => {
-      this.emit('error', err);
-      // close handler fires next; nothing to do here
+      // Best-effort: log, then let the 'close' handler reconnect with backoff.
+      // Never re-emit a bare 'error' — that would crash mcp:serve if unhandled.
+      console.error(t.dim(`  · RDK Central connection error: ${(err as Error).message}`));
     });
   }
 
@@ -78,7 +116,7 @@ export class RdkWebSocketClient extends EventEmitter {
     this.reconnectAttempt++;
     this.reconnectTimer = setTimeout(() => {
       console.error(t.dim(`  reconnecting to RDK Central (attempt ${this.reconnectAttempt})...`));
-      this.connect();
+      void this.connect();
     }, delayMs);
   }
 
@@ -140,7 +178,7 @@ export function getWsClient(): RdkWebSocketClient | null {
     const config = loadConfig();
     if (config.nodeId.startsWith('local-')) return null; // offline mode — no WS
     const wsUrl = config.centralApiUrl.replace(/^http/, 'ws') + '/ws/internal/node';
-    client = new RdkWebSocketClient(wsUrl, config.apiKey);
+    client = new RdkWebSocketClient(wsUrl, config.centralApiUrl, config.apiKey);
     return client;
   } catch {
     return null;

@@ -1,16 +1,16 @@
 {
   "name": "@retrodeck/rdk",
-  "version": "1.0.9",
+  "version": "1.0.13",
   "description": "RDK CLI — install, configure, and manage your RDK node",
   "bin": {
     "rdk": "./dist/cli.js"
   },
   "scripts": {
-    "build": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/mcp --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "build": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist",
     "prepare": "chmod +x dist/cli.js 2>/dev/null || true",
-    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/mcp --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js"
+    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@rdk/core": "workspace:*",
+    "@retrodeck/mcp": "workspace:*",
     "@types/node": "^22.15.21",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.0"

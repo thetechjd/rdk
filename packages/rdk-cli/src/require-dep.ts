@@ -104,6 +104,48 @@ function findMonorepoRoot(): string | null {
   return null;
 }
 
+/**
+ * Recreate symlinks for already-installed on-demand deps into the current
+ * install's node_modules.
+ *
+ * On-demand packages persist in ~/.rdk/node_modules but are resolved via
+ * symlinks into the CLI's node_modules. brew/curl install into a versioned
+ * path (e.g. Cellar/rdk/1.0.11), so after an upgrade those symlinks point at a
+ * directory that no longer exists — the deps read as "missing" even though they
+ * are still in ~/.rdk. This re-links them. Cheap: only creates absent links,
+ * never overwrites the install's own deps (e.g. its bundled better-sqlite3).
+ */
+export function relinkOnDemandDeps(): void {
+  try {
+    const rdkModules = path.join(RDK_HOME, 'node_modules');
+    if (!fs.existsSync(rdkModules)) return;
+    const targetModules = path.join(findMonorepoRoot() ?? CLI_PKG_DIR, 'node_modules');
+
+    const link = (src: string, dst: string) => {
+      if (fs.existsSync(dst)) return;            // never clobber an existing dep
+      try {
+        fs.mkdirSync(path.dirname(dst), { recursive: true });
+        fs.symlinkSync(src, dst, 'dir');
+      } catch { /* best-effort */ }
+    };
+
+    for (const entry of fs.readdirSync(rdkModules)) {
+      if (entry.startsWith('.')) continue;
+      const src = path.join(rdkModules, entry);
+      if (entry.startsWith('@')) {
+        // Scoped: link each package under the scope individually.
+        try {
+          for (const pkg of fs.readdirSync(src)) {
+            link(path.join(src, pkg), path.join(targetModules, entry, pkg));
+          }
+        } catch { /* not a dir — skip */ }
+      } else {
+        link(src, path.join(targetModules, entry));
+      }
+    }
+  } catch { /* best-effort — never block startup */ }
+}
+
 export interface DepSpec {
   package: string;           // npm package name
   version?: string;          // version constraint e.g. "^6.14.1"

@@ -9,8 +9,13 @@
 
 
 import { Command } from 'commander';
+import { relinkOnDemandDeps } from './require-dep.js';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { version } = require('../package.json') as { version: string };
+
+// Re-link on-demand deps (~/.rdk) into this install. After a brew/curl upgrade
+// the install path changes, so previously-installed deps need re-linking here.
+relinkOnDemandDeps();
 
 const program = new Command();
 

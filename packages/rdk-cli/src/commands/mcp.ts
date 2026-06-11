@@ -6,7 +6,7 @@ import { t, mark } from '../theme.js';
 export async function mcpServe(opts: { port?: number }): Promise<void> {
   // Check the MCP SDK dep before stdio transport starts — never prompt or install mid-session.
   // Use the /server subpath: v1.29.0+ dropped the root index.js, only subpaths exist.
-  // We do NOT import @retrodeck/mcp to check — it has a top-level startMcpServer() side-effect.
+  // @retrodeck/mcp is bundled into the CLI, so we only gate on the on-demand SDK here.
   if (!await isInstalled('@modelcontextprotocol/sdk/server')) {
     console.error('MCP SDK not installed. Run: rdk network:join');
     process.exit(1);
