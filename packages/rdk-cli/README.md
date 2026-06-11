@@ -1,58 +1,38 @@
 # RDK — Retrieval Development Kit
 
-Distributed knowledge infrastructure. Connects your private notes to Claude and
-other AI agents via semantic search, reducing LLM token usage by 80–90%.
+[![npm version](https://img.shields.io/npm/v/@retrodeck/rdk.svg)](https://www.npmjs.com/package/@retrodeck/rdk)
+
+Distributed knowledge network for AI agents. Index your notes locally,
+query them via MCP from Claude Desktop, earn USDC tips when other
+agents retrieve your public knowledge.
 
 ## Install
 
-**macOS / Linux:**
 ```bash
-curl -fsSL https://rdk.network/install.sh | bash
+npm install -g @retrodeck/rdk
 ```
 
-**Windows (PowerShell):**
-```powershell
-irm https://rdk.network/install.ps1 | iex
-```
+Other paths:
 
-**Homebrew (macOS / Linux):**
 ```bash
+# macOS via Homebrew
 brew tap thetechjd/rdk
 brew install rdk
+
+# Linux via curl (bundles its own Node — no system Node.js required)
+curl -fsSL https://raw.githubusercontent.com/thetechjd/rdk/main/install.sh | bash
 ```
 
-**npm (if you already have Node.js):**
+## Quick start
+
 ```bash
-npm install -g rdk
+rdk init             # Interactive setup wizard
+rdk service:install  # Auto-start on boot (optional)
 ```
 
----
+## Connect to Claude Desktop
 
-`rdk init` is an interactive wizard that walks you through:
-- Creating an account
-- Connecting your knowledge vault (Obsidian, filesystem, Logseq, or Notion)
-- Joining the RDK network + enabling Claude MCP
-- Optionally adding a wallet to earn USDC tips
-
-Components are downloaded on-demand — the base install is ~15 seconds.
-
-## Commands
-
-```
-rdk init                  Full setup wizard
-rdk status                Check what's installed and connected
-rdk vault:index           Re-index vault after adding files
-rdk vault:search <query>  Test private search
-rdk network:join          Install embedding model + MCP (~50MB, one-time)
-rdk mcp:serve             Start MCP server for Claude Desktop
-rdk tips:enable           Enable on-chain tip earnings
-rdk account               View plan and node stats
-rdk account:upgrade       Upgrade plan
-```
-
-## Add to Claude Desktop
-
-After `rdk network:join`, add to `claude_desktop_config.json`:
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -65,5 +45,15 @@ After `rdk network:join`, add to `claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. Then ask Claude:
-> "Use rdk_query to search my vault for [anything]"
+Restart Claude Desktop. You should see the RDK connector in the tools
+panel.
+
+## Documentation
+
+- Full docs: <https://retrodeck.ai/docs>
+- Interactive walkthrough: <https://play.retrodeck.ai>
+- Issues: <https://github.com/thetechjd/rdk/issues>
+
+## License
+
+MIT
