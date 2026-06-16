@@ -231,11 +231,13 @@ export class LocalStore {
 
   // ── Stats ──────────────────────────────────────────────────────
 
-  getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; unsyncedChunks: number } {
+  getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; unsyncedChunks: number; pendingChunks: number; syncedChunks: number } {
     const total = (this.db.prepare('SELECT COUNT(*) as n FROM chunks').get() as { n: number }).n;
     const pub = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1').get() as { n: number }).n;
     const unsynced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND synced_at IS NULL').get() as { n: number }).n;
-    return { totalChunks: total, publicChunks: pub, privateChunks: total - pub, unsyncedChunks: unsynced };
+    // Any chunk (private or public) not yet pushed to RDK Central.
+    const pending = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NULL').get() as { n: number }).n;
+    return { totalChunks: total, publicChunks: pub, privateChunks: total - pub, unsyncedChunks: unsynced, pendingChunks: pending, syncedChunks: total - pending };
   }
 
   // ── Tip Queue ──────────────────────────────────────────────────

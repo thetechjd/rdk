@@ -123,7 +123,9 @@ export class RDKIndexer {
         }
       }
 
-      // 8. Sync indexed chunks to RDK Central (private chunks encrypted, public chunks as plaintext)
+      // 8. Sync indexed chunks to RDK Central — embeddings + metadata ONLY.
+      //    Content (public plaintext or private ciphertext) stays on this node and
+      //    is served to Central on demand via the fetch_content handler.
       if (this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
         await this.syncTocentral(doc.isPublic ?? false);
       }
@@ -169,15 +171,17 @@ export class RDKIndexer {
       const embedding = this.config.localStore.getEmbedding(chunk.id);
       return {
         chunkHash: chunk.id,
-        title: chunk.title,
-        summary: chunk.summary,
+        // Private chunks keep their title and summary on the node — both are
+        // derived from the content and would leak it. Central only needs the
+        // embedding to route a query to this node, then fetches content live.
+        title: chunk.isPublic ? chunk.title : undefined,
+        summary: chunk.isPublic ? chunk.summary : undefined,
         domain: chunk.domain,
         categories: chunk.categories,
         embedding: embedding ? Array.from(embedding) : [],
         isPublic: chunk.isPublic,
-        isEncrypted: chunk.isEncrypted,
-        content: chunk.isEncrypted ? chunk.content : undefined,
         freshnessAt: new Date().toISOString(),
+        // NO content field — content is served on demand, never synced.
       };
     }).filter(c => c.embedding.length > 0);
 

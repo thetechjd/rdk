@@ -103,13 +103,15 @@ const ASCII = [
   '  ╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝',
 ];
 
-export function splash(version = '1.0.0'): void {
+export function splash(version?: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const v = version ?? (require('../package.json') as { version: string }).version;
   console.log('');
   for (const line of ASCII) {
     console.log(t.green(line));
   }
   console.log('');
   console.log(t.dim('  Retrieval Development Kit  ·  by RetroDeck'));
-  console.log(t.muted(`  v${version}`));
+  console.log(t.muted(`  v${v}`));
   console.log('');
 }

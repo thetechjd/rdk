@@ -1,11 +1,17 @@
 // packages/rdk-cli/src/commands/team.ts
 import crypto from 'crypto';
 import { loadConfig, updateConfig } from '../config.js';
+import { retrodeckFetch, RetrodeckAuthError } from '../retrodeck-api.js';
 import { t, mark, divider } from '../theme.js';
 import { input, confirm } from '../prompts.js';
 
-function retrodeckApiUrl(config: ReturnType<typeof loadConfig>): string {
-  return config.retrodeckApiUrl ?? 'https://api.retrodeck.ai';
+/** Print a session-expired hint for auth failures; returns true if handled. */
+function handledAuthError(e: unknown): boolean {
+  if (e instanceof RetrodeckAuthError) {
+    console.log(t.error('Your RetroDeck session has expired. Run: rdk account:login'));
+    return true;
+  }
+  return false;
 }
 
 /** rdk team:invite <email> */
@@ -17,25 +23,16 @@ export async function teamInvite(email: string): Promise<void> {
     return;
   }
 
-  if (!config.retrodeckAccessToken) {
-    console.log(t.error('Not logged in to RetroDeck. Run rdk account:login'));
-    return;
-  }
-
   const { createKeyShare, keyFromHex } = await import('@rdk/core');
-  const RETRODECK_API_URL = retrodeckApiUrl(config);
 
   const inviteCode = crypto.randomBytes(16).toString('base64url');
   const vaultKey   = keyFromHex(config.vaultKeyHex);
   const keyShare   = createKeyShare(vaultKey, inviteCode);
 
   try {
-    const res = await fetch(`${RETRODECK_API_URL}/api/v1/team/invite`, {
+    const res = await retrodeckFetch('/api/v1/team/invite', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.retrodeckAccessToken}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         granteeEmail: email,
         keyShare,
@@ -66,6 +63,7 @@ export async function teamInvite(email: string): Promise<void> {
     console.log(t.dim('  Expires in 48 hours.'));
     console.log('');
   } catch (e) {
+    if (handledAuthError(e)) return;
     console.log(t.error(`Network error: ${(e as Error).message}`));
   }
 }
@@ -73,12 +71,6 @@ export async function teamInvite(email: string): Promise<void> {
 /** rdk team:accept <inviteId> */
 export async function teamAccept(inviteId: string): Promise<void> {
   const config = loadConfig();
-  const RETRODECK_API_URL = retrodeckApiUrl(config);
-
-  if (!config.retrodeckAccessToken) {
-    console.log(t.error('Not logged in to RetroDeck. Run rdk account:login'));
-    return;
-  }
 
   const inviteCode = await input({
     message: 'Enter the invite code from your team owner:',
@@ -86,9 +78,7 @@ export async function teamAccept(inviteId: string): Promise<void> {
   });
 
   try {
-    const res = await fetch(`${RETRODECK_API_URL}/api/v1/team/invite/${inviteId}`, {
-      headers: { Authorization: `Bearer ${config.retrodeckAccessToken}` },
-    });
+    const res = await retrodeckFetch(`/api/v1/team/invite/${inviteId}`);
 
     if (!res.ok) {
       console.log(t.error('Invite not found or expired.'));
@@ -109,12 +99,9 @@ export async function teamAccept(inviteId: string): Promise<void> {
     updateConfig({ sharedVaultKeys: sharedKeys });
 
     // Notify RetroDeck that invite was accepted
-    await fetch(`${RETRODECK_API_URL}/api/v1/team/invite/${inviteId}/accept`, {
+    await retrodeckFetch(`/api/v1/team/invite/${inviteId}/accept`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.retrodeckAccessToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ granteeNodeId: config.nodeId }),
     });
 
@@ -123,24 +110,15 @@ export async function teamAccept(inviteId: string): Promise<void> {
     console.log(t.dim('  They can now decrypt and query your private chunks.'));
     console.log('');
   } catch (e) {
+    if (handledAuthError(e)) return;
     console.log(t.error(`Failed: ${(e as Error).message}`));
   }
 }
 
 /** rdk team:list */
 export async function teamList(): Promise<void> {
-  const config = loadConfig();
-  const RETRODECK_API_URL = retrodeckApiUrl(config);
-
-  if (!config.retrodeckAccessToken) {
-    console.log(t.error('Not logged in to RetroDeck. Run rdk account:login'));
-    return;
-  }
-
   try {
-    const res = await fetch(`${RETRODECK_API_URL}/api/v1/team`, {
-      headers: { Authorization: `Bearer ${config.retrodeckAccessToken}` },
-    });
+    const res = await retrodeckFetch('/api/v1/team');
 
     if (!res.ok) {
       console.log(t.error('Could not fetch team list.'));
@@ -167,6 +145,7 @@ export async function teamList(): Promise<void> {
     }
     console.log('');
   } catch (e) {
+    if (handledAuthError(e)) return;
     console.log(t.error((e as Error).message));
   }
 }
@@ -174,12 +153,6 @@ export async function teamList(): Promise<void> {
 /** rdk team:revoke <email> */
 export async function teamRevoke(email: string): Promise<void> {
   const config = loadConfig();
-  const RETRODECK_API_URL = retrodeckApiUrl(config);
-
-  if (!config.retrodeckAccessToken) {
-    console.log(t.error('Not logged in to RetroDeck. Run rdk account:login'));
-    return;
-  }
 
   const confirmed = await confirm({
     message: `Revoke vault access for ${email}?`,
@@ -188,12 +161,9 @@ export async function teamRevoke(email: string): Promise<void> {
   if (!confirmed) return;
 
   try {
-    const res = await fetch(`${RETRODECK_API_URL}/api/v1/team/revoke`, {
+    const res = await retrodeckFetch('/api/v1/team/revoke', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.retrodeckAccessToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ granteeEmail: email, ownerNodeId: config.nodeId }),
     });
 
@@ -205,6 +175,7 @@ export async function teamRevoke(email: string): Promise<void> {
       console.log(t.error('Revoke failed.'));
     }
   } catch (e) {
+    if (handledAuthError(e)) return;
     console.log(t.error((e as Error).message));
   }
 }
