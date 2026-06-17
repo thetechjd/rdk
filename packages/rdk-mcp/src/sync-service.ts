@@ -49,10 +49,11 @@ export class SyncService {
     let errors = 0;
 
     try {
-      const unsynced = this.store.getUnsyncedPublicChunks(100);
+      // Public AND private chunks sync (embedding + metadata); only content stays on-node.
+      const unsynced = this.store.getUnsyncedChunks(100);
       if (unsynced.length === 0) return { synced: 0, errors: 0 };
 
-      console.error(`[sync] ${unsynced.length} unsynced public chunk(s) found`);
+      console.error(`[sync] ${unsynced.length} unsynced chunk(s) found`);
 
       const jwt = await this.getJwt();
 
@@ -62,12 +63,12 @@ export class SyncService {
         if (!embedding) continue;
         payload.push({
           chunkHash: chunk.id,
-          title: chunk.title,
-          summary: chunk.summary,
+          title: chunk.title,                                  // sent for public AND private
+          summary: chunk.isPublic ? chunk.summary : undefined, // private summary stays on-node
           domain: chunk.domain,
           categories: chunk.categories,
           embedding: Array.from(embedding),
-          isPublic: true,
+          isPublic: chunk.isPublic,
           freshnessAt: chunk.updatedAt.toISOString(),
           chunkTokens: Math.ceil(chunk.content.length / 4),
         });

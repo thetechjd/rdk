@@ -89,7 +89,7 @@ export async function vaultStatus(): Promise<void> {
   console.log(`${t.dim('unsynced:')}        ${t.body(stats.unsyncedChunks.toLocaleString())}`);
 }
 
-export async function vaultSync(): Promise<void> {
+export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
   const ora = (await import('ora')).default;
   const config = loadConfig();
 
@@ -114,15 +114,22 @@ export async function vaultSync(): Promise<void> {
     if (!authRes.ok) throw new Error(`Auth failed: HTTP ${authRes.status}`);
     const { jwtToken } = await authRes.json() as { jwtToken: string };
 
-    spinner.text = 'Syncing public chunks to network...';
-
     const { LocalStore } = await import('@rdk/core');
     const store = new LocalStore();
-    const chunks = store.getUnsyncedPublicChunks(100);
+
+    if (opts.force) {
+      const reset = store.resetSyncState();
+      spinner.text = `Re-syncing all ${reset} chunk(s) to network...`;
+    } else {
+      spinner.text = 'Syncing chunks to network...';
+    }
+
+    // Public AND private chunks sync (embedding + metadata); only content stays on-node.
+    const chunks = store.getUnsyncedChunks(100);
 
     if (!chunks.length) {
       store.close();
-      spinner.succeed('Nothing to sync — all public chunks already on network');
+      spinner.succeed('Nothing to sync — all chunks already on network');
       return;
     }
 
@@ -143,13 +150,13 @@ export async function vaultSync(): Promise<void> {
           body: JSON.stringify({
             chunks: [{
               chunkHash: chunk.id,
-              title: chunk.title,
-              summary: chunk.summary,
+              title: chunk.title,                                  // sent for public AND private
+              summary: chunk.isPublic ? chunk.summary : undefined, // private summary stays on-node
               domain: chunk.domain ?? config.domain,
               categories: chunk.categories,
               embedding: Array.from(embedding),
               chunkTokens: Math.ceil(chunk.content.length / 4),
-              isPublic: true,
+              isPublic: chunk.isPublic,
               freshnessAt: chunk.updatedAt.toISOString(),
             }],
           }),

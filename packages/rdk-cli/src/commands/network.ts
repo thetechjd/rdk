@@ -229,13 +229,13 @@ export async function networkSync(): Promise<void> {
   const store = new LocalStore();
   const stats = store.getStats();
 
-  if (stats.unsyncedChunks === 0) {
-    console.log(t.dim('  No unsynced public chunks.'));
+  if (stats.pendingChunks === 0) {
+    console.log(t.dim('  No unsynced chunks.'));
     store.close();
     return;
   }
 
-  const spinner = ora(`  Syncing ${stats.unsyncedChunks} public chunk(s)...`).start();
+  const spinner = ora(`  Syncing ${stats.pendingChunks} chunk(s)...`).start();
 
   try {
     const { SyncService } = await import('@retrodeck/mcp');

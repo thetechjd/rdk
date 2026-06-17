@@ -348,6 +348,27 @@ export class LocalStore {
     return rows.map(r => this.rowToChunk(r));
   }
 
+  /**
+   * All locally-indexed chunks not yet pushed to RDK Central — PUBLIC and
+   * PRIVATE alike. Both must sync their embedding + metadata (only the content
+   * body stays on the node); private chunks without their embedding on Central
+   * are invisible to cross-node/team search.
+   */
+  getUnsyncedChunks(limit = 100): StoredChunk[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM chunks
+      WHERE synced_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map(r => this.rowToChunk(r));
+  }
+
+  /** Clear sync state so the next sync re-sends every chunk (rdk vault:sync --force). */
+  resetSyncState(): number {
+    return this.db.prepare('UPDATE chunks SET synced_at = NULL').run().changes;
+  }
+
   close() {
     this.db.close();
   }

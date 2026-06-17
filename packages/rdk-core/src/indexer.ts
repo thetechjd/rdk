@@ -171,10 +171,10 @@ export class RDKIndexer {
       const embedding = this.config.localStore.getEmbedding(chunk.id);
       return {
         chunkHash: chunk.id,
-        // Private chunks keep their title and summary on the node — both are
-        // derived from the content and would leak it. Central only needs the
-        // embedding to route a query to this node, then fetches content live.
-        title: chunk.isPublic ? chunk.title : undefined,
+        // Title syncs for BOTH public and private — private chunks need a routable
+        // title in Central for team/cross-node search + the dashboard. Summary
+        // stays on the node for private chunks (it's a content-derived gist).
+        title: chunk.title,
         summary: chunk.isPublic ? chunk.summary : undefined,
         domain: chunk.domain,
         categories: chunk.categories,

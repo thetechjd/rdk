@@ -63,10 +63,11 @@ vault
 
 vault
   .command('sync')
-  .description('Sync unsynced public chunks to the network')
-  .action(async () => {
+  .description('Sync unsynced chunks (private + public) to the network')
+  .option('--force', 'Re-sync all chunks, ignoring synced status')
+  .action(async (opts) => {
     const { vaultSync } = await import('./commands/vault.js');
-    await vaultSync();
+    await vaultSync({ force: !!opts.force });
   });
 
 vault
@@ -113,7 +114,7 @@ vault
 // Colon shorthands
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
 program.command('vault:index').option('--force').option('--public').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !!o.public }); });
-program.command('vault:sync').action(async () => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync(); });
+program.command('vault:sync').option('--force', 'Re-sync all chunks, ignoring synced status').action(async (opts) => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
 program.command('vault:publish').action(async () => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish(); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
 program.command('vault:search <query>').action(async (q) => { const { vaultSearch } = await import('./commands/vault.js'); await vaultSearch(q, {}); });
