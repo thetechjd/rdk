@@ -1,67 +1,47 @@
 # RDK install script for Windows
 # Usage: irm https://rdk.network/install.ps1 | iex
 #
-# Override install dir: $env:RDK_INSTALL_DIR = "C:\tools"; irm ... | iex
+# Installs @retrodeck/rdk globally via npm. Requires Node.js 20+.
+# npm compiles/downloads the better-sqlite3 native module against your Node,
+# so no prebuilt binary is bundled here.
 
 $ErrorActionPreference = 'Stop'
 
-$Version    = "1.0.0"
-$Repo       = "thetechjd/rdk"
-$Binary     = "rdk-win-x64.exe"
-$Tarball    = "rdk-win-x64.exe.tar.gz"
-$BaseUrl    = "https://github.com/$Repo/releases/download/v$Version"
-$InstallDir = if ($env:RDK_INSTALL_DIR) { $env:RDK_INSTALL_DIR } else { "$env:LOCALAPPDATA\Programs\rdk" }
-
-# ── Download ──────────────────────────────────────────────────────────────────
-$TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString())
-New-Item -ItemType Directory -Path $TmpDir | Out-Null
-
-try {
-    Write-Host "Downloading rdk v$Version..."
-    $TarPath = Join-Path $TmpDir $Tarball
-    Invoke-WebRequest -Uri "$BaseUrl/$Tarball" -OutFile $TarPath -UseBasicParsing
-
-    # ── Verify SHA256 (optional) ──────────────────────────────────────────────
-    try {
-        $SumsPath = Join-Path $TmpDir "SHA256SUMS"
-        Invoke-WebRequest -Uri "$BaseUrl/SHA256SUMS" -OutFile $SumsPath -UseBasicParsing
-        $Expected = (Get-Content $SumsPath | Where-Object { $_ -match [regex]::Escape($Tarball) }) -split '\s+' | Select-Object -First 1
-        if ($Expected) {
-            $Actual = (Get-FileHash $TarPath -Algorithm SHA256).Hash.ToLower()
-            if ($Actual -ne $Expected) {
-                throw "SHA256 mismatch! Expected: $Expected, got: $Actual"
-            }
-            Write-Host "SHA256 verified."
-        }
-    } catch [System.Net.WebException] {
-        # SHA256SUMS not available — skip verification
-    }
-
-    # ── Extract ───────────────────────────────────────────────────────────────
-    tar -xzf $TarPath -C $TmpDir
-
-    # ── Install ───────────────────────────────────────────────────────────────
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    $Dest = Join-Path $InstallDir "rdk.exe"
-    Copy-Item (Join-Path $TmpDir $Binary) $Dest -Force
-    Copy-Item (Join-Path $TmpDir "better_sqlite3.node") (Join-Path $InstallDir "better_sqlite3.node") -Force
-
-    # ── Add to PATH (user scope) ──────────────────────────────────────────────
-    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($UserPath -notlike "*$InstallDir*") {
-        [Environment]::SetEnvironmentVariable("Path", "$UserPath;$InstallDir", "User")
-        Write-Host "Added $InstallDir to your PATH."
-        Write-Host "(Restart your terminal for PATH changes to take effect.)"
-    }
-
+# ── Require Node.js 20+ ───────────────────────────────────────────────────────
+$node = Get-Command node -ErrorAction SilentlyContinue
+$npm  = Get-Command npm  -ErrorAction SilentlyContinue
+if (-not $node -or -not $npm) {
     Write-Host ""
-    Write-Host "rdk v$Version installed to $Dest"
+    Write-Host "Node.js is required but was not found on your PATH." -ForegroundColor Yellow
+    Write-Host "Install Node.js 20 or newer from https://nodejs.org, then re-run this script."
     Write-Host ""
-    Write-Host "Get started:"
-    Write-Host "  rdk init"
-    Write-Host ""
-    Write-Host "Docs: https://rdk.network/docs"
-
-} finally {
-    Remove-Item -Path $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    exit 1
 }
+
+$nodeVersion = (& node --version) -replace '^v', ''
+$nodeMajor = [int]($nodeVersion.Split('.')[0])
+if ($nodeMajor -lt 20) {
+    Write-Host ""
+    Write-Host "Node.js $nodeVersion found, but rdk requires Node.js 20 or newer." -ForegroundColor Yellow
+    Write-Host "Upgrade from https://nodejs.org, then re-run this script."
+    Write-Host ""
+    exit 1
+}
+
+# ── Install ───────────────────────────────────────────────────────────────────
+Write-Host "Installing @retrodeck/rdk via npm (Node.js $nodeVersion)..."
+& npm install -g '@retrodeck/rdk@latest'
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "npm install failed (exit code $LASTEXITCODE)." -ForegroundColor Yellow
+    Write-Host "Try running this PowerShell as Administrator, or: npm install -g @retrodeck/rdk"
+    exit $LASTEXITCODE
+}
+
+Write-Host ""
+Write-Host "rdk installed."
+Write-Host ""
+Write-Host "Get started:"
+Write-Host "  rdk init"
+Write-Host ""
+Write-Host "Docs: https://rdk.network/docs"

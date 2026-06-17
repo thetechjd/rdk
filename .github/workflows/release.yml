@@ -48,6 +48,11 @@ jobs:
             curl -fsSL https://rdk.network/install.sh | bash
             ```
 
+            **Windows (PowerShell — requires Node.js 20+):**
+            ```powershell
+            irm https://rdk.network/install.ps1 | iex
+            ```
+
       - name: Update Homebrew formula
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

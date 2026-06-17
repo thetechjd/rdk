@@ -22,6 +22,34 @@ import ora from 'ora';
 // Used as the --prefix for npm installs so packages land on the resolution path.
 const CLI_PKG_DIR = path.resolve(__dirname, '..');
 
+type LinkResult = 'linked' | 'copied' | 'exists' | 'failed';
+
+/**
+ * Make absolute directory `src` resolvable at `dst`.
+ *  - Windows: NTFS junction — works for absolute directory targets WITHOUT
+ *    Administrator or Developer Mode (plain 'dir' symlinks throw EPERM there).
+ *  - Other: regular 'dir' symlink.
+ *  - Fallback: if linking still throws (locked-down host), deep-copy so the
+ *    dependency stays resolvable.
+ * Callers guarantee `src` is an absolute directory; `dst`'s parent may not exist.
+ */
+function linkDir(src: string, dst: string): LinkResult {
+  if (fs.existsSync(dst)) return 'exists';
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  const type = process.platform === 'win32' ? 'junction' : 'dir';
+  try {
+    fs.symlinkSync(src, dst, type);
+    return 'linked';
+  } catch {
+    try {
+      fs.cpSync(src, dst, { recursive: true, dereference: true });
+      return 'copied';
+    } catch {
+      return 'failed';
+    }
+  }
+}
+
 /**
  * For @rdk/* packages, walk up from the CLI's real __dirname to find the
  * monorepo's packages/ directory and return the local source path.
@@ -39,14 +67,11 @@ function findLocalWorkspacePackage(packageName: string): string | null {
   return null;
 }
 
-/** Symlink a workspace package into CLI_PKG_DIR/node_modules so Node can find it. */
+/** Link a workspace package into CLI_PKG_DIR/node_modules so Node can find it. */
 function linkWorkspacePackage(packageName: string, localPath: string): void {
-  const parts = packageName.split('/'); // ['@rdk', 'adapter-obsidian']
-  const scopeDir = path.join(CLI_PKG_DIR, 'node_modules', parts[0]);
-  const linkTarget = path.join(scopeDir, parts[1]);
-  if (fs.existsSync(linkTarget)) return;
-  fs.mkdirSync(scopeDir, { recursive: true });
-  fs.symlinkSync(localPath, linkTarget, 'dir');
+  const parts = packageName.split('/'); // ['@retrodeck', 'adapter-obsidian']
+  const linkTarget = path.join(CLI_PKG_DIR, 'node_modules', parts[0], parts[1]);
+  linkDir(localPath, linkTarget);
 }
 
 /** The ~/.rdk directory doubles as a clean install target for npm packages. */
@@ -78,14 +103,11 @@ function symlinkRdkDep(packageName: string): void {
   if (parts.length === 1) {
     const src = path.join(rdkModules, parts[0]);
     const dst = path.join(targetModules, parts[0]);
-    if (fs.existsSync(src) && !fs.existsSync(dst)) fs.symlinkSync(src, dst, 'dir');
+    if (fs.existsSync(src)) linkDir(src, dst);
   } else {
     const src = path.join(rdkModules, parts[0], parts[1]);
     const dst = path.join(targetModules, parts[0], parts[1]);
-    if (fs.existsSync(src) && !fs.existsSync(dst)) {
-      fs.mkdirSync(path.join(targetModules, parts[0]), { recursive: true });
-      fs.symlinkSync(src, dst, 'dir');
-    }
+    if (fs.existsSync(src)) linkDir(src, dst);
   }
 }
 
@@ -122,11 +144,12 @@ export function relinkOnDemandDeps(): void {
     const targetModules = path.join(findMonorepoRoot() ?? CLI_PKG_DIR, 'node_modules');
 
     const link = (src: string, dst: string) => {
-      if (fs.existsSync(dst)) return;            // never clobber an existing dep
-      try {
-        fs.mkdirSync(path.dirname(dst), { recursive: true });
-        fs.symlinkSync(src, dst, 'dir');
-      } catch { /* best-effort */ }
+      // linkDir never throws and skips existing targets; surface only hard
+      // failures, and only when RDK_DEBUG is set (stdout is reserved for the
+      // MCP protocol, so diagnostics go to stderr).
+      if (linkDir(src, dst) === 'failed' && process.env.RDK_DEBUG) {
+        console.error(`  · link failed: ${src} -> ${dst}`);
+      }
     };
 
     for (const entry of fs.readdirSync(rdkModules)) {

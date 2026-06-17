@@ -82,6 +82,14 @@ export class RdkWebSocketClient extends EventEmitter {
       this.stopHeartbeat();
       this.ws = null;
       this.emit('disconnected', { code, reason: reason.toString() });
+      // 4001 = "replaced": another rdk instance took over this nodeId (e.g. Claude
+      // Desktop spawned a second mcp:serve). Yield to it — reconnecting would just
+      // ping-pong, each instance kicking the other off forever.
+      if (code === 4001) {
+        this.shouldReconnect = false;
+        console.error(t.dim('  · RDK Central: another instance took over — not reconnecting'));
+        return;
+      }
       if (this.shouldReconnect) this.scheduleReconnect();
     });
 
