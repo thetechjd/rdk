@@ -180,6 +180,7 @@ export class RDKIndexer {
         categories: chunk.categories,
         embedding: embedding ? Array.from(embedding) : [],
         isPublic: chunk.isPublic,
+        isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
         freshnessAt: new Date().toISOString(),
         // NO content field — content is served on demand, never synced.
       };

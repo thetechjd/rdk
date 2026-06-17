@@ -69,6 +69,7 @@ export class SyncService {
           categories: chunk.categories,
           embedding: Array.from(embedding),
           isPublic: chunk.isPublic,
+          isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
           freshnessAt: chunk.updatedAt.toISOString(),
           chunkTokens: Math.ceil(chunk.content.length / 4),
         });

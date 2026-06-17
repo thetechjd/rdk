@@ -157,6 +157,7 @@ export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
               embedding: Array.from(embedding),
               chunkTokens: Math.ceil(chunk.content.length / 4),
               isPublic: chunk.isPublic,
+              isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
               freshnessAt: chunk.updatedAt.toISOString(),
             }],
           }),
