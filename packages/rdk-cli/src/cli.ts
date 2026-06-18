@@ -235,6 +235,7 @@ program.command('earnings:withdraw').description('Withdraw to wallet').action(as
 program.command('account').description('Show plan, node ID, stats').action(async () => { const { showAccount } = await import('./commands/account.js'); await showAccount(); });
 program.command('account:login').description('Log in to RetroDeck account').action(async () => { const { accountLogin } = await import('./commands/account.js'); await accountLogin(); });
 program.command('account:upgrade').description('Open billing portal').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
+program.command('account:relink').description('Link this node to your RetroDeck account (fixes empty dashboard)').action(async () => { const { accountRelink } = await import('./commands/account.js'); await accountRelink(); });
 program.command('balance').description('Show your current USDC balance').action(async () => { const { showBalance } = await import('./commands/balance.js'); await showBalance(); });
 program.command('account:apikey:rotate').description('Rotate API key').action(async () => { const { rotateApiKey } = await import('./commands/account.js'); await rotateApiKey(); });
 

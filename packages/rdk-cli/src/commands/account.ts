@@ -104,8 +104,42 @@ export async function accountLogin(): Promise<void> {
       retrodeckApiUrl,
     });
     spinner.succeed(`Logged in to RetroDeck`);
+
+    // Ensure this node is linked to the account so the dashboard can resolve
+    // and display its chunks. Uses the freshly minted token; idempotent.
+    const { ensureNodeLinked } = await import('../link-node.js');
+    const link = await ensureNodeLinked({ accessToken: data.accessToken });
+    if (link.status === 'linked') {
+      console.log(t.dim('  ✓ Node linked — your chunks will appear in the dashboard'));
+    } else if (link.status === 'failed') {
+      console.log(t.warn(`  Could not link node to account (${link.reason}). Retry: rdk account:relink`));
+    }
   } catch (e) {
     spinner.fail((e as Error).message);
+  }
+}
+
+// Idempotently (re)links this node to the user's RetroDeck account. Fixes the
+// case where the original `rdk init` link was swallowed or never ran, leaving
+// chunks synced to Central but invisible in the dashboard.
+export async function accountRelink(): Promise<void> {
+  const ora = (await import('ora')).default;
+  const spinner = ora('Linking node to your RetroDeck account...').start();
+  const { ensureNodeLinked } = await import('../link-node.js');
+  const link = await ensureNodeLinked();
+  switch (link.status) {
+    case 'linked':
+      spinner.succeed('Node linked — your chunks will now appear in the dashboard');
+      break;
+    case 'already-linked':
+      spinner.succeed('Node already linked to your account');
+      break;
+    case 'skipped':
+      spinner.warn(link.reason ?? 'Nothing to link');
+      break;
+    case 'failed':
+      spinner.fail(`Link failed: ${link.reason}`);
+      break;
   }
 }
 

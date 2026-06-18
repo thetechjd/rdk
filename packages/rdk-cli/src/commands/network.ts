@@ -89,6 +89,18 @@ export async function networkJoin(): Promise<void> {
     spinner.warn(`Could not reach central: ${(e as Error).message}`);
   }
 
+  // Link the (possibly newly registered) node to the RetroDeck account so its
+  // chunks surface in the dashboard. Idempotent; no-op if not logged in.
+  const { ensureNodeLinked } = await import('../link-node.js');
+  const link = await ensureNodeLinked();
+  if (link.status === 'linked') {
+    console.log(t.dim('  ✓ Node linked to your RetroDeck account'));
+  } else if (link.status === 'skipped' && link.reason?.includes('logged in')) {
+    console.log(t.dim('  Tip: run rdk account:login so your chunks appear in the dashboard'));
+  } else if (link.status === 'failed') {
+    console.log(t.warn(`  Could not link node to account (${link.reason}). Retry: rdk account:relink`));
+  }
+
   console.log('');
   console.log(t.heading('  Add to Claude Desktop:'));
   console.log(`  ${t.green('rdk mcp:serve')}   start the MCP server`);

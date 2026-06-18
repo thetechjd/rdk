@@ -690,21 +690,6 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     } catch {}
   }
 
-  if (opts.auth.accessToken && !nodeId.startsWith('local-')) {
-    try {
-      await fetch(`${RETRODECK_API_URL}/api/v1/nodes/link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.auth.accessToken}` },
-        body: JSON.stringify({
-          nodeId,
-          apiKeyHint: apiKey.slice(0, 12),
-          displayName: opts.displayName,
-          domain: opts.domain,
-        }),
-      });
-    } catch {}
-  }
-
   saveConfig({
     nodeId,
     apiKey,
@@ -724,6 +709,19 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     createdAt: new Date().toISOString(),
     vaultKeyHex,
   });
+
+  // Link this node to the RetroDeck account so the dashboard can show its
+  // chunks. Verified (not fire-and-forget): a swallowed failure here is exactly
+  // what used to leave chunks synced to Central but invisible in the dashboard.
+  if (opts.auth.accessToken && !nodeId.startsWith('local-')) {
+    const { ensureNodeLinked } = await import('../link-node.js');
+    const link = await ensureNodeLinked({ accessToken: opts.auth.accessToken, displayName: opts.displayName });
+    if (link.status === 'failed') {
+      console.log(t.warn(`  Could not link node to your account (${link.reason}).`));
+      console.log(t.dim('  Your chunks will sync, but run rdk account:relink to show them in the dashboard.'));
+    }
+  }
+
   console.log('');
   console.log(`  ${mark.ok()} ${t.green('Vault encryption key generated')}`);
   console.log(t.dim('  Files indexed from your local vault are encrypted on your machine'));
