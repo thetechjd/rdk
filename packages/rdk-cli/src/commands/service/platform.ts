@@ -1,6 +1,7 @@
 // packages/rdk-cli/src/commands/service/platform.ts
 
 import os from 'os';
+import fs from 'fs';
 
 export type Platform = 'macos' | 'linux' | 'windows' | 'unsupported';
 
@@ -47,9 +48,27 @@ export interface LaunchSpec {
  *
  * Because every path is absolute, the service survives a minimal launchd /
  * systemd PATH and never depends on `node` being discoverable at boot.
+ *
+ * Homebrew caveat: a Cellar path (…/Cellar/<formula>/<version>/…) is absolute
+ * but VERSION-PINNED — `brew upgrade` deletes the old version dir, orphaning a
+ * baked-in service path and sending launchd/systemd into a MODULE_NOT_FOUND
+ * crash-loop. So we rewrite Cellar paths to the stable `opt` symlink, which
+ * Homebrew repoints to the current version on every upgrade.
  */
+function stabilizeBrewPath(p: string): string {
+  // …/Cellar/<formula>/<version>/<rest>  →  …/opt/<formula>/<rest>
+  const m = /^(.*)\/Cellar\/([^/]+)\/[^/]+\/(.*)$/.exec(p);
+  if (!m) return p;
+  const stable = `${m[1]}/opt/${m[2]}/${m[3]}`;
+  // Only use the rewrite if it actually resolves — never make the path worse.
+  return fs.existsSync(stable) ? stable : p;
+}
+
 export function resolveLaunch(...extraArgs: string[]): LaunchSpec {
-  return { command: process.execPath, args: [process.argv[1], ...extraArgs] };
+  return {
+    command: stabilizeBrewPath(process.execPath),
+    args: [stabilizeBrewPath(process.argv[1]), ...extraArgs],
+  };
 }
 
 export async function getAdapter(): Promise<ServiceAdapter> {
