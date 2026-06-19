@@ -75,12 +75,18 @@ export async function publishChunk(text: string, opts: { title: string; public?:
   }
 }
 
-export async function publishUrl(url: string, opts: { public?: boolean; domain?: string }): Promise<void> {
+// ── URL / file ingestion ────────────────────────────────────────────────────
+// Shared core. Visibility is decided by the caller, NOT a flag default:
+//   publish:url / publish:file  → always PUBLIC  ("publish" means public)
+//   index:url   / index:file    → always PRIVATE ("index" means private)
+
+async function ingestUrl(url: string, isPublic: boolean, domain?: string): Promise<void> {
   const ora = (await import('ora')).default;
   const indexer = await getIndexer();
   if (!indexer) return;
 
   const config = loadConfig();
+  const verb = isPublic ? 'Publishing' : 'Indexing';
   const spinner = ora(`Fetching ${url}...`).start();
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
@@ -88,22 +94,23 @@ export async function publishUrl(url: string, opts: { public?: boolean; domain?:
     const raw = await res.text();
     const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(raw);
     const title = titleMatch ? titleMatch[1].trim() : url;
-    spinner.text = `Indexing "${title}"...`;
+    spinner.text = `${verb} "${title}"...`;
 
     const result = await indexer.indexDocument({
       content: raw,
       title,
-      domain: opts.domain ?? config.domain,
-      isPublic: opts.public ?? false,
+      domain: domain ?? config.domain,
+      isPublic,
       sourcePath: url,
     });
-    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s)${opts.public ? ' published publicly' : ' indexed privately'}`);
+    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${isPublic ? 'published publicly' : 'indexed privately'}`);
+    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
   }
 }
 
-export async function publishFile(filePath: string, opts: { public?: boolean; domain?: string }): Promise<void> {
+async function ingestFile(filePath: string, isPublic: boolean, domain?: string): Promise<void> {
   const ora = (await import('ora')).default;
   if (!fs.existsSync(filePath)) {
     console.error(t.error(`File not found: ${filePath}`));
@@ -114,19 +121,41 @@ export async function publishFile(filePath: string, opts: { public?: boolean; do
   if (!indexer) return;
 
   const config = loadConfig();
-  const spinner = ora(`Indexing ${filePath}...`).start();
+  const verb = isPublic ? 'Publishing' : 'Indexing';
+  const spinner = ora(`${verb} ${filePath}...`).start();
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     const title = filePath.split('/').pop()?.replace(/\.[^.]+$/, '') ?? filePath;
     const result = await indexer.indexDocument({
       content,
       title,
-      domain: opts.domain ?? config.domain,
-      isPublic: opts.public ?? false,
+      domain: domain ?? config.domain,
+      isPublic,
       sourcePath: filePath,
     });
-    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s)${opts.public ? ' published publicly' : ' indexed privately'}`);
+    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${isPublic ? 'published publicly' : 'indexed privately'}`);
+    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
   }
+}
+
+// publish:* — always PUBLIC. A passed --public flag is now redundant (warned).
+export async function publishUrl(url: string, opts: { public?: boolean; domain?: string }): Promise<void> {
+  if (opts.public) console.log(t.warn('  Note: --public is no longer needed; publish:url is always public.'));
+  await ingestUrl(url, true, opts.domain);
+}
+
+export async function publishFile(filePath: string, opts: { public?: boolean; domain?: string }): Promise<void> {
+  if (opts.public) console.log(t.warn('  Note: --public is no longer needed; publish:file is always public.'));
+  await ingestFile(filePath, true, opts.domain);
+}
+
+// index:* — always PRIVATE (encrypted on the network).
+export async function indexUrl(url: string, opts: { domain?: string } = {}): Promise<void> {
+  await ingestUrl(url, false, opts.domain);
+}
+
+export async function indexFile(filePath: string, opts: { domain?: string } = {}): Promise<void> {
+  await ingestFile(filePath, false, opts.domain);
 }

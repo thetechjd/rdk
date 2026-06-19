@@ -48,12 +48,21 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
       vaultKeyHex: config.vaultKeyHex,
     });
 
+    const indexFn = opts.force ? adapter.indexAll : adapter.indexChanged;
+    if (typeof indexFn !== 'function') {
+      throw new Error(`Vault adapter "${config.vaultAdapter}" is missing index support — reinstall it: rdk vault:connect ${config.vaultAdapter}`);
+    }
+
     const result = opts.force
       ? await adapter.indexAll({ isPublic })
       : await adapter.indexChanged(
           new Date(Date.now() - 24 * 60 * 60 * 1000),
           { isPublic },
         );
+
+    if (!result || typeof result.chunksIndexed !== 'number') {
+      throw new Error(`Vault adapter "${config.vaultAdapter}" returned no result — it may be an outdated version. Reinstall: rdk vault:connect ${config.vaultAdapter}`);
+    }
 
     spinner.succeed(`Indexed ${result.chunksIndexed} chunks`);
     console.log(t.dim(`  ${result.chunksIndexed} chunks indexed (${isPublic ? 'public' : 'private by default'})`));
