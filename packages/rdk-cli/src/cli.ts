@@ -353,7 +353,10 @@ program.command('status').description('Show full node status').action(async () =
   store.close();
 
   const hasXenova = await checkImport('@xenova/transformers');
-  const hasMcp    = await checkImport('@modelcontextprotocol/sdk');
+  // Probe the /server subpath, not the package root: the SDK (v1.29+) dropped
+  // its root entry point, so importing '@modelcontextprotocol/sdk' fails even
+  // when it's installed. This is the same gate mcp:serve uses.
+  const hasMcp    = await checkImport('@modelcontextprotocol/sdk/server');
   const hasEthers = await checkImport('ethers');
 
   // Check if mcp:serve is running by probing the HTTP server
@@ -382,7 +385,7 @@ program.command('status').description('Show full node status').action(async () =
   console.log(t.heading('\nRDK Node Status'));
   console.log(divider(42));
   console.log(`${t.dim('node id:')}   ${t.body(config.nodeId)}`);
-  console.log(`${t.dim('plan:')}      ${t.green(config.plan)}`);
+  console.log(`${t.dim('plan:')}      ${t.green(config.plan ?? 'free')}`);
   console.log(`${t.dim('domain:')}    ${t.body(config.domain)}`);
   console.log('');
   console.log(t.heading('Content'));

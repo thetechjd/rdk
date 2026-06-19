@@ -81,9 +81,11 @@ export async function networkJoin(): Promise<void> {
         headers: { Authorization: `Bearer ${config.apiKey}` },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { nodeId: string; plan: string };
-      updateConfig({ nodeId: data.nodeId, centralApiUrl, plan: data.plan });
-      spinner.succeed(`Connected — Node: ${data.nodeId}, Plan: ${data.plan}`);
+      const data = await res.json() as { nodeId: string; plan?: string };
+      // Never let a missing plan in the auth response clobber the stored plan.
+      const plan = data.plan ?? config.plan ?? 'free';
+      updateConfig({ nodeId: data.nodeId, centralApiUrl, plan });
+      spinner.succeed(`Connected — Node: ${data.nodeId}, Plan: ${plan}`);
     }
   } catch (e) {
     spinner.warn(`Could not reach central: ${(e as Error).message}`);
@@ -129,8 +131,9 @@ export async function networkConnect(): Promise<void> {
       headers: { Authorization: `Bearer ${config.apiKey}` },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json() as { nodeId: string; plan: string; jwtToken: string };
-    updateConfig({ nodeId: data.nodeId, centralApiUrl, plan: data.plan });
+    const data = await res.json() as { nodeId: string; plan?: string; jwtToken: string };
+    const plan = data.plan ?? config.plan ?? 'free';
+    updateConfig({ nodeId: data.nodeId, centralApiUrl, plan });
     spinner.succeed(`Connected — Node ID: ${data.nodeId}, Plan: ${data.plan}`);
   } catch (e) {
     spinner.fail(`Authentication failed: ${(e as Error).message}`);
@@ -160,7 +163,7 @@ export async function networkStatus(): Promise<void> {
     console.log(`Central API:  ${res.ok ? mark.ok() + ' connected' : mark.error() + ' error'}`);
     console.log(`Peer nodes:   ${t.body(String(nodeData?.total ?? 'unknown'))}`);
     console.log(`Your node:    ${t.body(config.nodeId)}`);
-    console.log(`Plan:         ${t.body(config.plan)}`);
+    console.log(`Plan:         ${t.body(config.plan ?? 'free')}`);
     console.log(`Domain:       ${t.body(config.domain)}`);
   } catch (e) {
     spinner.fail(`Network unreachable: ${(e as Error).message}`);
