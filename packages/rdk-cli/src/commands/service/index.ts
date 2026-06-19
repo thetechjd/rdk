@@ -7,17 +7,47 @@ import { spawn } from 'child_process';
 import { t, mark } from '../../theme.js';
 import { getAdapter, detectPlatform, resolveLaunch } from './platform.js';
 
+const PID_FILE = path.join(os.homedir(), '.rdk', 'mcp-serve.pid');
+
+/**
+ * Returns the pid of a live detached mcp:serve, or null. Clears a stale pid
+ * file if the process is gone.
+ */
+export function detachedPid(): number | null {
+  try {
+    if (!fs.existsSync(PID_FILE)) return null;
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    if (!pid) return null;
+    process.kill(pid, 0); // throws ESRCH if not running
+    return pid;
+  } catch {
+    try { fs.unlinkSync(PID_FILE); } catch { /* already gone */ }
+    return null;
+  }
+}
+
 /**
  * Start the MCP server in the background for this boot only (no auto-start
  * hook installed). Uses the same absolute launch spec as the service adapters,
- * so it works regardless of how RDK was installed.
+ * so it works regardless of how RDK was installed. Idempotent: a second call
+ * while one is already running is a no-op with a notice.
  */
 export async function startDetached(): Promise<void> {
+  const existing = detachedPid();
+  if (existing) {
+    console.error(t.dim(`  RDK MCP server is already running in the background (pid: ${existing}).`));
+    console.error(t.dim('  Stop it with: rdk mcp:serve --stop'));
+    return;
+  }
+
   const logDir = path.join(os.homedir(), '.rdk', 'logs');
   fs.mkdirSync(logDir, { recursive: true });
   const out = fs.openSync(path.join(logDir, 'rdk.out.log'), 'a');
   const err = fs.openSync(path.join(logDir, 'rdk.err.log'), 'a');
 
+  // Child runs the normal FOREGROUND serve (no --detach) so it holds the
+  // WebSocket to Central exactly like an attached run. Absolute launch spec
+  // means it survives a minimal PATH and the parent terminal closing.
   const { command, args } = resolveLaunch('mcp:serve');
   const child = spawn(command, args, {
     detached: true,
@@ -26,11 +56,35 @@ export async function startDetached(): Promise<void> {
   });
   child.unref();
 
+  if (child.pid) fs.writeFileSync(PID_FILE, String(child.pid), { mode: 0o600 });
+
   console.error('');
   console.error(t.green(`  ${mark.ok()} RDK MCP server started (pid: ${child.pid})`));
-  console.error(t.dim(`  Logs: ${path.join(logDir, 'rdk.out.log')}`));
-  console.error(t.dim('  Runs until you reboot. Enable auto-start: rdk service:install'));
+  console.error(t.dim(`  Logs:   ${path.join(logDir, 'rdk.out.log')}`));
+  console.error(t.dim('  Status: rdk mcp:serve --status'));
+  console.error(t.dim('  Stop:   rdk mcp:serve --stop'));
+  console.error(t.dim('  Runs until you reboot. Enable auto-start on boot: rdk service:install'));
   console.error('');
+}
+
+/** Stop a detached mcp:serve started with --detach (or init's "run now"). */
+export async function stopDetached(): Promise<void> {
+  const pid = detachedPid();
+  if (!pid) {
+    console.error(t.dim('  RDK MCP server is not running in the background.'));
+    return;
+  }
+  try { process.kill(pid, 'SIGTERM'); } catch { /* already exiting */ }
+  try { fs.unlinkSync(PID_FILE); } catch { /* already gone */ }
+  console.error(t.green(`  ${mark.ok()} RDK MCP server stopped (pid: ${pid})`));
+}
+
+/** Report whether a detached mcp:serve is running. */
+export async function detachedStatus(): Promise<void> {
+  const pid = detachedPid();
+  console.error(pid
+    ? t.green(`  ● RDK MCP server is running in the background (pid: ${pid})`)
+    : t.dim('  ○ RDK MCP server is not running in the background'));
 }
 
 export async function serviceInstall(): Promise<void> {

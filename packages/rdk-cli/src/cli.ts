@@ -177,15 +177,18 @@ mcp
   .command('serve')
   .description('Start MCP server for Claude Desktop')
   .option('-p, --port <port>', 'Port')
+  .option('-d, --detach', 'Run in the background (survives terminal close, until reboot)')
+  .option('--stop', 'Stop the background server')
+  .option('--status', 'Show whether the background server is running')
   .action(async (opts) => {
     const { mcpServe } = await import('./commands/mcp.js');
-    await mcpServe({ port: opts.port ? parseInt(opts.port, 10) : undefined });
+    await mcpServe({ port: opts.port ? parseInt(opts.port, 10) : undefined, detach: opts.detach, stop: opts.stop, status: opts.status });
   });
 
 mcp.command('validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
 mcp.command('test').action(async () => { const { mcpTest } = await import('./commands/mcp.js'); await mcpTest(); });
 
-program.command('mcp:serve').option('-p, --port <port>', 'Port').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: o.port ? parseInt(o.port, 10) : undefined }); });
+program.command('mcp:serve').option('-p, --port <port>', 'Port').option('-d, --detach', 'Run in the background (survives terminal close, until reboot)').option('--stop', 'Stop the background server').option('--status', 'Show whether the background server is running').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: o.port ? parseInt(o.port, 10) : undefined, detach: o.detach, stop: o.stop, status: o.status }); });
 program.command('mcp:validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
 
 // ── Tips ──────────────────────────────────────────────────────────────────────
@@ -362,6 +365,20 @@ program.command('status').description('Show full node status').action(async () =
     mcpRunning = res.ok;
   } catch {}
 
+  // Determine the run-mode keeping it online: background (detached), service
+  // (auto-start), or foreground.
+  const { detachedPid } = await import('./commands/service/index.js');
+  const bgPid = detachedPid();
+  let serviceInstalled = false;
+  try {
+    const { getAdapter } = await import('./commands/service/platform.js');
+    serviceInstalled = (await (await getAdapter()).status()).installed;
+  } catch {}
+  const runMode = bgPid ? `background (pid ${bgPid})`
+    : serviceInstalled ? 'service (auto-start on boot)'
+    : mcpRunning ? 'foreground'
+    : null;
+
   console.log(t.heading('\nRDK Node Status'));
   console.log(divider(42));
   console.log(`${t.dim('node id:')}   ${t.body(config.nodeId)}`);
@@ -379,6 +396,7 @@ program.command('status').description('Show full node status').action(async () =
   console.log(`  MCP server       ${hasMcp    ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk network:join')}`);
   console.log(`  Tip settlement   ${hasEthers ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk tips:enable')}`);
   console.log(`  ${t.dim('live sync:')}      ${mcpRunning ? t.green('● connected') : t.dim('○ offline')}${!mcpRunning ? t.dim('  (start with rdk mcp:serve)') : ''}`);
+  console.log(`  ${t.dim('run mode:')}       ${runMode ? t.body(runMode) : t.dim('not running')}${!runMode ? t.dim('  (foreground · --detach · service:install)') : ''}`);
   if (pendingTips > 0) {
     console.log('');
     console.log(`Pending tips: ${t.green(`$${pendingTips.toFixed(4)} USDC`)}`);

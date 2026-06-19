@@ -3,7 +3,13 @@ import { isInstalled } from '../require-dep.js';
 import { loadConfig, updateConfig } from '../config.js';
 import { t, mark } from '../theme.js';
 
-export async function mcpServe(opts: { port?: number }): Promise<void> {
+export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: boolean; status?: boolean } = {}): Promise<void> {
+  // Run-mode controls run before the foreground serve. These manage a
+  // background ("detached") serve via ~/.rdk/mcp-serve.pid.
+  if (opts.stop)   { const { stopDetached }   = await import('./service/index.js'); return stopDetached(); }
+  if (opts.status) { const { detachedStatus } = await import('./service/index.js'); return detachedStatus(); }
+  if (opts.detach) { const { startDetached }  = await import('./service/index.js'); return startDetached(); }
+
   // Check the MCP SDK dep before stdio transport starts — never prompt or install mid-session.
   // Use the /server subpath: v1.29.0+ dropped the root index.js, only subpaths exist.
   // @retrodeck/mcp is bundled into the CLI, so we only gate on the on-demand SDK here.

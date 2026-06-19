@@ -817,9 +817,10 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
       await startDetached();
     } else {
       console.log('');
-      console.log(`  ${t.heading('Start the MCP server when you’re ready:')}`);
-      console.log(`  ${t.green('rdk mcp:serve')}`);
-      console.log(t.dim('  Enable auto-start later with: rdk service:install'));
+      console.log(`  ${t.heading('Keep your node online — three ways:')}`);
+      console.log(`  ${t.green('rdk mcp:serve')}            runs until you close the terminal`);
+      console.log(`  ${t.green('rdk mcp:serve --detach')}   runs in the background, until reboot`);
+      console.log(`  ${t.green('rdk service:install')}      auto-starts on boot, auto-restarts`);
       console.log('');
     }
   } else {
