@@ -86,13 +86,18 @@ export async function accountLogin(): Promise<void> {
     const data = await res.json() as { accessToken: string; refreshToken: string };
 
     let userId = config.retrodeckUserId ?? '';
+    // /users/me is the authoritative source of the account's plan (the node
+    // auth endpoint doesn't carry it). Capture it here so status/network:join
+    // show the real plan instead of falling back to 'free'.
+    let plan = config.plan;
     try {
       const meRes = await fetch(`${retrodeckApiUrl}/api/v1/users/me`, {
         headers: { Authorization: `Bearer ${data.accessToken}` },
       });
       if (meRes.ok) {
-        const me = await meRes.json() as { user: { id: string; emailVerified: boolean } };
+        const me = await meRes.json() as { user: { id: string; emailVerified: boolean; planId?: string } };
         userId = me.user.id;
+        plan = me.user.planId ?? plan ?? 'free';
         updateConfig({ emailVerified: me.user.emailVerified });
       }
     } catch {}
@@ -102,6 +107,7 @@ export async function accountLogin(): Promise<void> {
       retrodeckRefreshToken: data.refreshToken,
       retrodeckUserId: userId,
       retrodeckApiUrl,
+      plan,
     });
     spinner.succeed(`Logged in to RetroDeck`);
 
