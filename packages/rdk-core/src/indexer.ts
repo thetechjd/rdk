@@ -77,8 +77,16 @@ export class RDKIndexer {
             continue;
           }
 
-          // 4. Embed locally
-          const embedding = await this.config.embeddingModel.embed(chunk.text);
+          // 4. Embed locally.
+          // Prepend the document title + heading context to the embedded text
+          // so a query that matches the title/topic scores high. The title is
+          // the strongest relevance signal; embedding the body alone made an
+          // exact title-match query ("Forward Deployed Engineer") score low
+          // against a long article. The stored content (below) is unchanged —
+          // only the vector incorporates the title.
+          const chunkTitle = this.buildTitle(doc.title, chunk);
+          const embedText = `${chunkTitle}\n\n${chunk.text}`;
+          const embedding = await this.config.embeddingModel.embed(embedText);
 
           // 5. Categorize
           const domain = doc.domain ?? this.config.domain;
@@ -104,7 +112,6 @@ export class RDKIndexer {
             ? encrypt(chunk.text, this.config.vaultKey!)
             : chunk.text;
 
-          const chunkTitle = this.buildTitle(doc.title, chunk);
           this.config.localStore.saveChunk({
             id: chunkId,
             title: chunkTitle,

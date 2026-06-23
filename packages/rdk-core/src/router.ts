@@ -57,7 +57,11 @@ export class RDKRouter {
 
   async query(userQuery: string, overrides?: Partial<RouterConfig>): Promise<QueryResult> {
     const cfg = { ...this.config, ...overrides };
-    const minSim = cfg.minSimilarity ?? 0.72;
+    // all-MiniLM-L6-v2 cosine scores for genuinely relevant matches land
+    // ~0.3–0.6 (short query vs longer chunk), so a 0.72 bar meant the router
+    // almost never answered from indexed knowledge and always fell back to the
+    // LLM — defeating the point. 0.45 is a confident-match bar for this model.
+    const minSim = cfg.minSimilarity ?? 0.45;
     const topK = cfg.topK ?? 5;
     const start = Date.now();
 
