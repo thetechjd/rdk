@@ -1,6 +1,6 @@
 {
   "name": "@retrodeck/rdk",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "description": "RDK CLI — install, configure, and manage your RDK node",
   "bin": {
     "rdk": "./dist/cli.js"

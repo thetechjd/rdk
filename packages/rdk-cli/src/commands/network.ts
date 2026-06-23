@@ -211,7 +211,17 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     }
 
     const data = await res.json() as {
-      results: Array<{ title?: string; summary?: string; score?: number; tipAmountUsdc?: number }>;
+      results: Array<{
+        title?: string;
+        summary?: string;
+        score?: number;
+        tipAmountUsdc?: number;
+        nodeId?: string;
+        isEncrypted?: boolean;
+        // Live-fetched content from the owning node: plaintext for public
+        // chunks, ciphertext for private/team chunks. null if unavailable.
+        contentEncrypted?: string | null;
+      }>;
     };
 
     if (!data.results.length) {
@@ -219,11 +229,36 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
       return;
     }
 
+    const { decrypt, keyFromHex } = await import('@rdk/core');
+    const sharedKeys = config.sharedVaultKeys ?? {};
+
     console.log(t.heading(`\nNetwork results for: "${query}"\n`));
     data.results.forEach((r, i) => {
       const score = ((r.score ?? 0) * 100).toFixed(1);
-      console.log(t.bold(`[${i + 1}] ${r.title ?? 'Untitled'}`) + t.dim(` (${score}%)`));
-      if (r.summary) console.log(t.body(r.summary.slice(0, 200)));
+      const tip = r.tipAmountUsdc ? t.dim(`  ·  tip $${r.tipAmountUsdc.toFixed(4)} USDC`) : '';
+      console.log(t.bold(`[${i + 1}] ${r.title ?? 'Untitled'}`) + t.dim(` (${score}% match)`) + tip);
+
+      let content = r.contentEncrypted ?? '';
+      // Team/private content arrives encrypted — decrypt with the shared vault
+      // key for the owning node (or our own key). Public content is plaintext.
+      if (content && r.isEncrypted) {
+        const hex = (r.nodeId && sharedKeys[r.nodeId]) || config.vaultKeyHex;
+        try { content = hex ? decrypt(content, keyFromHex(hex)) : ''; }
+        catch { content = ''; }
+        if (!content) {
+          console.log(t.dim("    [encrypted — you don't have the vault key for this content]"));
+          console.log('');
+          return;
+        }
+      }
+
+      if (content) {
+        console.log(t.body(content.trim()));
+      } else if (r.summary) {
+        console.log(t.dim(r.summary.trim()));
+      } else {
+        console.log(t.dim('    (content unavailable — the owning node may be offline or not serving)'));
+      }
       console.log('');
     });
   } catch (e) {
