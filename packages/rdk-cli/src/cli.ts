@@ -204,6 +204,15 @@ program
   });
 
 program
+  .command('wallet <address>')
+  .description('Set your EVM payout wallet for tip earnings (0x...)')
+  .option('-c, --chain <chain>', 'base | ethereum | polygon')
+  .action(async (address, opts) => {
+    const { setWallet } = await import('./commands/tips.js');
+    await setWallet(address, { chain: opts.chain });
+  });
+
+program
   .command('tips:status')
   .description('Show tip queue and earnings')
   .action(async () => {
