@@ -155,15 +155,17 @@ network
   .description('Search the public network and your indexed chunks for relevant knowledge')
   .option('-d, --domain <domain>')
   .option('-k, --top-k <n>', 'Results', '5')
+  .option('--save', 'Save the results to your local knowledge (this machine only)')
   .action(async (query, opts) => {
     const { networkQuery } = await import('./commands/network.js');
-    await networkQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10) });
+    await networkQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10), save: !!opts.save });
   });
 
 program.command('network:join').action(async () => { const { networkJoin } = await import('./commands/network.js'); await networkJoin(); });
 program.command('network:connect').action(async () => { const { networkConnect } = await import('./commands/network.js'); await networkConnect(); });
 program.command('network:status').action(async () => { const { networkStatus } = await import('./commands/network.js'); await networkStatus(); });
-program.command('network:query <query>').action(async (q) => { const { networkQuery } = await import('./commands/network.js'); await networkQuery(q, {}); });
+program.command('network:query <query>').option('-d, --domain <d>').option('-k, --top-k <n>', 'Results', '5').option('--save', 'Save results to local knowledge').action(async (q, o) => { const { networkQuery } = await import('./commands/network.js'); await networkQuery(q, { domain: o.domain, topK: parseInt(o.topK, 10), save: !!o.save }); });
+program.command('save').description('Save the last network:query results to your local knowledge (this machine only)').action(async () => { const { saveLastQuery } = await import('./commands/network.js'); await saveLastQuery(); });
 program.command('network:sync').description('[deprecated] use vault:sync').option('--force').action(async (opts) => { console.error(t.dim('  note: `rdk network:sync` is deprecated — use `rdk vault:sync`')); const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
 
 // Top-level shorthand
@@ -222,13 +224,13 @@ const indexCmd = program.command('index')
     await vaultIndex({ force: opts.force, isPublic: !!opts.public });
   });
 
-indexCmd.command('chunk <text>').requiredOption('-t, --title <title>').option('-d, --domain <d>').description('Index text content as a private encrypted chunk on the network').action(async (text, opts) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(text, { title: opts.title, domain: opts.domain }); });
-indexCmd.command('url <url>').option('-d, --domain <d>').description('Index a URL privately (encrypted on the network)').action(async (url, opts) => { const { indexUrl } = await import('./commands/publish.js'); await indexUrl(url, { domain: opts.domain }); });
-indexCmd.command('file <path>').option('-d, --domain <d>').description('Index a file privately (encrypted on the network)').action(async (p, opts) => { const { indexFile } = await import('./commands/publish.js'); await indexFile(p, { domain: opts.domain }); });
+indexCmd.command('chunk <text>').requiredOption('-t, --title <title>').option('-d, --domain <d>').option('--local', 'Index on this machine only — never synced to the network').description('Index text content as a private encrypted chunk on the network').action(async (text, opts) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(text, { title: opts.title, domain: opts.domain, local: opts.local }); });
+indexCmd.command('url <url>').option('-d, --domain <d>').option('--local', 'Index on this machine only — never synced to the network').description('Index a URL privately (encrypted on the network)').action(async (url, opts) => { const { indexUrl } = await import('./commands/publish.js'); await indexUrl(url, { domain: opts.domain, local: opts.local }); });
+indexCmd.command('file <path>').option('-d, --domain <d>').option('--local', 'Index on this machine only — never synced to the network').description('Index a file privately (encrypted on the network)').action(async (p, opts) => { const { indexFile } = await import('./commands/publish.js'); await indexFile(p, { domain: opts.domain, local: opts.local }); });
 
-program.command('index:chunk <text>').requiredOption('-t, --title <t>').option('-d, --domain <d>').description('Index text content as a private encrypted chunk on the network').action(async (t, o) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(t, { title: o.title, domain: o.domain }); });
-program.command('index:url <url>').option('-d, --domain <d>').description('Index a URL privately (encrypted on the network)').action(async (url, o) => { const { indexUrl } = await import('./commands/publish.js'); await indexUrl(url, { domain: o.domain }); });
-program.command('index:file <path>').option('-d, --domain <d>').description('Index a file privately (encrypted on the network)').action(async (p, o) => { const { indexFile } = await import('./commands/publish.js'); await indexFile(p, { domain: o.domain }); });
+program.command('index:chunk <text>').requiredOption('-t, --title <t>').option('-d, --domain <d>').option('--local', 'This machine only — never synced').description('Index text content as a private encrypted chunk on the network').action(async (t, o) => { const { indexChunk } = await import('./commands/publish.js'); await indexChunk(t, { title: o.title, domain: o.domain, local: o.local }); });
+program.command('index:url <url>').option('-d, --domain <d>').option('--local', 'This machine only — never synced').description('Index a URL privately (encrypted on the network)').action(async (url, o) => { const { indexUrl } = await import('./commands/publish.js'); await indexUrl(url, { domain: o.domain, local: o.local }); });
+program.command('index:file <path>').option('-d, --domain <d>').option('--local', 'This machine only — never synced').description('Index a file privately (encrypted on the network)').action(async (p, o) => { const { indexFile } = await import('./commands/publish.js'); await indexFile(p, { domain: o.domain, local: o.local }); });
 
 // ── Publish (public) ──────────────────────────────────────────────────────────
 
@@ -393,6 +395,9 @@ program.command('status').description('Show full node status').action(async () =
   console.log(`  ${t.dim('indexed chunks:')} ${t.body(stats.totalChunks.toLocaleString())}`);
   console.log(`    ${t.dim('private:')}      ${t.body(stats.privateChunks.toLocaleString())}  ${t.dim('(encrypted on network)')}`);
   console.log(`    ${t.dim('public:')}       ${t.body(stats.publicChunks.toLocaleString())}  ${t.dim('(plaintext, earning)')}`);
+  if (stats.localChunks > 0) {
+    console.log(`    ${t.dim('local-only:')}   ${t.body(stats.localChunks.toLocaleString())}  ${t.dim('(this machine only, not synced)')}`);
+  }
   console.log('');
   console.log(t.body('Components:'));
   console.log(`  Embedding model  ${hasXenova ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk network:join')}`);

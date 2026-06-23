@@ -1,8 +1,68 @@
 // packages/rdk-cli/src/commands/network.ts
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { loadConfig, updateConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
 import { input } from '../prompts.js';
 import { t, mark, divider } from '../theme.js';
+
+// Readable results from the last network query, persisted so `rdk save` can
+// index them into the local store without re-querying (and re-paying).
+interface SavableResult { title: string; content: string; domain?: string }
+const LAST_QUERY_PATH = path.join(process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk'), 'last-query.json');
+
+/** Index readable network results into the local store as local-only chunks. */
+async function saveResultsLocally(savable: SavableResult[]): Promise<void> {
+  const ora = (await import('ora')).default;
+  if (!savable.length) {
+    console.log(t.warn('  Nothing to save from the last query.'));
+    return;
+  }
+  const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
+  if (!ready) return;
+
+  const { LocalStore, LocalEmbeddingModel, RDKIndexer, keyFromHex } = await import('@rdk/core');
+  const config = loadConfig();
+  // No syncToNetwork — these are saved for local search only and never leave
+  // the machine (localOnly also hard-excludes them from every sync path).
+  const indexer = new RDKIndexer({
+    embeddingModel: new LocalEmbeddingModel(),
+    localStore: new LocalStore(),
+    domain: config.domain,
+    vaultKey: config.vaultKeyHex ? keyFromHex(config.vaultKeyHex) : undefined,
+  });
+
+  const spinner = ora(`Saving ${savable.length} result(s) to local knowledge...`).start();
+  let saved = 0;
+  for (const r of savable) {
+    try {
+      const res = await indexer.indexDocument({
+        content: r.content,
+        title: r.title,
+        domain: r.domain ?? config.domain,
+        isPublic: false,
+        localOnly: true,
+      });
+      saved += res.chunksIndexed;
+    } catch { /* skip individual failures */ }
+  }
+  spinner.succeed(`Saved ${saved} chunk(s) locally (this machine only).`);
+  console.log(t.dim('  Future queries find these first — no network tip on re-retrieval.'));
+}
+
+/** `rdk save` — index the previous query's results into the local store. */
+export async function saveLastQuery(): Promise<void> {
+  let savable: SavableResult[] = [];
+  try {
+    savable = JSON.parse(fs.readFileSync(LAST_QUERY_PATH, 'utf-8')) as SavableResult[];
+  } catch {
+    console.log(t.warn('No recent query to save. Run rdk network:query "<query>" first,'));
+    console.log(t.dim('  or save as you go with: rdk network:query "<query>" --save'));
+    return;
+  }
+  await saveResultsLocally(savable);
+}
 
 function centralUrlOverride(): string | undefined {
   return process.env.RDK_CENTRAL_URL || process.env.RDK_API_URL;
@@ -170,7 +230,7 @@ export async function networkStatus(): Promise<void> {
   }
 }
 
-export async function networkQuery(query: string, opts: { domain?: string; topK?: number }): Promise<void> {
+export async function networkQuery(query: string, opts: { domain?: string; topK?: number; save?: boolean }): Promise<void> {
   const ora = (await import('ora')).default;
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
   if (!ready) return;
@@ -233,6 +293,8 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     const sharedKeys = config.sharedVaultKeys ?? {};
 
     console.log(t.heading(`\nNetwork results for: "${query}"\n`));
+    // Readable results (content resolved/decrypted) collected for save/--save.
+    const savable: SavableResult[] = [];
     data.results.forEach((r, i) => {
       const score = ((r.score ?? 0) * 100).toFixed(1);
       const tip = r.tipAmountUsdc ? t.dim(`  ·  tip $${r.tipAmountUsdc.toFixed(4)} USDC`) : '';
@@ -254,6 +316,7 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
 
       if (content) {
         console.log(t.body(content.trim()));
+        savable.push({ title: r.title ?? 'Untitled', content: content.trim(), domain: opts.domain ?? config.domain });
       } else if (r.summary) {
         console.log(t.dim(r.summary.trim()));
       } else {
@@ -261,6 +324,17 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
       }
       console.log('');
     });
+
+    // Persist readable results so `rdk save` can index them later without
+    // re-querying (and re-paying the tip).
+    try { fs.writeFileSync(LAST_QUERY_PATH, JSON.stringify(savable), { mode: 0o600 }); } catch { /* non-fatal */ }
+
+    if (opts.save) {
+      await saveResultsLocally(savable);
+    } else if (savable.length) {
+      console.log(t.dim('  Save these to your local knowledge: rdk save   (or query with --save)'));
+      console.log('');
+    }
   } catch (e) {
     spinner.fail((e as Error).message);
   }

@@ -19,6 +19,9 @@ export interface Document {
   domain?: string;
   categories?: string[];
   isPublic?: boolean;
+  // Index for local search only — never sync to RDK Central. Used to save
+  // knowledge retrieved from the network without re-uploading a duplicate.
+  localOnly?: boolean;
 }
 
 export interface IndexerConfig {
@@ -111,6 +114,7 @@ export class RDKIndexer {
             categories,
             isPublic,
             isEncrypted,
+            isLocalOnly: doc.localOnly ?? false,
             qualityScore: density * 100,
             sourcePath: doc.sourcePath,
             sourceAdapter: doc.sourceAdapter,
@@ -126,7 +130,7 @@ export class RDKIndexer {
       // 8. Sync indexed chunks to RDK Central — embeddings + metadata ONLY.
       //    Content (public plaintext or private ciphertext) stays on this node and
       //    is served to Central on demand via the fetch_content handler.
-      if (this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
+      if (!doc.localOnly && this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
         await this.syncTocentral(doc.isPublic ?? false);
       }
     } catch (e) {

@@ -17,6 +17,10 @@ export interface StoredChunk {
   categories: string[];
   isPublic: boolean;
   isEncrypted: boolean;
+  // Local-only chunks are indexed for personal search but never synced to RDK
+  // Central (e.g. knowledge saved from a network query). They are excluded from
+  // every sync path and don't count against the plan's network chunk limit.
+  isLocalOnly?: boolean;
   syncedAt?: Date;
   qualityScore: number;
   sourcePath?: string;
@@ -72,6 +76,7 @@ export class LocalStore {
         categories    TEXT DEFAULT '[]',
         is_public     INTEGER DEFAULT 0,
         is_encrypted  INTEGER DEFAULT 0,
+        local_only    INTEGER DEFAULT 0,
         synced_at     DATETIME,
         quality_score REAL DEFAULT 0.0,
         source_path   TEXT,
@@ -93,6 +98,13 @@ export class LocalStore {
     // Migration: add is_encrypted column to existing databases
     try {
       this.db.exec(`ALTER TABLE chunks ADD COLUMN is_encrypted INTEGER DEFAULT 0`);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+
+    // Migration: add local_only column to existing databases
+    try {
+      this.db.exec(`ALTER TABLE chunks ADD COLUMN local_only INTEGER DEFAULT 0`);
     } catch {
       // Column already exists — safe to ignore
     }
@@ -134,24 +146,24 @@ export class LocalStore {
       this.db.prepare(`
         UPDATE chunks SET
           title = ?, content = ?, summary = ?, domain = ?, categories = ?,
-          is_public = ?, is_encrypted = ?, quality_score = ?, source_path = ?,
+          is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
           source_adapter = ?, updated_at = ?
         WHERE id = ?
       `).run(
         chunk.title, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
-        chunk.isEncrypted ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
+        chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
         chunk.sourceAdapter ?? null, now, id,
       );
     } else {
       this.db.prepare(`
         INSERT INTO chunks (id, title, content, summary, domain, categories,
-          is_public, is_encrypted, quality_score, source_path, source_adapter, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          is_public, is_encrypted, local_only, quality_score, source_path, source_adapter, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories),
-        chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.qualityScore,
+        chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null, now, now,
       );
     }
@@ -190,7 +202,7 @@ export class LocalStore {
   getUnsyncedPublicChunks(limit = 100): StoredChunk[] {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
-      WHERE is_public = 1 AND synced_at IS NULL
+      WHERE is_public = 1 AND synced_at IS NULL AND local_only = 0
       ORDER BY created_at ASC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
@@ -231,13 +243,16 @@ export class LocalStore {
 
   // ── Stats ──────────────────────────────────────────────────────
 
-  getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; unsyncedChunks: number; pendingChunks: number; syncedChunks: number } {
+  getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; localChunks: number; unsyncedChunks: number; pendingChunks: number; syncedChunks: number } {
     const total = (this.db.prepare('SELECT COUNT(*) as n FROM chunks').get() as { n: number }).n;
-    const pub = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1').get() as { n: number }).n;
-    const unsynced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND synced_at IS NULL').get() as { n: number }).n;
-    // Any chunk (private or public) not yet pushed to RDK Central.
-    const pending = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NULL').get() as { n: number }).n;
-    return { totalChunks: total, publicChunks: pub, privateChunks: total - pub, unsyncedChunks: unsynced, pendingChunks: pending, syncedChunks: total - pending };
+    const pub = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND local_only = 0').get() as { n: number }).n;
+    const local = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE local_only = 1').get() as { n: number }).n;
+    const unsynced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND synced_at IS NULL AND local_only = 0').get() as { n: number }).n;
+    // Any non-local chunk (private or public) not yet pushed to RDK Central.
+    const pending = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NULL AND local_only = 0').get() as { n: number }).n;
+    const synced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0').get() as { n: number }).n;
+    // private = on-network private chunks (exclude local-only, counted separately)
+    return { totalChunks: total, publicChunks: pub, privateChunks: total - pub - local, localChunks: local, unsyncedChunks: unsynced, pendingChunks: pending, syncedChunks: synced };
   }
 
   // ── Tip Queue ──────────────────────────────────────────────────
@@ -295,6 +310,7 @@ export class LocalStore {
       categories: JSON.parse((row.categories as string) || '[]') as string[],
       isPublic: (row.is_public as number) === 1,
       isEncrypted: (row.is_encrypted as number) === 1,
+      isLocalOnly: (row.local_only as number) === 1,
       syncedAt: row.synced_at ? new Date(row.synced_at as string) : undefined,
       qualityScore: row.quality_score as number,
       sourcePath: row.source_path as string | undefined,
@@ -341,7 +357,7 @@ export class LocalStore {
   getUnsyncedEncryptedChunks(limit = 100): StoredChunk[] {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
-      WHERE is_public = 0 AND is_encrypted = 1 AND synced_at IS NULL
+      WHERE is_public = 0 AND is_encrypted = 1 AND synced_at IS NULL AND local_only = 0
       ORDER BY created_at ASC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
@@ -357,7 +373,7 @@ export class LocalStore {
   getUnsyncedChunks(limit = 100): StoredChunk[] {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
-      WHERE synced_at IS NULL
+      WHERE synced_at IS NULL AND local_only = 0
       ORDER BY created_at ASC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
@@ -366,7 +382,8 @@ export class LocalStore {
 
   /** Clear sync state so the next sync re-sends every chunk (rdk vault:sync --force). */
   resetSyncState(): number {
-    return this.db.prepare('UPDATE chunks SET synced_at = NULL').run().changes;
+    // Local-only chunks are never synced — leave them out of the re-sync.
+    return this.db.prepare('UPDATE chunks SET synced_at = NULL WHERE local_only = 0').run().changes;
   }
 
   close() {

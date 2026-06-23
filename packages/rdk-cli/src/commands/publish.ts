@@ -25,7 +25,7 @@ async function getIndexer() {
   });
 }
 
-export async function indexChunk(text: string, opts: { title: string; domain?: string }): Promise<void> {
+export async function indexChunk(text: string, opts: { title: string; domain?: string; local?: boolean }): Promise<void> {
   const ora = (await import('ora')).default;
   const indexer = await getIndexer();
   if (!indexer) return;
@@ -38,9 +38,15 @@ export async function indexChunk(text: string, opts: { title: string; domain?: s
       title: opts.title,
       domain: opts.domain ?? config.domain,
       isPublic: false,
+      localOnly: opts.local,
     });
-    spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) indexed privately`);
-    console.log(t.dim('  Encrypted with your vault key. Visible only to you and your team.'));
+    if (opts.local) {
+      spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) saved locally`);
+      console.log(t.dim('  Stored on this machine only — not synced to the network.'));
+    } else {
+      spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) indexed privately`);
+      console.log(t.dim('  Encrypted with your vault key. Visible only to you and your team.'));
+    }
     result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
@@ -80,13 +86,18 @@ export async function publishChunk(text: string, opts: { title: string; public?:
 //   publish:url / publish:file  → always PUBLIC  ("publish" means public)
 //   index:url   / index:file    → always PRIVATE ("index" means private)
 
-async function ingestUrl(url: string, isPublic: boolean, domain?: string): Promise<void> {
+function outcome(isPublic: boolean, localOnly?: boolean): string {
+  if (localOnly) return 'saved locally';
+  return isPublic ? 'published publicly' : 'indexed privately';
+}
+
+async function ingestUrl(url: string, isPublic: boolean, domain?: string, localOnly?: boolean): Promise<void> {
   const ora = (await import('ora')).default;
   const indexer = await getIndexer();
   if (!indexer) return;
 
   const config = loadConfig();
-  const verb = isPublic ? 'Publishing' : 'Indexing';
+  const verb = localOnly ? 'Saving' : isPublic ? 'Publishing' : 'Indexing';
   const spinner = ora(`Fetching ${url}...`).start();
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
@@ -101,16 +112,18 @@ async function ingestUrl(url: string, isPublic: boolean, domain?: string): Promi
       title,
       domain: domain ?? config.domain,
       isPublic,
+      localOnly,
       sourcePath: url,
     });
-    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${isPublic ? 'published publicly' : 'indexed privately'}`);
+    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${outcome(isPublic, localOnly)}`);
+    if (localOnly) console.log(t.dim('  Stored on this machine only — not synced to the network.'));
     result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
   }
 }
 
-async function ingestFile(filePath: string, isPublic: boolean, domain?: string): Promise<void> {
+async function ingestFile(filePath: string, isPublic: boolean, domain?: string, localOnly?: boolean): Promise<void> {
   const ora = (await import('ora')).default;
   if (!fs.existsSync(filePath)) {
     console.error(t.error(`File not found: ${filePath}`));
@@ -121,7 +134,7 @@ async function ingestFile(filePath: string, isPublic: boolean, domain?: string):
   if (!indexer) return;
 
   const config = loadConfig();
-  const verb = isPublic ? 'Publishing' : 'Indexing';
+  const verb = localOnly ? 'Saving' : isPublic ? 'Publishing' : 'Indexing';
   const spinner = ora(`${verb} ${filePath}...`).start();
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -131,9 +144,11 @@ async function ingestFile(filePath: string, isPublic: boolean, domain?: string):
       title,
       domain: domain ?? config.domain,
       isPublic,
+      localOnly,
       sourcePath: filePath,
     });
-    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${isPublic ? 'published publicly' : 'indexed privately'}`);
+    spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${outcome(isPublic, localOnly)}`);
+    if (localOnly) console.log(t.dim('  Stored on this machine only — not synced to the network.'));
     result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
@@ -151,11 +166,11 @@ export async function publishFile(filePath: string, opts: { public?: boolean; do
   await ingestFile(filePath, true, opts.domain);
 }
 
-// index:* — always PRIVATE (encrypted on the network).
-export async function indexUrl(url: string, opts: { domain?: string } = {}): Promise<void> {
-  await ingestUrl(url, false, opts.domain);
+// index:* — PRIVATE (encrypted on the network), or local-only with --local.
+export async function indexUrl(url: string, opts: { domain?: string; local?: boolean } = {}): Promise<void> {
+  await ingestUrl(url, false, opts.domain, opts.local);
 }
 
-export async function indexFile(filePath: string, opts: { domain?: string } = {}): Promise<void> {
-  await ingestFile(filePath, false, opts.domain);
+export async function indexFile(filePath: string, opts: { domain?: string; local?: boolean } = {}): Promise<void> {
+  await ingestFile(filePath, false, opts.domain, opts.local);
 }

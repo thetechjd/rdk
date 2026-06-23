@@ -23,7 +23,7 @@ export async function showAccount(): Promise<void> {
   console.log('');
   console.log(`Vault:        ${t.body(`${config.vaultAdapter} @ ${config.vaultPath}`)}`);
   console.log(`Chunks:       ${t.body(`${stats.totalChunks.toLocaleString()} indexed (${stats.syncedChunks.toLocaleString()} synced, ${stats.pendingChunks.toLocaleString()} pending sync)`)}`);
-  console.log(`              ${t.dim(`${stats.privateChunks.toLocaleString()} private, ${stats.publicChunks.toLocaleString()} public`)}`);
+  console.log(`              ${t.dim(`${stats.privateChunks.toLocaleString()} private, ${stats.publicChunks.toLocaleString()} public${stats.localChunks > 0 ? `, ${stats.localChunks.toLocaleString()} local-only` : ''}`)}`);
   if (config.walletAddress) {
     console.log(`Wallet:       ${t.body(`${config.walletAddress} (${config.walletChain})`)}`);
   }
