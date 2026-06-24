@@ -3,7 +3,7 @@
 import { loadConfig } from '../../config.js';
 import { pushChunkDeleted } from '../events.js';
 
-export async function deleteChunkHandler(data: unknown): Promise<{ deleted: boolean; chunkId: string }> {
+export async function deleteChunkHandler(data: unknown): Promise<{ deleted: boolean; existedLocally: boolean; chunkId: string; dbPath: string }> {
   const { chunkId } = data as { chunkId: string };
 
   const { LocalStore } = await import('@rdk/core');
@@ -28,11 +28,18 @@ export async function deleteChunkHandler(data: unknown): Promise<{ deleted: bool
     // Continue with local deletion even if central is unreachable
   }
 
+  // Delete is intentionally NOT gated on the local row existing. The dashboard
+  // intent is "remove this chunk from the network/Central view"; if this node
+  // no longer has the row (e.g. re-indexing changed content hashes), there is
+  // simply nothing local to delete — that is not a failure.
   const store = new LocalStore();
-  store.deleteChunk(chunkId);
+  const dbPath = typeof store.getDatabasePath === 'function'
+    ? store.getDatabasePath()
+    : '(unknown local store path)';
+  const existedLocally = store.deleteChunk(chunkId);
   store.close();
 
   pushChunkDeleted(chunkId);
 
-  return { deleted: true, chunkId };
+  return { deleted: true, existedLocally, chunkId, dbPath };
 }

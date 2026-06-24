@@ -19,7 +19,12 @@ export async function promotePublicHandler(data: unknown): Promise<{ promoted: b
   const store = new LocalStore();
   try {
     const chunk = store.getChunk(chunkId);
-    if (!chunk) throw new Error('Chunk not found in local store');
+    if (!chunk) {
+      const dbPath = typeof store.getDatabasePath === 'function'
+        ? store.getDatabasePath()
+        : '(unknown local store path)';
+      throw new Error(`Chunk not found in local store: ${chunkId} (db: ${dbPath})`);
+    }
     if (chunk.isPublic) throw new Error('Chunk is already public');
     if (!chunk.isEncrypted) throw new Error('Chunk is not encrypted — cannot promote');
 

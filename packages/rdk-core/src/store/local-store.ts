@@ -183,8 +183,15 @@ export class LocalStore {
     return this.rowToChunk(row);
   }
 
-  deleteChunk(id: string): void {
-    this.db.prepare('DELETE FROM chunks WHERE id = ?').run(id);
+  /** Absolute path of the SQLite file this store is operating on. */
+  getDatabasePath(): string {
+    return this.dbPath;
+  }
+
+  /** Deletes a chunk; returns whether a row actually existed and was removed. */
+  deleteChunk(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM chunks WHERE id = ?').run(id);
+    return result.changes > 0;
   }
 
   markSynced(id: string): void {

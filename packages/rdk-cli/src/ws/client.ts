@@ -163,10 +163,15 @@ export class RdkWebSocketClient extends EventEmitter {
     }
 
     if (typeof msg['type'] === 'string' && msg['type'].startsWith('command.')) {
+      // Log to stderr (stdout is the MCP protocol) so the device service logs
+      // show exactly what command/ID/data arrived and whether it succeeded.
+      console.error(`[rdk ws] received ${msg['type']} id=${msg['id']} data=${JSON.stringify(msg['data'])}`);
       try {
         const result = await dispatchCommand(msg as { type: string; id: string; data: unknown });
+        console.error(`[rdk ws] completed ${msg['type']} id=${msg['id']}`);
         this.send({ type: 'ack', replyTo: msg['id'] as string, data: result });
       } catch (e) {
+        console.error(`[rdk ws] failed ${msg['type']} id=${msg['id']}: ${(e as Error).message}`);
         this.send({
           type: 'error',
           replyTo: msg['id'] as string,
