@@ -265,6 +265,7 @@ program.command('account:login').description('Log in to RetroDeck account').acti
 program.command('account:upgrade').description('Open billing portal').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
 program.command('account:relink').description('Link this node to your RetroDeck account (fixes empty dashboard)').action(async () => { const { accountRelink } = await import('./commands/account.js'); await accountRelink(); });
 program.command('balance').description('Show your current USDC balance').action(async () => { const { showBalance } = await import('./commands/balance.js'); await showBalance(); });
+program.command('topup [amount]').description('Add USDC credit via Stripe (default $10)').action(async (amount) => { const { topup } = await import('./commands/balance.js'); await topup(amount); });
 program.command('account:apikey:rotate').description('Rotate API key').action(async () => { const { rotateApiKey } = await import('./commands/account.js'); await rotateApiKey(); });
 
 // ── Team ──────────────────────────────────────────────────────────────────────

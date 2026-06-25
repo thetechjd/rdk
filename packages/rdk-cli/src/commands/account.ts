@@ -155,14 +155,17 @@ export async function upgradeAccount(): Promise<void> {
   const config = loadConfig();
 
   const retrodeckApiUrl = config.retrodeckApiUrl ?? 'https://api.retrodeck.ai';
+  // Billing lives in the dashboard app (dashboard.retrodeck.ai), not the
+  // marketing site. Derive it from the API host: api. → dashboard.
+  const dashboardBilling = `${retrodeckApiUrl.replace('//api.', '//dashboard.')}/dashboard/billing`;
   if (config.retrodeckAccessToken) {
     const spinner = ora('Opening billing portal...').start();
     try {
-      await open(`${retrodeckApiUrl.replace('api.', '')}/dashboard/billing`);
+      await open(dashboardBilling);
       spinner.succeed('Opened RetroDeck billing in browser');
     } catch (e) {
       spinner.fail((e as Error).message);
-      console.log(t.dim('Manual: https://retrodeck.ai/dashboard/billing'));
+      console.log(t.dim(`Manual: ${dashboardBilling}`));
     }
     return;
   }
@@ -180,7 +183,7 @@ export async function upgradeAccount(): Promise<void> {
     await open(checkoutUrl);
   } catch (e) {
     spinner.fail((e as Error).message);
-    console.log(t.dim('Manual: https://retrodeck.ai/dashboard/billing'));
+    console.log(t.dim(`Manual: ${dashboardBilling}`));
   }
 }
 
