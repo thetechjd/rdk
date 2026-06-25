@@ -61,8 +61,17 @@ export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: b
   console.error(t.dim(`  Domain:      ${config.domain}`));
 
   // ── WebSocket connection to RDK Central ─────────────────────────────────
+  // Only ONE process per node may hold the Central WS (Central kicks duplicates
+  // with 4001). When the always-on service AND Claude Desktop both run
+  // mcp:serve, a lock decides who owns the connection; the others serve their
+  // MCP tools without opening a competing socket. The owner heartbeats the
+  // lock; if it dies, another instance takes over on its next tick.
   const { getWsClient } = await import('../ws/client.js');
+  const { wsHeldByOther, claimWs, releaseWs } = await import('../ws/ws-lock.js');
   const ws = getWsClient();
+  let wsOwner = false;
+  let wsOwnerTick: ReturnType<typeof setInterval> | undefined;
+
   if (ws) {
     ws.on('connected', () => {
       console.error(t.dim('  ✓ live sync active'));
@@ -72,12 +81,27 @@ export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: b
         console.error(t.dim(`  · disconnected from RDK Central (${code})${reason ? ': ' + reason : ''}`));
       }
     });
-    ws.connect();
+
+    const ensureOwner = () => {
+      if (wsOwner) { claimWs(); return; }          // refresh our heartbeat
+      if (wsHeldByOther()) return;                  // another instance owns it — tools-only
+      wsOwner = true;
+      claimWs();
+      console.error(t.dim('  ✓ holding the RDK Central connection for this node'));
+      ws.connect();
+    };
+    ensureOwner();
+    if (!wsOwner) {
+      console.error(t.dim('  · another rdk mcp:serve holds the RDK Central connection — serving tools only'));
+    }
+    wsOwnerTick = setInterval(ensureOwner, 30_000);
+    if (typeof wsOwnerTick.unref === 'function') wsOwnerTick.unref();
   }
 
   // ── Clean shutdown ───────────────────────────────────────────────────────
   const shutdown = () => {
-    ws?.disconnect();
+    if (wsOwnerTick) clearInterval(wsOwnerTick);
+    if (wsOwner) { ws?.disconnect(); releaseWs(); }
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);
