@@ -151,7 +151,7 @@ export async function accountRelink(): Promise<void> {
 
 export async function upgradeAccount(): Promise<void> {
   const ora   = (await import('ora')).default;
-  const open  = (await import('open')).default;
+  const { openUrl } = await import('../open-url.js');
   const config = loadConfig();
 
   const retrodeckApiUrl = config.retrodeckApiUrl ?? 'https://api.retrodeck.ai';
@@ -160,13 +160,9 @@ export async function upgradeAccount(): Promise<void> {
   const dashboardBilling = `${retrodeckApiUrl.replace('//api.', '//dashboard.')}/dashboard/billing`;
   if (config.retrodeckAccessToken) {
     const spinner = ora('Opening billing portal...').start();
-    try {
-      await open(dashboardBilling);
-      spinner.succeed('Opened RetroDeck billing in browser');
-    } catch (e) {
-      spinner.fail((e as Error).message);
-      console.log(t.dim(`Manual: ${dashboardBilling}`));
-    }
+    openUrl(dashboardBilling);
+    spinner.succeed('Opened RetroDeck billing in browser');
+    console.log(t.dim(`Manual: ${dashboardBilling}`));
     return;
   }
 
@@ -180,7 +176,8 @@ export async function upgradeAccount(): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { checkoutUrl } = await res.json() as { checkoutUrl: string };
     spinner.succeed('Opening browser...');
-    await open(checkoutUrl);
+    openUrl(checkoutUrl);
+    console.log(t.dim(`Manual: ${checkoutUrl}`));
   } catch (e) {
     spinner.fail((e as Error).message);
     console.log(t.dim(`Manual: ${dashboardBilling}`));

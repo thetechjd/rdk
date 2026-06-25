@@ -43,7 +43,7 @@ export async function showBalance(): Promise<void> {
 // `rdk topup [amount]` — add USDC credit via Stripe. Defaults to $10.
 export async function topup(amountArg?: string): Promise<void> {
   const ora = (await import('ora')).default;
-  const open = (await import('open')).default;
+  const { openUrl } = await import('../open-url.js');
   const config = loadConfig();
 
   // Accept "10", "$10", "10.50". Default to $10 when omitted.
@@ -67,7 +67,7 @@ export async function topup(amountArg?: string): Promise<void> {
     if (!checkoutUrl) throw new Error('No checkout URL returned');
 
     spinner.succeed(`Opening checkout to add $${amountUsd.toFixed(2)} USDC`);
-    try { await open(checkoutUrl); } catch { /* headless — link printed below */ }
+    openUrl(checkoutUrl);
     console.log(t.dim(`  ${checkoutUrl}`));
     console.log(t.dim('  Your balance updates once payment completes.'));
     console.log('');
