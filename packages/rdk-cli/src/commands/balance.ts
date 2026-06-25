@@ -12,6 +12,10 @@ export async function showBalance(): Promise<void> {
   }
 
   try {
+    // Self-heal: credit any top-up that completed but wasn't verified yet
+    // (crediting happens on verification — there's no async Stripe webhook).
+    try { await retrodeckFetch('/api/v1/balances/verify-topup'); } catch { /* best-effort */ }
+
     const res = await retrodeckFetch('/api/v1/balances/me');
     if (!res.ok) {
       console.log(t.error(`Could not fetch balance (HTTP ${res.status}).`));
@@ -63,13 +67,46 @@ export async function topup(amountArg?: string): Promise<void> {
       body: JSON.stringify({ amountUsd, method: 'stripe', returnUrl: dashboardUrl }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { checkoutUrl } = await res.json() as { checkoutUrl: string | null };
+    const { checkoutUrl, paymentId } = await res.json() as { checkoutUrl: string | null; paymentId?: string };
     if (!checkoutUrl) throw new Error('No checkout URL returned');
 
     spinner.succeed(`Opening checkout to add $${amountUsd.toFixed(2)} USDC`);
     openUrl(checkoutUrl);
-    console.log(t.dim(`  ${checkoutUrl}`));
-    console.log(t.dim('  Your balance updates once payment completes.'));
+    console.log(t.dim(`  If your browser didn't open: ${checkoutUrl}`));
+    console.log('');
+
+    // Stripe can't redirect back to a terminal, so wait for the user to return
+    // after paying, then poll verify-topup — which is what actually credits the
+    // balance (there's no async webhook; crediting happens on verification).
+    const { pressEnter } = await import('../prompts.js');
+    await pressEnter('Complete the payment in your browser, then press Enter:');
+
+    const verify = ora('Confirming your top-up...').start();
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+    let credited = false;
+    let newBalance = 0;
+    for (let i = 0; i < 12 && !credited; i++) {
+      try {
+        const verRes = paymentId
+          ? await retrodeckFetch('/api/v1/balances/verify-topup', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ paymentRef: paymentId }),
+            })
+          : await retrodeckFetch('/api/v1/balances/verify-topup'); // GET latest
+        if (verRes.ok) {
+          const ver = await verRes.json() as { completed?: boolean; balance?: number };
+          if (ver.completed) { credited = true; newBalance = Number(ver.balance ?? 0); break; }
+        }
+      } catch { /* keep polling */ }
+      await sleep(2500);
+    }
+    if (credited) {
+      verify.succeed(`Added $${amountUsd.toFixed(2)} USDC — balance is now $${newBalance.toFixed(4)}`);
+    } else {
+      verify.warn('Payment not confirmed yet — it can take a moment to settle.');
+      console.log(t.dim('  Run `rdk balance` shortly; it re-checks any pending top-up.'));
+    }
     console.log('');
   } catch (e) {
     if (e instanceof RetrodeckAuthError) {
