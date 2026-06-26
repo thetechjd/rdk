@@ -64,7 +64,7 @@ export async function topup(amountArg?: string): Promise<void> {
     const res = await retrodeckFetch('/api/v1/balances/topup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amountUsd, method: 'stripe', returnUrl: dashboardUrl }),
+      body: JSON.stringify({ amountUsd, method: 'stripe', source: 'cli', returnUrl: dashboardUrl }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const { checkoutUrl, paymentId } = await res.json() as { checkoutUrl: string | null; paymentId?: string };

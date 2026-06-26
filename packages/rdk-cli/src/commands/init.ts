@@ -429,7 +429,7 @@ export async function runInit(nonInteractive?: {
             const selRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/select`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-              body: JSON.stringify({ planId: plan, interval }),
+              body: JSON.stringify({ planId: plan, interval, source: 'cli' }),
             });
             if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
             const selData = await selRes.json() as { checkoutUrl: string | null };
@@ -548,7 +548,7 @@ export async function runInit(nonInteractive?: {
       const topupRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/topup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-        body: JSON.stringify({ amountUsd: creditAmount, method: payMethod }),
+        body: JSON.stringify({ amountUsd: creditAmount, method: payMethod, source: 'cli' }),
       });
       if (!topupRes.ok) throw new Error(`HTTP ${topupRes.status}`);
       const topupData = await topupRes.json() as { checkoutUrl: string | null };
