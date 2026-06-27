@@ -6,6 +6,23 @@ import { t, mark, divider } from '../theme.js';
 
 export async function showAccount(): Promise<void> {
   const config = loadConfig();
+
+  // Refresh the plan from the authoritative source (/users/me) so it's never
+  // stale or undefined; fall back to the cached value if offline.
+  let planName = config.plan ?? 'free';
+  if (config.retrodeckApiUrl && config.retrodeckAccessToken) {
+    try {
+      const meRes = await retrodeckFetch('/api/v1/users/me');
+      if (meRes.ok) {
+        const me = await meRes.json() as { user?: { planId?: string } };
+        if (me.user?.planId) {
+          planName = me.user.planId;
+          if (planName !== config.plan) updateConfig({ plan: planName });
+        }
+      }
+    } catch { /* best-effort — keep the cached plan */ }
+  }
+
   const store = new LocalStore();
   const stats = store.getStats();
   store.close();
@@ -13,7 +30,7 @@ export async function showAccount(): Promise<void> {
   console.log(t.heading('\nRDK Account'));
   console.log(divider(40));
   console.log(`Node ID:      ${t.body(config.nodeId)}`);
-  console.log(`Plan:         ${t.green(config.plan ?? 'free')}`);
+  console.log(`Plan:         ${t.green(planName)}`);
   console.log(`Domain:       ${t.body(config.domain)}`);
   console.log(`RDK Central:  ${t.body(config.centralApiUrl)}`);
   if (config.retrodeckUserId) {
@@ -149,38 +166,138 @@ export async function accountRelink(): Promise<void> {
   }
 }
 
+interface ApiPlan {
+  id: string;
+  name: string;
+  price_monthly: number;
+  max_queries_day: number;
+  max_chunks: number;
+}
+
+function planChoice(p: ApiPlan, current: string) {
+  const price = p.price_monthly === 0 ? 'Free' : `$${p.price_monthly}/mo`;
+  const q = p.max_queries_day >= 1000 ? `${(p.max_queries_day / 1000).toFixed(0)}K` : String(p.max_queries_day);
+  const c = p.max_chunks >= 1_000_000 ? `${(p.max_chunks / 1_000_000).toFixed(0)}M` : `${(p.max_chunks / 1000).toFixed(0)}K`;
+  return {
+    name: `${p.name.padEnd(12)} ${price}${p.id === current ? '  (current)' : ''}`,
+    value: p.id,
+    hint: `${q} queries/day, ${c} chunks`,
+  };
+}
+
+// Interactive plan change. Selection happens in the CLI; PAYMENT is handed off
+// to a browser checkout (we never collect card details). Free is immediate.
 export async function upgradeAccount(): Promise<void> {
-  const ora   = (await import('ora')).default;
-  const { openUrl } = await import('../open-url.js');
+  const ora = (await import('ora')).default;
   const config = loadConfig();
 
-  const retrodeckApiUrl = config.retrodeckApiUrl ?? 'https://api.retrodeck.ai';
-  // Billing lives in the dashboard app (dashboard.retrodeck.ai), not the
-  // marketing site. Derive it from the API host: api. → dashboard.
-  const dashboardBilling = `${retrodeckApiUrl.replace('//api.', '//dashboard.')}/dashboard/billing`;
-  if (config.retrodeckAccessToken) {
-    const spinner = ora('Opening billing portal...').start();
-    openUrl(dashboardBilling);
-    spinner.succeed('Opened RetroDeck billing in browser');
-    console.log(t.dim(`Manual: ${dashboardBilling}`));
+  if (!config.retrodeckAccessToken) {
+    console.log(t.warn('Log in first: rdk account:login'));
     return;
   }
 
-  const spinner = ora('Opening billing portal...').start();
+  const { select, pressEnter } = await import('../prompts.js');
+
+  // Live plans — the same source the dashboard pricing reads (never hardcoded).
+  const spinner = ora('Fetching plans...').start();
+  let plans: ApiPlan[];
   try {
-    const res = await fetch(`${config.centralApiUrl}/api/v1/billing/checkout`, {
+    const res = await retrodeckFetch('/api/v1/plans');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    plans = await res.json() as ApiPlan[];
+    spinner.stop();
+  } catch (e) {
+    spinner.fail(e instanceof RetrodeckAuthError
+      ? 'Session expired — run: rdk account:login'
+      : `Could not fetch plans: ${(e as Error).message}`);
+    return;
+  }
+  if (!plans.length) { console.log(t.warn('No plans available.')); return; }
+
+  const current = config.plan ?? 'free';
+  console.log('');
+  console.log(`  ${t.dim('Current plan:')} ${t.green(current)}`);
+
+  const planId = await select({
+    message: 'Change to:',
+    choices: plans.map(p => planChoice(p, current)),
+    default: current,
+  });
+
+  if (planId === current) { console.log(t.dim('  No change.')); return; }
+  const selected = plans.find(p => p.id === planId)!;
+
+  // Downgrade to Free — immediate, no payment.
+  if (selected.price_monthly === 0) {
+    const s = ora('Switching to Free...').start();
+    try {
+      const res = await retrodeckFetch('/api/v1/plans/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: 'free' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      updateConfig({ plan: 'free' });
+      s.succeed('Switched to Free.');
+    } catch (e) { s.fail((e as Error).message); }
+    return;
+  }
+
+  // Paid — hand off to a browser checkout (card or crypto); never collect
+  // payment credentials in the CLI.
+  const interval = await select<'monthly' | 'yearly'>({
+    message: 'Billing interval:',
+    choices: [
+      { name: 'Monthly', value: 'monthly' },
+      { name: 'Yearly',  value: 'yearly', hint: 'save ~17%' },
+    ],
+    default: 'monthly',
+  });
+
+  const s = ora('Creating checkout...').start();
+  try {
+    const res = await retrodeckFetch('/api/v1/plans/select', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId: 'starter', interval: 'monthly' }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planId, interval, source: 'cli' }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { checkoutUrl } = await res.json() as { checkoutUrl: string };
-    spinner.succeed('Opening browser...');
+    const { checkoutUrl } = await res.json() as { checkoutUrl: string | null };
+    s.stop();
+    if (!checkoutUrl) { console.log(t.warn('No checkout URL returned.')); return; }
+
+    const { openUrl } = await import('../open-url.js');
+    console.log('');
+    console.log(`  Complete your ${selected.name} subscription (card or crypto):`);
+    console.log(`  ${t.body(checkoutUrl)}`);
     openUrl(checkoutUrl);
-    console.log(t.dim(`Manual: ${checkoutUrl}`));
+    console.log('');
+
+    await pressEnter('Complete the payment in your browser, then press Enter:');
+    const verify = ora('Confirming your upgrade...').start();
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+    let activated = false;
+    for (let i = 0; i < 12 && !activated; i++) {
+      try {
+        const vr = await retrodeckFetch('/api/v1/plans/verify-payment');
+        if (vr.ok) {
+          const v = await vr.json() as { paid?: boolean; plan?: { id?: string; name?: string } };
+          if (v.paid) {
+            activated = true;
+            updateConfig({ plan: v.plan?.id ?? planId });
+            verify.succeed(`${v.plan?.name ?? selected.name} plan activated`);
+            break;
+          }
+        }
+      } catch { /* keep polling */ }
+      await sleep(2500);
+    }
+    if (!activated) {
+      verify.warn('Upgrade not confirmed yet — it can take a moment to settle.');
+      console.log(t.dim('  Run `rdk account` once it completes to see your new plan.'));
+    }
   } catch (e) {
-    spinner.fail((e as Error).message);
-    console.log(t.dim(`Manual: ${dashboardBilling}`));
+    s.fail((e as Error).message);
   }
 }
 

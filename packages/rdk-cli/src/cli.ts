@@ -262,7 +262,7 @@ program.command('earnings:withdraw').description('Withdraw to wallet').action(as
 
 program.command('account').description('Show plan, node ID, stats').action(async () => { const { showAccount } = await import('./commands/account.js'); await showAccount(); });
 program.command('account:login').description('Log in to RetroDeck account').action(async () => { const { accountLogin } = await import('./commands/account.js'); await accountLogin(); });
-program.command('account:upgrade').description('Open billing portal').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
+program.command('account:upgrade').description('Change your plan (interactive — upgrade or downgrade)').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
 program.command('account:relink').description('Link this node to your RetroDeck account (fixes empty dashboard)').action(async () => { const { accountRelink } = await import('./commands/account.js'); await accountRelink(); });
 program.command('balance').description('Show your current USDC balance').action(async () => { const { showBalance } = await import('./commands/balance.js'); await showBalance(); });
 program.command('topup [amount]').description('Add USDC credit via Stripe (default $10)').action(async (amount) => { const { topup } = await import('./commands/balance.js'); await topup(amount); });
@@ -402,7 +402,7 @@ program.command('status').description('Show full node status').action(async () =
   console.log('');
   console.log(t.heading('Content'));
   console.log(`  ${t.dim('local vault:')}    ${t.body(`${config.vaultAdapter} @ ${config.vaultPath}`)}`);
-  console.log(`  ${t.dim('indexed chunks:')} ${t.body(stats.totalChunks.toLocaleString())}`);
+  console.log(`  ${t.dim('indexed chunks:')} ${t.body(`${stats.totalChunks.toLocaleString()} (${stats.syncedChunks.toLocaleString()} synced, ${stats.pendingChunks.toLocaleString()} pending sync)`)}`);
   console.log(`    ${t.dim('private:')}      ${t.body(stats.privateChunks.toLocaleString())}  ${t.dim('(encrypted on network)')}`);
   console.log(`    ${t.dim('public:')}       ${t.body(stats.publicChunks.toLocaleString())}  ${t.dim('(plaintext, earning)')}`);
   if (stats.localChunks > 0) {
