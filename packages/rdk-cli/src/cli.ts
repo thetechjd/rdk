@@ -265,7 +265,7 @@ program.command('account:login').description('Log in to RetroDeck account').acti
 program.command('account:upgrade').description('Change your plan (interactive — upgrade or downgrade)').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
 program.command('account:relink').description('Link this node to your RetroDeck account (fixes empty dashboard)').action(async () => { const { accountRelink } = await import('./commands/account.js'); await accountRelink(); });
 program.command('balance').description('Show your current USDC balance').action(async () => { const { showBalance } = await import('./commands/balance.js'); await showBalance(); });
-program.command('topup [amount]').description('Add USDC credit via Stripe (default $10)').action(async (amount) => { const { topup } = await import('./commands/balance.js'); await topup(amount); });
+program.command('topup [amount]').description('Add USDC credit — card (Stripe) or crypto (CryptoCadet); default $10').option('--crypto', 'Pay with crypto (USDC on Base) via CryptoCadet').option('--stripe', 'Pay with a credit card via Stripe').action(async (amount, opts) => { const { topup } = await import('./commands/balance.js'); await topup(amount, { method: opts.crypto ? 'cryptocadet' : opts.stripe ? 'stripe' : undefined }); });
 program.command('account:apikey:rotate').description('Rotate API key').action(async () => { const { rotateApiKey } = await import('./commands/account.js'); await rotateApiKey(); });
 
 // ── Team ──────────────────────────────────────────────────────────────────────

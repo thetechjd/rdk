@@ -44,8 +44,12 @@ export async function showBalance(): Promise<void> {
   }
 }
 
-// `rdk topup [amount]` — add USDC credit via Stripe. Defaults to $10.
-export async function topup(amountArg?: string): Promise<void> {
+// `rdk topup [amount]` — add USDC credit via card (Stripe) or crypto (CryptoCadet).
+// Defaults to $10. Method: --crypto / --stripe, else an interactive prompt (default card).
+export async function topup(
+  amountArg?: string,
+  opts: { method?: 'stripe' | 'cryptocadet' } = {},
+): Promise<void> {
   const ora = (await import('ora')).default;
   const { openUrl } = await import('../open-url.js');
   const config = loadConfig();
@@ -54,6 +58,29 @@ export async function topup(amountArg?: string): Promise<void> {
   const amountUsd = amountArg !== undefined ? Number(String(amountArg).replace(/[$,\s]/g, '')) : 10;
   if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
     console.log(t.error('  Invalid amount. Usage: rdk topup [amount]   e.g. rdk topup 25'));
+    return;
+  }
+
+  // Pick a payment method: explicit flag, else prompt (default card); non-TTY → card.
+  let method = opts.method;
+  if (!method) {
+    if (process.stdin.isTTY) {
+      const { select } = await import('../prompts.js');
+      method = await select<'stripe' | 'cryptocadet'>({
+        message: `Add $${amountUsd.toFixed(2)} USDC via:`,
+        choices: [
+          { name: 'Credit card', value: 'stripe',     hint: 'Stripe' },
+          { name: 'Crypto',      value: 'cryptocadet', hint: 'CryptoCadet — USDC on Base' },
+        ],
+        default: 'stripe',
+      });
+    } else {
+      method = 'stripe';
+    }
+  }
+
+  if (method === 'cryptocadet') {
+    await topupCrypto(amountUsd);
     return;
   }
 
@@ -115,4 +142,62 @@ export async function topup(amountArg?: string): Promise<void> {
       spinner.fail((e as Error).message);
     }
   }
+}
+
+// Crypto top-up: install/init/fund the CryptoCadet signer, mint a quote from RetroDeck,
+// pay it on-chain, then poll verify-topup (which credits the balance).
+async function topupCrypto(amountUsd: number): Promise<void> {
+  const ora = (await import('ora')).default;
+  const { payTopupWithCryptocadet } = await import('./cryptocadet.js');
+
+  const outcome = await payTopupWithCryptocadet({
+    amountUsd,
+    mintQuote: async () => {
+      try {
+        const res = await retrodeckFetch('/api/v1/balances/topup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amountUsd, method: 'cryptocadet', source: 'cli' }),
+        });
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try { const b = await res.json() as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep status */ }
+          console.log(t.warn(`  Server declined the crypto top-up: ${msg}`));
+          return null;
+        }
+        const data = await res.json() as { cryptocadet?: import('./cryptocadet.js').CryptoCadetTopup };
+        return data.cryptocadet ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
+
+  if (outcome.status !== 'paid') {
+    console.log(t.warn(`  Crypto top-up ${outcome.status}: ${outcome.detail}`));
+    console.log('');
+    return;
+  }
+
+  const verify = ora('Confirming your on-chain top-up...').start();
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  let credited = false;
+  let newBalance = 0;
+  for (let i = 0; i < 20 && !credited; i++) {
+    try {
+      const verRes = await retrodeckFetch('/api/v1/balances/verify-topup');
+      if (verRes.ok) {
+        const ver = await verRes.json() as { completed?: boolean; balance?: number };
+        if (ver.completed) { credited = true; newBalance = Number(ver.balance ?? 0); break; }
+      }
+    } catch { /* keep polling */ }
+    await sleep(3000);
+  }
+  if (credited) {
+    verify.succeed(`Added $${amountUsd.toFixed(2)} USDC — balance is now $${newBalance.toFixed(4)}`);
+  } else {
+    verify.warn('Payment broadcast — crediting can take a moment to settle.');
+    console.log(t.dim('  Run `rdk balance` shortly; it re-checks any pending top-up.'));
+  }
+  console.log('');
 }
