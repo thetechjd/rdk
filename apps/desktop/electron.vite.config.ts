@@ -2,19 +2,22 @@ import { resolve } from 'path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 
-// Native/node-only modules must NOT be bundled into the main process — they are
-// require()'d at runtime from node_modules (rebuilt for Electron's ABI). This is
-// what makes better-sqlite3 + @rdk/core work.
+// Node-only modules (@rdk/core, @rdk/node, native better-sqlite3, @xenova) are
+// externalized — require()'d at runtime from node_modules, not bundled. @rdk/core
+// and @rdk/node ship as CommonJS with `export *` re-exports that rollup can't
+// statically analyze, so they must stay external. For a distributable, packaging
+// uses `pnpm deploy` (see scripts/package.sh) so those workspace deps land in the
+// app as real directories instead of out-of-app pnpm symlinks.
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ include: ['@retrodeck/mcp', '@xenova/transformers'] })],
+    plugins: [externalizeDepsPlugin({ include: ['@xenova/transformers'] })],
     build: {
       lib: { entry: resolve(__dirname, 'electron/main.ts') },
       outDir: 'out/main',
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ include: ['@retrodeck/mcp', '@xenova/transformers'] })],
+    plugins: [externalizeDepsPlugin()],
     build: {
       lib: { entry: resolve(__dirname, 'electron/preload.ts') },
       outDir: 'out/preload',

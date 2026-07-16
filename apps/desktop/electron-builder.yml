@@ -8,11 +8,12 @@ asar: true
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
   - "**/node_modules/onnxruntime-node/**"
-  - "**/node_modules/@rdk/**"
 
 files:
   - "out/**"
   - "package.json"
+  # Trim junk that pnpm-deployed workspace deps carry along.
+  - "!**/node_modules/**/{.turbo,src,tsconfig*.json,*.map}"
 
 directories:
   buildResources: build
@@ -30,7 +31,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-notarize: false # flip to true once Apple credentials are present in CI
+  # Notarization stays off until Apple credentials are present. When ready, set
+  # `notarize: true` here (under mac) and provide APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD
+  # / APPLE_TEAM_ID in the environment.
+  notarize: false
 
 # ── Linux — SHIPS. No signing gate.
 linux:

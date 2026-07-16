@@ -28,7 +28,8 @@ import {
   configExists,
   rdkDir,
   type RDKConfig,
-} from '@rdk/node';
+} from '@rdk/node/config';
+import { SyncService } from '@rdk/node/sync-service';
 import {
   autoStartSupported,
   serviceInstallSupported,
@@ -52,8 +53,8 @@ export class NodeService {
   private embedderReady: boolean | null = null;
   private router: RDKRouter | null = null;
   private serving = false;
-  /** Lazily-loaded @retrodeck/mcp controller (spike). null when unavailable. */
-  private mcpController: { stop?: () => Promise<void> | void } | null = null;
+  /** Background sync loop (from @rdk/node) — runs while the node is "serving". */
+  private syncService: SyncService | null = null;
 
   // ── lifecycle / lazy wiring ────────────────────────────────────────────────
 
@@ -478,12 +479,20 @@ export class NodeService {
       return { ok: false, error: 'Sign in first (Settings → Account) to serve on the network.' };
     }
     try {
-      // Spike: lazily host the @retrodeck/mcp node in-process. When @rdk/node is
-      // extracted this becomes NodeController.start().
-      const mcp = await import('@retrodeck/mcp').catch(() => null);
-      if (!mcp) {
-        return { ok: false, error: 'Network module not installed. Run "npm run rebuild" or install @retrodeck/mcp.' };
-      }
+      // Start the shared @rdk/node background sync loop (pushes public + private
+      // chunk embeddings/metadata to Central). Peer chunk-serving over HTTP is a
+      // follow-up; the core "serving" behavior for the desktop is staying synced.
+      this.syncService = new SyncService(
+        {
+          enabled: cfg.autoSync ?? true,
+          intervalMinutes: cfg.syncIntervalMinutes ?? 5,
+          centralApiUrl: cfg.centralApiUrl,
+          centralApiKey: cfg.apiKey,
+          log: () => {}, // diagnostics surface via getStatus / push events, not stderr
+        },
+        this.getStore(),
+      );
+      this.syncService.start();
       this.serving = true;
       return { ok: true };
     } catch (e) {
@@ -492,8 +501,8 @@ export class NodeService {
   }
 
   async stopNode(): Promise<{ ok: boolean }> {
-    try { await this.mcpController?.stop?.(); } catch { /* ignore */ }
-    this.mcpController = null;
+    try { this.syncService?.stop(); } catch { /* ignore */ }
+    this.syncService = null;
     this.serving = false;
     return { ok: true };
   }
