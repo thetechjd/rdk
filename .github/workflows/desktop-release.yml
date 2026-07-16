@@ -39,7 +39,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # skip macOS signing until a cert is wired in
-      RDK_DEPLOY_DIR: ${{ runner.temp }}/rdk-desktop-deploy
     steps:
       - uses: actions/checkout@v4
 
@@ -59,9 +58,11 @@ jobs:
 
       - name: Collect artifacts
         shell: bash
+        # package.sh defaults its deploy dir to $RUNNER_TEMP/rdk-desktop-deploy
+        # (GitHub sets RUNNER_TEMP automatically).
         run: |
           mkdir -p dist-out
-          find "$RDK_DEPLOY_DIR/release" -maxdepth 1 \
+          find "$RUNNER_TEMP/rdk-desktop-deploy/release" -maxdepth 1 \
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' \) \
             -exec cp {} dist-out/ \;
           ls -la dist-out
