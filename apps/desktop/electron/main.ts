@@ -16,6 +16,15 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
 
+// RetroDeck cartridge icon for the running window (Linux/Windows taskbar; macOS
+// uses the app bundle). The build copies build/icon.png → out/icon.png, so it's
+// bundled in the asar for the packaged app and present in dev too. Best-effort:
+// only applied when the file resolves.
+const ICON_CANDIDATE = app.isPackaged
+  ? path.join(__dirname, '../icon.png')          // out/icon.png (inside asar)
+  : path.join(__dirname, '../../build/icon.png'); // dev
+const APP_ICON = fs.existsSync(ICON_CANDIDATE) ? ICON_CANDIDATE : undefined;
+
 const service = new NodeService();
 let mainWindow: BrowserWindow | null = null;
 let vaultWatcher: fs.FSWatcher | null = null;
@@ -32,6 +41,7 @@ function createWindow(): void {
     minWidth: 900,
     minHeight: 600,
     show: false,
+    icon: APP_ICON,
     backgroundColor: '#080A08',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -92,6 +102,8 @@ function registerHandlers(): void {
     getChunk: (id: never) => service.getChunk(id),
     readContent: (id: never) => service.readContent(id),
     readFile: (p: never) => service.readFile(p),
+    writeFile: (p: never, content: never) => service.writeFile(p, content),
+    createFile: (parentRelPath: never, name: never) => service.createFile(parentRelPath, name),
     publishChunk: (id: never) => service.publishChunk(id),
     unpublishChunk: () => service.unpublishChunk(),
     pinChunk: () => service.pinChunk(),

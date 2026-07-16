@@ -50,11 +50,24 @@ export function VaultTree() {
       return next;
     });
 
+  const newNote = useCallback(async (parentRelPath: string) => {
+    // eslint-disable-next-line no-alert
+    const name = window.prompt('New note name', 'untitled.md');
+    if (name === null || !name.trim()) return;
+    const r = await window.rdk.createFile(parentRelPath, name.trim());
+    if (!r.ok || !r.path) { app.toast(r.error ?? 'Could not create note', true); return; }
+    app.refreshData();
+    app.openFileForEdit(r.path, r.path.split(/[\\/]/).pop() || name.trim());
+  }, [app]);
+
   return (
     <>
       <div className="pane-header">
         <span>Vault</span>
-        <span style={{ textTransform: 'none', color: 'var(--phosphor-dim)' }}>{tree?.vaultName}</span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ textTransform: 'none', color: 'var(--phosphor-dim)' }}>{tree?.vaultName}</span>
+          <button className="hdr-btn" title="New note in vault root" onClick={() => void newNote('')}>+ note</button>
+        </span>
       </div>
       <div
         className="pane-body"
@@ -84,7 +97,7 @@ export function VaultTree() {
         <span className="c"><span className="dot local" /> local {tree?.counts.local ?? 0}</span>
       </div>
 
-      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} onAction={afterAction => { afterAction(); setMenu(null); }} app={app} />}
+      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} app={app} newNote={newNote} />}
     </>
   );
 }
@@ -102,7 +115,9 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
   if (node.type === 'folder') {
     return (
       <>
-        <div className="tree-row folder" style={{ paddingLeft: 12 + depth * 12 }} onClick={() => toggle(node.path)}>
+        <div className="tree-row folder" style={{ paddingLeft: 12 + depth * 12 }}
+          onClick={() => toggle(node.path)}
+          onContextMenu={e => { e.preventDefault(); onContext(e.clientX, e.clientY, node); }}>
           <span className="twisty">{isOpen ? '▾' : '▸'}</span>
           <span className="name">{node.name}</span>
         </div>
@@ -127,9 +142,9 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
   );
 }
 
-function ContextMenu({ x, y, node, onClose, app }: {
-  x: number; y: number; node: VaultNode; onClose: () => void; onAction: (fn: () => void) => void;
-  app: ReturnType<typeof useApp>;
+function ContextMenu({ x, y, node, onClose, app, newNote }: {
+  x: number; y: number; node: VaultNode; onClose: () => void;
+  app: ReturnType<typeof useApp>; newNote: (relPath: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -146,6 +161,16 @@ function ContextMenu({ x, y, node, onClose, app }: {
     app.refreshData();
     app.refreshStatus();
   };
+
+  if (node.type === 'folder') {
+    return (
+      <div className="ctx-menu" ref={ref} style={{ left: x, top: y }}>
+        <div className="ctx-item" onClick={() => { onClose(); newNote(node.relPath); }}>new note here</div>
+        <div className="ctx-sep" />
+        <div className="ctx-item" onClick={() => { onClose(); window.rdk.revealInFileManager(node.path); }}>reveal in file manager</div>
+      </div>
+    );
+  }
 
   const indexed = !!node.chunkIds?.length;
   const isPublic = node.state === 'public';

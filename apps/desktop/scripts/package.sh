@@ -41,6 +41,9 @@ echo "→ building desktop (electron-vite → out/)"
 
 echo "→ pnpm deploy → $DEPLOY"
 rm -rf "$DEPLOY"
+# Never let a prior build's output dir get copied into the deploy (electron-builder
+# writes to <deploy>/release; a stale apps/desktop/release would recurse into it).
+rm -rf "$APP_DIR/release"
 CI=true pnpm --filter rdk-desktop deploy --prod --legacy "$DEPLOY"
 
 cd "$APP_DIR"

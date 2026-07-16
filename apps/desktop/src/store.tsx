@@ -38,8 +38,14 @@ interface AppState {
   openEarnings(): void;
   openContentForChunk(chunkId: string, title: string): void;
   openContentForFile(filePath: string, title: string): void;
+  /** Open a file tab and signal the content pane to enter edit mode immediately. */
+  openFileForEdit(filePath: string, title: string): void;
   selectChunk(chunkId: string | null): void;
   selectFile(filePath: string | null): void;
+
+  /** Path the content pane should auto-open in edit mode (consumed once). */
+  pendingEditPath: string | null;
+  clearPendingEdit(): void;
 
   setPaletteOpen(v: boolean): void;
   setSettingsOpen(v: boolean): void;
@@ -65,6 +71,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
   const [currentToast, setCurrentToast] = useState<ToastMsg | null>(null);
+  const [pendingEditPath, setPendingEditPath] = useState<string | null>(null);
 
   const refreshStatus = useCallback(() => { window.rdk.getStatus().then(setStatus).catch(() => {}); }, []);
   const refreshData = useCallback(() => setDataVersion(v => v + 1), []);
@@ -106,17 +113,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     openTab({ id: `c:${chunkId}`, kind: 'content', title, chunkId }), [openTab]);
   const openContentForFile = useCallback((filePath: string, title: string) =>
     openTab({ id: `f:${filePath}`, kind: 'content', title, filePath }), [openTab]);
+  const openFileForEdit = useCallback((filePath: string, title: string) => {
+    setPendingEditPath(filePath);
+    openTab({ id: `f:${filePath}`, kind: 'content', title, filePath });
+  }, [openTab]);
+  const clearPendingEdit = useCallback(() => setPendingEditPath(null), []);
 
   const value: AppState = useMemo(() => ({
     status, account, caps, tabs, activeTabId,
     selectedChunkId, selectedFilePath, paletteOpen, settingsOpen, dataVersion,
     setActiveTab: setActiveTabId, openTab, closeTab, openGraph, openEarnings,
-    openContentForChunk, openContentForFile,
+    openContentForChunk, openContentForFile, openFileForEdit,
+    pendingEditPath, clearPendingEdit,
     selectChunk: setSelectedChunkId, selectFile: setSelectedFilePath,
     setPaletteOpen, setSettingsOpen, refreshData, refreshStatus, toast, currentToast,
   }), [status, account, caps, tabs, activeTabId, selectedChunkId, selectedFilePath,
     paletteOpen, settingsOpen, dataVersion, openTab, closeTab, openGraph, openEarnings,
-    openContentForChunk, openContentForFile, refreshData, refreshStatus, toast, currentToast]);
+    openContentForChunk, openContentForFile, openFileForEdit, pendingEditPath, clearPendingEdit,
+    refreshData, refreshStatus, toast, currentToast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

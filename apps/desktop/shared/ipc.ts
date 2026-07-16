@@ -218,6 +218,11 @@ export interface RdkApi {
   getChunk(id: string): Promise<ChunkView | null>;
   readContent(id: string): Promise<ContentView | null>;      // decrypts private
   readFile(path: string): Promise<ContentView | null>;        // raw local file
+  // Write a vault file to disk, then auto re-index it if it had private chunks
+  // (public chunks are immutable and left untouched). Refuses paths outside the vault.
+  writeFile(path: string, content: string): Promise<{ ok: boolean; error?: string; reindexed?: number }>;
+  // Create a new note in the vault (parentRelPath is relative to the vault root, '' = root).
+  createFile(parentRelPath: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }>;
   publishChunk(id: string): Promise<{ ok: boolean; error?: string }>;
   unpublishChunk(id: string): Promise<{ ok: boolean; error?: string }>; // may be unsupported
   pinChunk(id: string, pinned: boolean): Promise<{ ok: boolean; error?: string }>; // may be unsupported
@@ -259,7 +264,7 @@ export type RdkChannel = Exclude<keyof RdkApi, 'onPush'>;
 export const RDK_CHANNELS: RdkChannel[] = [
   'isInitialized', 'getCapabilities', 'chooseVaultDirectory', 'initNode',
   'getVaultTree', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
-  'getChunk', 'readContent', 'readFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
+  'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
   'deleteChunk', 'getRetrievedFor',
   'getGraphData', 'query',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',

@@ -317,6 +317,60 @@ export class NodeService {
     }
   }
 
+  /**
+   * Write a vault file to disk (files are the source of truth). If the file was
+   * previously indexed privately, its stale private chunks are dropped and it's
+   * re-indexed so private chunks + the graph track what was written. Public chunks
+   * are immutable and left as-is. Refuses to write outside the vault.
+   */
+  async writeFile(filePath: string, content: string): Promise<{ ok: boolean; error?: string; reindexed?: number }> {
+    const root = this.getConfig()?.vaultPath;
+    const abs = path.resolve(filePath);
+    if (!root || !isWithinVault(root, abs)) {
+      return { ok: false, error: 'Refusing to write outside the vault.' };
+    }
+    try {
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content, 'utf-8');
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+
+    const store = this.getStore();
+    const existing = store.getAllChunks().filter(c => c.sourcePath === abs);
+    const stalePrivate = existing.filter(c => !c.isPublic);
+    let reindexed = 0;
+    if (stalePrivate.length > 0) {
+      // content changed → chunk ids (content hashes) change; drop the old ones first
+      for (const c of stalePrivate) store.deleteChunk(c.id);
+      if (await this.embedderAvailable()) {
+        reindexed = (await this.indexPaths([abs], 'private')).indexed;
+      }
+    }
+    return { ok: true, reindexed };
+  }
+
+  /** Create a new note in the vault. Returns its absolute path. */
+  createFile(parentRelPath: string, name: string): { ok: boolean; path?: string; error?: string } {
+    const root = this.getConfig()?.vaultPath;
+    if (!root) return { ok: false, error: 'No vault configured.' };
+    let base = (name || '').trim().replace(/[/\\:*?"<>|]/g, '-');
+    if (!base) return { ok: false, error: 'Please provide a name.' };
+    if (!/\.(md|markdown|txt|mdx)$/i.test(base)) base += '.md';
+    const dir = path.resolve(root, parentRelPath || '');
+    if (!isWithinVault(root, dir)) return { ok: false, error: 'Invalid location.' };
+    const target = path.join(dir, base);
+    if (fs.existsSync(target)) return { ok: false, error: 'A note with that name already exists here.' };
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const title = base.replace(/\.(md|markdown|txt|mdx)$/i, '');
+      fs.writeFileSync(target, `# ${title}\n\n`, 'utf-8');
+      return { ok: true, path: target };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
   getRetrievedFor(id: string): RetrievedFor[] {
     return this.getStore().getRetrievalsForChunk(id).map(r => ({
       queryText: r.queryText, count: r.count, lastAt: r.lastAt.toISOString(), bestScore: r.bestScore,
@@ -603,6 +657,12 @@ export class NodeService {
     if (!res.ok) return null;
     return (await res.json()) as T;
   }
+}
+
+/** True when `abs` is the vault root or lives inside it — guards against path escape. */
+function isWithinVault(root: string, abs: string): boolean {
+  const r = path.resolve(root);
+  return abs === r || abs.startsWith(r + path.sep);
 }
 
 function toPosix(p: string): string {

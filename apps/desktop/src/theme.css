@@ -224,6 +224,21 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 /* ── Content pane / markdown ───────────────────────────────────────────────── */
 .content { padding: 22px 30px; max-width: 820px; overflow-y: auto; }
 .content .decrypt-note { font-size: var(--fs-xs); color: var(--phosphor); margin-bottom: 12px; letter-spacing: 0.06em; }
+.content-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; min-height: 24px; }
+
+/* ── Editor (write files) ─────────────────────────────────────────────────── */
+.content.editor { display: flex; flex-direction: column; height: 100%; max-width: none; padding: 0; }
+.editor-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg-chrome); flex-shrink: 0; }
+.editor-bar .editor-path { font-size: var(--fs-sm); color: var(--phosphor-dim); }
+.editor-area {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  background: var(--bg-deep); color: var(--text-bright);
+  font-family: var(--font-mono); font-size: var(--fs-md); line-height: 1.7;
+  padding: 18px 30px; tab-size: 2;
+}
+.editor-area:focus { box-shadow: none; }
+.editor-hint { flex-shrink: 0; padding: 6px 14px; font-size: var(--fs-xs); color: var(--muted); border-top: 1px solid var(--border); background: var(--bg-chrome); }
+.hdr-btn { padding: 2px 8px; font-size: var(--fs-xs); border-color: var(--border-bright); }
 .md { color: var(--text); line-height: 1.7; }
 .md h1, .md h2, .md h3 { color: var(--text-bright); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 .md a { color: var(--phosphor); }

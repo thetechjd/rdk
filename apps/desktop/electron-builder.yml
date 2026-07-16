@@ -24,6 +24,7 @@ directories:
 #    in the release environment. Without these, Gatekeeper blocks the .app (see docs/feasibility-report.md §6).
 mac:
   category: public.app-category.productivity
+  icon: build/icon.png   # electron-builder generates a proper .icns from this on the mac runner
   target:
     - dmg
     - zip
@@ -39,6 +40,7 @@ mac:
 # ── Linux — SHIPS. No signing gate.
 linux:
   category: Utility
+  icon: build/icon.png
   target:
     - AppImage
     - deb
@@ -49,6 +51,7 @@ linux:
 #    One flag away: `npm run dist:win`. Needs @electron/rebuild for better-sqlite3
 #    and (recommended) an OV/EV Authenticode cert to clear SmartScreen.
 win:
+  icon: build/icon.ico
   target:
     - nsis
 nsis:

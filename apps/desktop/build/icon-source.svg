@@ -1,0 +1,51 @@
+<svg viewBox="28 14 200 228" width="200" height="228" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="RetroDeck">
+  <title>RetroDeck</title>
+
+  <!-- Black silhouette: body + narrower connector base (creates shoulders) -->
+  <rect x="40" y="22" width="176" height="178" rx="15" fill="#111111" />
+  <rect x="58" y="188" width="140" height="46" rx="9" fill="#111111" />
+
+  <!-- Grey body face -->
+  <rect x="49" y="31" width="158" height="160" rx="9" fill="#ECECEC" />
+
+  <!-- Red label, upper-right -->
+  <rect x="131" y="40" width="66" height="112" rx="5" fill="#E8402A" stroke="#111111" stroke-width="3" />
+
+  <!-- Ridge lines, left -->
+  <g fill="#141414">
+    <rect x="61" y="46" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="55" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="64" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="73" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="82" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="91" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="100" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="109" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="118" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="127" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="136" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="145" width="53" height="4.4" rx="2.2" />
+    <rect x="61" y="154" width="53" height="4.4" rx="2.2" />
+  </g>
+
+  <!-- Insert-direction triangle (hollow) -->
+  <path d="M117 159 H139 L128 173 Z" fill="none" stroke="#111111" stroke-width="3.2" stroke-linejoin="round" />
+
+  <!-- Small tab, bottom-left -->
+  <rect x="61" y="166" width="27" height="22" rx="3" fill="#AFBDC7" stroke="#1c1c1c" stroke-width="2.4" />
+
+  <!-- Gold connector pins -->
+  <g fill="#E8B93A">
+    <rect x="69" y="214" width="6" height="9" rx="1" />
+    <rect x="80" y="214" width="6" height="9" rx="1" />
+    <rect x="91" y="214" width="6" height="9" rx="1" />
+    <rect x="102" y="214" width="6" height="9" rx="1" />
+    <rect x="113" y="214" width="6" height="9" rx="1" />
+    <rect x="124" y="214" width="6" height="9" rx="1" />
+    <rect x="135" y="214" width="6" height="9" rx="1" />
+    <rect x="146" y="214" width="6" height="9" rx="1" />
+    <rect x="157" y="214" width="6" height="9" rx="1" />
+    <rect x="168" y="214" width="6" height="9" rx="1" />
+    <rect x="179" y="214" width="6" height="9" rx="1" />
+  </g>
+</svg>
