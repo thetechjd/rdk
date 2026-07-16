@@ -10,6 +10,10 @@ import {
   splash, stepHeader, t, divider, importantValue,
   success, note, mark, summary, link,
 } from '../theme.js';
+import {
+  payTopupWithCryptocadet, grantCryptocadetSubscription,
+  type CryptoCadetTopup, type CryptoCadetPlanOffer,
+} from './cryptocadet.js';
 
 const RETRODECK_API_URL = process.env.RETRODECK_API_URL ?? 'https://api.retrodeck.ai';
 
@@ -424,48 +428,101 @@ export async function runInit(nonInteractive?: {
             default: 'monthly',
           });
 
-          const spinner = ora3('  Creating checkout session...').start();
-          try {
-            const selRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/select`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-              body: JSON.stringify({ planId: plan, interval, source: 'cli' }),
-            });
-            if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
-            const selData = await selRes.json() as { checkoutUrl: string | null };
-            spinner.stop();
+          const planMethod = await select<'stripe' | 'cryptocadet'>({
+            message: `Pay for ${plan} (${interval}) via:`,
+            choices: [
+              { name: 'Credit card', value: 'stripe',     hint: 'Stripe' },
+              { name: 'Crypto',      value: 'cryptocadet', hint: 'CryptoCadet — recurring USDC' },
+            ],
+            default: 'stripe',
+          });
 
-            if (selData.checkoutUrl) {
-              console.log('');
-              note('Open this link to complete payment:');
-              console.log(`  ${link(selData.checkoutUrl)}`);
-              console.log('');
-              await pressEnter('Press Enter when payment is complete:');
-
-              let paid = false;
-              for (let i = 0; i < 10 && !paid; i++) {
-                await sleep(3000);
-                try {
-                  const verRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/verify-payment`, {
-                    headers: { Authorization: `Bearer ${auth.accessToken}` },
-                  });
-                  if (verRes.ok) {
-                    const ver = await verRes.json() as { plan: { name: string }; paid: boolean };
-                    if (ver.paid) {
-                      success(`${ver.plan.name} plan activated`);
-                      paid = true;
-                    }
+          // Poll RetroDeck until the plan activates. Stripe: after the browser checkout.
+          // Crypto: after the collector pulls the first period (~one collector tick).
+          const pollPlanVerify = async (spinner: ReturnType<typeof ora3>, attempts: number): Promise<boolean> => {
+            for (let i = 0; i < attempts; i++) {
+              await sleep(3000);
+              try {
+                const verRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/verify-payment`, {
+                  headers: { Authorization: `Bearer ${auth.accessToken}` },
+                });
+                if (verRes.ok) {
+                  const ver = await verRes.json() as { plan: { name: string }; paid: boolean };
+                  if (ver.paid) {
+                    spinner.succeed(`  ${ver.plan.name} plan activated`);
+                    return true;
                   }
-                } catch {}
-              }
-              if (!paid) {
-                note('Payment not confirmed — continuing on Free plan');
-                plan = 'free';
-              }
+                }
+              } catch {}
             }
-          } catch (e) {
-            spinner.warn(`  Checkout failed: ${(e as Error).message}. Continuing on Free plan.`);
-            plan = 'free';
+            return false;
+          };
+
+          if (planMethod === 'cryptocadet') {
+            try {
+              const selRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/select`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+                body: JSON.stringify({ planId: plan, interval, method: 'cryptocadet', source: 'cli' }),
+              });
+              if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
+              const selData = await selRes.json() as { cryptocadet?: CryptoCadetPlanOffer };
+              if (!selData.cryptocadet) throw new Error('server did not return a crypto offer');
+
+              // Fund + grant the on-chain approval, then register the subscription.
+              const outcome = await grantCryptocadetSubscription(selData.cryptocadet);
+              if (outcome.status !== 'granted') {
+                note(`Crypto subscription ${outcome.status}: ${outcome.detail}. Staying on Free plan.`);
+                plan = 'free';
+              } else {
+                const actRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/activate-crypto`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+                  body: JSON.stringify({ planId: plan, buyerWallet: outcome.buyerWallet }),
+                });
+                if (!actRes.ok) throw new Error(`activate HTTP ${actRes.status}`);
+
+                const activateSpinner = ora3('  Waiting for the first charge to settle...').start();
+                if (!(await pollPlanVerify(activateSpinner, 30))) {
+                  activateSpinner.stop();
+                  note('Subscription registered — the first charge is settling on-chain.');
+                  note('Your plan activates once it confirms. Check retrodeck.ai/dashboard.');
+                }
+              }
+            } catch (e) {
+              note(`Crypto subscription failed: ${(e as Error).message}. Staying on Free plan.`);
+              plan = 'free';
+            }
+          } else {
+            const spinner = ora3('  Creating checkout session...').start();
+            try {
+              const selRes = await fetch(`${RETRODECK_API_URL}/api/v1/plans/select`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+                body: JSON.stringify({ planId: plan, interval, method: 'stripe', source: 'cli' }),
+              });
+              if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
+              const selData = await selRes.json() as { checkoutUrl: string | null };
+              spinner.stop();
+
+              if (selData.checkoutUrl) {
+                console.log('');
+                note('Open this link to complete payment:');
+                console.log(`  ${link(selData.checkoutUrl)}`);
+                console.log('');
+                await pressEnter('Press Enter when payment is complete:');
+
+                const verifySpinner = ora3('  Verifying payment...').start();
+                if (!(await pollPlanVerify(verifySpinner, 10))) {
+                  verifySpinner.stop();
+                  note('Payment not confirmed — continuing on Free plan');
+                  plan = 'free';
+                }
+              }
+            } catch (e) {
+              spinner.warn(`  Checkout failed: ${(e as Error).message}. Continuing on Free plan.`);
+              plan = 'free';
+            }
           }
         } else {
           try {
@@ -543,46 +600,85 @@ export async function runInit(nonInteractive?: {
     });
 
     const ora4 = (await import('ora')).default;
-    const topupSpinner = ora4('  Creating checkout session...').start();
-    try {
-      const topupRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/topup`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
-        body: JSON.stringify({ amountUsd: creditAmount, method: payMethod, source: 'cli' }),
-      });
-      if (!topupRes.ok) throw new Error(`HTTP ${topupRes.status}`);
-      const topupData = await topupRes.json() as { checkoutUrl: string | null };
-      topupSpinner.stop();
 
-      if (topupData.checkoutUrl) {
-        console.log('');
-        note(payMethod === 'cryptocadet' ? 'Complete checkout at:' : 'Open this link to complete payment:');
-        console.log(`  ${link(topupData.checkoutUrl)}`);
-        console.log('');
-        await pressEnter('Press Enter when payment is complete:');
-
-        let topupOk = false;
-        for (let i = 0; i < 10 && !topupOk; i++) {
-          await sleep(3000);
-          try {
-            const verRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/verify-topup`, {
-              headers: { Authorization: `Bearer ${auth.accessToken}` },
-            });
-            if (verRes.ok) {
-              const ver = await verRes.json() as { completed: boolean };
-              if (ver.completed) {
-                success(`$${creditAmount} credits added`);
-                topupOk = true;
-              }
+    // Poll RetroDeck's verify-topup until the credit lands. Shared by both rails: Stripe
+    // (after the browser checkout) and CryptoCadet (after the on-chain payment settles).
+    const pollVerifyTopup = async (spinner: ReturnType<typeof ora4>, attempts: number): Promise<boolean> => {
+      for (let i = 0; i < attempts; i++) {
+        await sleep(3000);
+        try {
+          const verRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/verify-topup`, {
+            headers: { Authorization: `Bearer ${auth.accessToken}` },
+          });
+          if (verRes.ok) {
+            const ver = await verRes.json() as { completed: boolean };
+            if (ver.completed) {
+              spinner.succeed(`  $${creditAmount} credits added`);
+              return true;
             }
-          } catch {}
-        }
-        if (!topupOk) {
-          note('Payment not confirmed — add credits later at retrodeck.ai/dashboard');
-        }
+          }
+        } catch {}
       }
-    } catch (e) {
-      topupSpinner.warn(`  Could not start checkout: ${(e as Error).message}`);
+      return false;
+    };
+
+    if (payMethod === 'cryptocadet') {
+      // Install → init → fund the local signer, then mint the quote and pay it on-chain.
+      // The quote is minted inside the callback (LAST, after funding) so its TTL isn't
+      // spent waiting; verify-topup then confirms crediting.
+      const outcome = await payTopupWithCryptocadet({
+        amountUsd: creditAmount,
+        mintQuote: async () => {
+          const topupRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/topup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+            body: JSON.stringify({ amountUsd: creditAmount, method: 'cryptocadet', source: 'cli' }),
+          });
+          if (!topupRes.ok) return null;
+          const data = await topupRes.json() as { cryptocadet?: CryptoCadetTopup };
+          return data.cryptocadet ?? null;
+        },
+      });
+
+      if (outcome.status === 'paid') {
+        const confirmSpinner = ora4('  Confirming on-chain payment...').start();
+        // Base needs a few blocks; checkout already waited for confirmations + finalized on
+        // the settlement server, so RetroDeck usually confirms within the first few polls.
+        if (!(await pollVerifyTopup(confirmSpinner, 20))) {
+          confirmSpinner.stop();
+          note('Payment broadcast — crediting can take a minute. Check retrodeck.ai/dashboard.');
+        }
+      } else {
+        note(`Crypto top-up ${outcome.status}: ${outcome.detail}. Add credits later at retrodeck.ai/dashboard.`);
+      }
+    } else {
+      const topupSpinner = ora4('  Creating checkout session...').start();
+      try {
+        const topupRes = await fetch(`${RETRODECK_API_URL}/api/v1/balances/topup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.accessToken}` },
+          body: JSON.stringify({ amountUsd: creditAmount, method: 'stripe', source: 'cli' }),
+        });
+        if (!topupRes.ok) throw new Error(`HTTP ${topupRes.status}`);
+        const topupData = await topupRes.json() as { checkoutUrl: string | null };
+        topupSpinner.stop();
+
+        if (topupData.checkoutUrl) {
+          console.log('');
+          note('Open this link to complete payment:');
+          console.log(`  ${link(topupData.checkoutUrl)}`);
+          console.log('');
+          await pressEnter('Press Enter when payment is complete:');
+
+          const verifySpinner = ora4('  Verifying payment...').start();
+          if (!(await pollVerifyTopup(verifySpinner, 10))) {
+            verifySpinner.stop();
+            note('Payment not confirmed — add credits later at retrodeck.ai/dashboard');
+          }
+        }
+      } catch (e) {
+        topupSpinner.warn(`  Could not start checkout: ${(e as Error).message}`);
+      }
     }
 
     console.log('');
