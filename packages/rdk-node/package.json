@@ -14,6 +14,14 @@
       "import": "./dist/config.js",
       "types": "./dist/config.d.ts"
     },
+    "./sync-service": {
+      "import": "./dist/sync-service.js",
+      "types": "./dist/sync-service.d.ts"
+    },
+    "./central-client": {
+      "import": "./dist/central-client.js",
+      "types": "./dist/central-client.d.ts"
+    },
     "./ws/*": {
       "import": "./dist/ws/*.js",
       "types": "./dist/ws/*.d.ts"
