@@ -81,9 +81,13 @@ export class RDKRouter {
     const bestPrivate = privateResults[0];
 
     if (bestPrivate && bestPrivate.score >= minSim) {
-      const context = assembleContext(privateResults.filter(r => r.score >= minSim));
+      const matched = privateResults.filter(r => r.score >= minSim);
+      const context = assembleContext(matched);
       const latencyMs = Date.now() - start;
-      cfg.localStore.logQuery({ queryText: userQuery, source: 'private', matchedChunkId: bestPrivate.id, latencyMs });
+      cfg.localStore.logQuery({
+        queryText: userQuery, source: 'private', matchedChunkId: bestPrivate.id,
+        matchedChunks: matched.map(r => ({ id: r.id, score: r.score })), latencyMs,
+      });
       return {
         source: 'private',
         chunks: privateResults.filter(r => r.score >= minSim),
@@ -111,13 +115,17 @@ export class RDKRouter {
         const bestNetwork = networkResults[0];
 
         if (bestNetwork && bestNetwork.score >= minSim) {
-          const context = assembleNetworkContext(networkResults.filter(r => r.score >= minSim));
+          const matchedNetwork = networkResults.filter(r => r.score >= minSim);
+          const context = assembleNetworkContext(matchedNetwork);
           const latencyMs = Date.now() - start;
-          cfg.localStore.logQuery({ queryText: userQuery, source: 'network', matchedChunkId: bestNetwork.chunkId, latencyMs });
+          cfg.localStore.logQuery({
+            queryText: userQuery, source: 'network', matchedChunkId: bestNetwork.chunkId,
+            matchedChunks: matchedNetwork.map(r => ({ id: r.chunkId, score: r.score })), latencyMs,
+          });
 
           // Enqueue tips for matched network chunks
           const tipsPaid: TipRecord[] = [];
-          for (const chunk of networkResults.filter(r => r.score >= minSim)) {
+          for (const chunk of matchedNetwork) {
             if (chunk.tipAmountUsdc > 0) {
               cfg.localStore.enqueueTip({
                 chunkId: chunk.chunkId,

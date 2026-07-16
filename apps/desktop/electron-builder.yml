@@ -1,0 +1,53 @@
+appId: ai.retrodeck.rdk.desktop
+productName: RDK
+copyright: Copyright © RetroDeck
+
+# Native modules (better-sqlite3, onnxruntime) must live OUTSIDE the asar or their
+# .node/.dll files can't be dlopen'd. asarUnpack keeps them on the real filesystem.
+asar: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/onnxruntime-node/**"
+  - "**/node_modules/@rdk/**"
+
+files:
+  - "out/**"
+  - "package.json"
+
+directories:
+  buildResources: build
+  output: release
+
+# ── macOS — SHIPS. Requires Developer ID cert + notarization for a downloadable app.
+#    Set CSC_LINK / CSC_KEY_PASSWORD and APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
+#    in the release environment. Without these, Gatekeeper blocks the .app (see docs/feasibility-report.md §6).
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+notarize: false # flip to true once Apple credentials are present in CI
+
+# ── Linux — SHIPS. No signing gate.
+linux:
+  category: Utility
+  target:
+    - AppImage
+    - deb
+  maintainer: RetroDeck
+  synopsis: RDK network node — file explorer + retrieval graph
+
+# ── Windows — CONFIGURED, NOT SHIPPED until W1 native-rebuild is confirmed green in CI.
+#    One flag away: `npm run dist:win`. Needs @electron/rebuild for better-sqlite3
+#    and (recommended) an OV/EV Authenticode cert to clear SmartScreen.
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

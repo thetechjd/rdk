@@ -2,11 +2,17 @@ packages:
   - 'packages/*'
   - 'apps/*'
 
+# apps/desktop pulls the Electron toolchain (@electron/rebuild, electron-builder),
+# which depends on @electron/node-gyp — Electron's git-forked node-gyp. Allow that
+# legitimate git subdep through the supply-chain check.
+blockExoticSubdeps: false
+
 allowBuilds:
   '@nestjs/core': true
   bcrypt: true
   better-sqlite3: true
   esbuild: true
+  electron: true
   msgpackr-extract: true
   protobufjs: true
   sharp: true

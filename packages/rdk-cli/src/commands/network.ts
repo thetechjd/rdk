@@ -362,7 +362,7 @@ export async function networkSync(): Promise<void> {
   const spinner = ora(`  Syncing ${stats.pendingChunks} chunk(s)...`).start();
 
   try {
-    const { SyncService } = await import('@retrodeck/mcp');
+    const { SyncService } = await import('@rdk/node');
     const sync = new SyncService(
       {
         enabled: true,

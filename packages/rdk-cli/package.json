@@ -1,6 +1,6 @@
 {
   "name": "@retrodeck/rdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "RDK CLI — install, configure, and manage your RDK node",
   "bin": {
     "rdk": "./dist/cli.js"
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@rdk/core": "workspace:*",
+    "@rdk/node": "workspace:*",
     "@retrodeck/mcp": "workspace:*",
     "@types/node": "^22.15.21",
     "@types/ws": "^8.18.1",

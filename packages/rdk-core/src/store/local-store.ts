@@ -131,6 +131,23 @@ export class LocalStore {
         latency_ms       INTEGER,
         created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      -- Many-to-many retrieval edges: one query_log row → N chunks it actually
+      -- retrieved (query_log keeps only the single best match, for back-compat).
+      -- Powers the desktop graph's query→chunk edges and the "RETRIEVED FOR" panel.
+      CREATE TABLE IF NOT EXISTS retrieval_edges (
+        id          TEXT PRIMARY KEY,
+        query_id    TEXT NOT NULL,
+        query_text  TEXT,
+        chunk_id    TEXT NOT NULL,
+        rank        INTEGER,
+        score       REAL,
+        source      TEXT,
+        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_retrieval_chunk ON retrieval_edges(chunk_id);
+      CREATE INDEX IF NOT EXISTS idx_retrieval_query ON retrieval_edges(query_id);
     `);
   }
 
@@ -248,6 +265,21 @@ export class LocalStore {
     return new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
   }
 
+  /** All chunks (no embeddings). For the desktop graph / vault views. */
+  getAllChunks(): StoredChunk[] {
+    const rows = this.db.prepare('SELECT * FROM chunks ORDER BY created_at ASC').all() as Record<string, unknown>[];
+    return rows.map(r => this.rowToChunk(r));
+  }
+
+  /** All embeddings keyed by chunk id — for pairwise semantic-similarity edges. */
+  getAllEmbeddings(): { chunkId: string; embedding: Float32Array }[] {
+    const rows = this.db.prepare('SELECT chunk_id, embedding FROM chunk_embeddings').all() as { chunk_id: string; embedding: Buffer }[];
+    return rows.map(r => ({
+      chunkId: r.chunk_id,
+      embedding: new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4),
+    }));
+  }
+
   // ── Stats ──────────────────────────────────────────────────────
 
   getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; localChunks: number; unsyncedChunks: number; pendingChunks: number; syncedChunks: number } {
@@ -295,14 +327,106 @@ export class LocalStore {
 
   // ── Query Log ──────────────────────────────────────────────────
 
-  logQuery(entry: { queryText: string; source: string; matchedChunkId?: string; latencyMs: number }): void {
+  /**
+   * Record a query. `matchedChunkId` (top hit) is kept in query_log for
+   * back-compat; the full ranked set (via `matchedChunks`) is written to
+   * retrieval_edges so the desktop graph can draw every query→chunk edge and the
+   * inspector can list what a chunk was retrieved for. Returns the query id.
+   */
+  logQuery(entry: {
+    queryText: string;
+    source: string;
+    matchedChunkId?: string;
+    matchedChunks?: { id: string; score: number }[];
+    latencyMs: number;
+  }): string {
+    const queryId = crypto.randomUUID();
+    const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO query_log (id, query_text, source, matched_chunk_id, latency_ms, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(
-      crypto.randomUUID(), entry.queryText, entry.source,
-      entry.matchedChunkId ?? null, entry.latencyMs, new Date().toISOString(),
+      queryId, entry.queryText, entry.source,
+      entry.matchedChunkId ?? entry.matchedChunks?.[0]?.id ?? null, entry.latencyMs, now,
     );
+
+    const edges = entry.matchedChunks
+      ?? (entry.matchedChunkId ? [{ id: entry.matchedChunkId, score: 1 }] : []);
+    if (edges.length > 0) {
+      const insert = this.db.prepare(`
+        INSERT INTO retrieval_edges (id, query_id, query_text, chunk_id, rank, score, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const tx = this.db.transaction((rows: { id: string; score: number }[]) => {
+        rows.forEach((r, i) =>
+          insert.run(crypto.randomUUID(), queryId, entry.queryText, r.id, i, r.score, entry.source, now));
+      });
+      tx(edges);
+    }
+    return queryId;
+  }
+
+  /** Recent queries this node issued (newest first) — graph query nodes / activity. */
+  getQueryLog(limit = 100): {
+    id: string; queryText: string; source: string; matchedChunkId?: string; latencyMs: number; createdAt: Date;
+  }[] {
+    const rows = this.db.prepare(`
+      SELECT id, query_text, source, matched_chunk_id, latency_ms, created_at
+      FROM query_log ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string,
+      queryText: (r.query_text as string) ?? '',
+      source: (r.source as string) ?? '',
+      matchedChunkId: (r.matched_chunk_id as string) ?? undefined,
+      latencyMs: (r.latency_ms as number) ?? 0,
+      createdAt: new Date(r.created_at as string),
+    }));
+  }
+
+  /** Distinct queries that retrieved a given chunk (inspector "RETRIEVED FOR"). */
+  getRetrievalsForChunk(chunkId: string, limit = 50): {
+    queryText: string; count: number; lastAt: Date; bestScore: number;
+  }[] {
+    const rows = this.db.prepare(`
+      SELECT query_text, COUNT(*) AS count, MAX(created_at) AS last_at, MAX(score) AS best_score
+      FROM retrieval_edges WHERE chunk_id = ?
+      GROUP BY query_text ORDER BY last_at DESC LIMIT ?
+    `).all(chunkId, limit) as Record<string, unknown>[];
+    return rows.map(r => ({
+      queryText: (r.query_text as string) ?? '',
+      count: (r.count as number) ?? 0,
+      lastAt: new Date(r.last_at as string),
+      bestScore: (r.best_score as number) ?? 0,
+    }));
+  }
+
+  /** All retrieval edges (query_id → chunk_id) for building the graph. */
+  getRetrievalEdges(limit = 2000): {
+    queryId: string; queryText: string; chunkId: string; rank: number; score: number; source: string;
+  }[] {
+    const rows = this.db.prepare(`
+      SELECT query_id, query_text, chunk_id, rank, score, source
+      FROM retrieval_edges ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map(r => ({
+      queryId: r.query_id as string,
+      queryText: (r.query_text as string) ?? '',
+      chunkId: r.chunk_id as string,
+      rank: (r.rank as number) ?? 0,
+      score: (r.score as number) ?? 0,
+      source: (r.source as string) ?? '',
+    }));
+  }
+
+  /** Retrieval count per chunk — used to size graph nodes. */
+  getRetrievalCounts(): Record<string, number> {
+    const rows = this.db.prepare(`
+      SELECT chunk_id, COUNT(*) AS n FROM retrieval_edges GROUP BY chunk_id
+    `).all() as { chunk_id: string; n: number }[];
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.chunk_id] = r.n;
+    return out;
   }
 
   // ── Helpers ────────────────────────────────────────────────────

@@ -1,0 +1,48 @@
+{
+  "name": "@rdk/node",
+  "version": "1.0.0",
+  "description": "RDK node — headless, UI-agnostic orchestration (config, network client, sync, WebSocket, node lifecycle) shared by the CLI and the desktop app",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./config": {
+      "import": "./dist/config.js",
+      "types": "./dist/config.d.ts"
+    },
+    "./ws/*": {
+      "import": "./dist/ws/*.js",
+      "types": "./dist/ws/*.d.ts"
+    },
+    "./http-server": {
+      "import": "./dist/http-server.js",
+      "types": "./dist/http-server.d.ts"
+    },
+    "./node-controller": {
+      "import": "./dist/node-controller.js",
+      "types": "./dist/node-controller.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@rdk/core": "workspace:*",
+    "express": "^4.21.2"
+  },
+  "optionalDependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/node": "^22.15.21",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.8.3"
+  }
+}
