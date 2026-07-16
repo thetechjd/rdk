@@ -1,23 +1,21 @@
 name: Desktop Release
 
 # Builds the RDK desktop app (apps/desktop) into installable artifacts:
-#   - macOS  → .dmg + .zip   (arm64 on macos-latest)
+#   - macOS  → .dmg + .zip     (arm64 on macos-latest)
 #   - Linux  → .AppImage + .deb (x64 on ubuntu-latest)
 #
-# Why this is not a plain `electron-builder`: under pnpm, @rdk/core and @rdk/node
-# are symlinked to ../../packages/* — OUTSIDE apps/desktop — and electron-builder
-# can't asar-package a symlink whose real target is outside the app root. The fix
-# is `pnpm deploy`, which materializes a self-contained app directory with the
-# workspace deps as real folders. We then rebuild the native module for Electron's
-# ABI and run electron-builder against that deployed dir with npmRebuild disabled.
+# All the tricky packaging logic (pnpm deploy → symlink-free app dir →
+# electron-rebuild → electron-builder, invoked via `node` not `pnpm exec` to avoid
+# a devDep-pruning deps-status check) lives in apps/desktop/scripts/package.sh,
+# which is validated locally. This workflow just installs and runs it.
 #
 # NOTE: cross-arch is not covered — each runner builds for its own CPU arch
-# (macos-latest = arm64, ubuntu-latest = x64). Add matrix entries (e.g.
-# macos-13 for x64, ubuntu-24.04-arm for linux-arm64) when those targets are needed.
+# (macos-latest = arm64, ubuntu-latest = x64). Add matrix entries (macos-13 → x64,
+# ubuntu-24.04-arm → linux-arm64) when those targets are needed.
 #
 # macOS artifacts are UNSIGNED (CSC_IDENTITY_AUTO_DISCOVERY=false). A downloaded
-# unsigned .app hits Gatekeeper on other Macs — for real distribution, add a
-# Developer ID cert + notarization (see apps/desktop/docs/feasibility-report.md §6).
+# unsigned .app hits Gatekeeper on other Macs — for real distribution add a
+# Developer ID cert + notarization (apps/desktop/docs/feasibility-report.md §6).
 
 on:
   workflow_dispatch: {}
@@ -35,13 +33,13 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            builder_flag: '--mac'
+            target: '--mac'
           - os: ubuntu-latest
-            builder_flag: '--linux'
+            target: '--linux'
     runs-on: ${{ matrix.os }}
     env:
-      # Skip macOS code-signing until a Developer ID cert is wired in.
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # skip macOS signing until a cert is wired in
+      RDK_DEPLOY_DIR: ${{ runner.temp }}/rdk-desktop-deploy
     steps:
       - uses: actions/checkout@v4
 
@@ -52,44 +50,18 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Install workspace
+      - name: Install workspace (with devDeps — needed to build)
         run: pnpm install --frozen-lockfile
 
-      - name: Build libraries the app consumes
-        run: pnpm --filter @rdk/core --filter @rdk/node build
-
-      - name: Build desktop (electron-vite → out/)
-        run: pnpm --filter rdk-desktop run build
-
-      - name: Deploy a self-contained app dir (no out-of-app symlinks)
+      - name: Build installers
         shell: bash
-        run: pnpm --filter rdk-desktop deploy --prod --legacy "$RUNNER_TEMP/rdk-deploy"
-
-      - name: Resolve Electron version
-        id: electron
-        shell: bash
-        run: echo "version=$(node -p "require('./apps/desktop/node_modules/electron/package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Rebuild native module (better-sqlite3) for Electron ABI in the deploy dir
-        run: >
-          pnpm --filter rdk-desktop exec electron-rebuild
-          --version ${{ steps.electron.outputs.version }}
-          --module-dir "$RUNNER_TEMP/rdk-deploy"
-          --only better-sqlite3 --force
-
-      - name: Package installers
-        run: >
-          pnpm --filter rdk-desktop exec electron-builder ${{ matrix.builder_flag }}
-          --projectDir "$RUNNER_TEMP/rdk-deploy"
-          --config "$RUNNER_TEMP/rdk-deploy/electron-builder.yml"
-          -c.electronVersion=${{ steps.electron.outputs.version }}
-          -c.npmRebuild=false
+        run: bash apps/desktop/scripts/package.sh ${{ matrix.target }}
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p dist-out
-          find "$RUNNER_TEMP/rdk-deploy/release" -maxdepth 1 \
+          find "$RDK_DEPLOY_DIR/release" -maxdepth 1 \
             \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' \) \
             -exec cp {} dist-out/ \;
           ls -la dist-out
@@ -100,7 +72,7 @@ jobs:
           path: dist-out/*
           if-no-files-found: error
 
-      # On a desktop-vX.Y.Z tag, also attach the installers to a GitHub release.
+      # On a desktop-vX.Y.Z tag, also attach installers to a GitHub release.
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         uses: softprops/action-gh-release@v2
