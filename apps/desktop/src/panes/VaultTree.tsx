@@ -8,6 +8,8 @@ export function VaultTree() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; node: VaultNode } | null>(null);
+  const [naming, setNaming] = useState<{ parentRelPath: string } | null>(null);
+  const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(null);
 
   const load = useCallback(() => { window.rdk.getVaultTree().then(setTree); }, []);
   useEffect(() => { load(); }, [load, app.dataVersion]);
@@ -50,23 +52,33 @@ export function VaultTree() {
       return next;
     });
 
-  const newNote = useCallback(async (parentRelPath: string) => {
-    // eslint-disable-next-line no-alert
-    const name = window.prompt('New note name', 'untitled.md');
-    if (name === null || !name.trim()) return;
-    const r = await window.rdk.createFile(parentRelPath, name.trim());
+  // window.prompt() is a no-op in Electron, so new-note naming uses an in-app input.
+  const newNote = useCallback((parentRelPath: string) => setNaming({ parentRelPath }), []);
+
+  const submitNewNote = useCallback(async (rawName: string) => {
+    const parentRelPath = naming?.parentRelPath ?? '';
+    const name = rawName.trim();
+    setNaming(null);
+    if (!name) return;
+    const r = await window.rdk.createFile(parentRelPath, name);
     if (!r.ok || !r.path) { app.toast(r.error ?? 'Could not create note', true); return; }
     app.refreshData();
-    app.openFileForEdit(r.path, r.path.split(/[\\/]/).pop() || name.trim());
-  }, [app]);
+    app.openFileForEdit(r.path, r.path.split(/[\\/]/).pop() || name);
+  }, [naming, app]);
 
   return (
     <>
       <div className="pane-header">
         <span>Vault</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ textTransform: 'none', color: 'var(--phosphor-dim)' }}>{tree?.vaultName}</span>
-          <button className="hdr-btn" title="New note in vault root" onClick={() => void newNote('')}>+ note</button>
+          <button
+            className="vault-name-btn"
+            title="Vault actions (open folder, change vault, re-index)"
+            onClick={e => { e.stopPropagation(); setMenu(null); setVaultMenu({ x: e.clientX, y: e.clientY }); }}
+          >
+            {tree?.vaultName ?? 'no vault'} ▾
+          </button>
+          <button className="hdr-btn" title="New note in vault root" onClick={() => newNote('')}>+ note</button>
         </span>
       </div>
       <div
@@ -74,7 +86,7 @@ export function VaultTree() {
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
-        onClick={() => setMenu(null)}
+        onClick={() => { setMenu(null); setVaultMenu(null); }}
       >
         <div className="tree">
           {tree?.nodes.length ? (
@@ -98,6 +110,15 @@ export function VaultTree() {
       </div>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} app={app} newNote={newNote} />}
+      {vaultMenu && <VaultMenu {...vaultMenu} root={tree?.root} onClose={() => setVaultMenu(null)} app={app} />}
+      {naming && (
+        <NamePrompt
+          title={naming.parentRelPath ? `New note in ${naming.parentRelPath}` : 'New note'}
+          defaultValue="untitled.md"
+          onSubmit={submitNewNote}
+          onClose={() => setNaming(null)}
+        />
+      )}
     </>
   );
 }
@@ -188,6 +209,81 @@ function ContextMenu({ x, y, node, onClose, app, newNote }: {
       {indexed && firstChunk && (
         <div className="ctx-item danger" onClick={() => run(async () => window.rdk.deleteChunk(firstChunk), 'Deleted from index')}>delete from index</div>
       )}
+    </div>
+  );
+}
+
+// Actions for the vault itself (the header vault-name button).
+function VaultMenu({ x, y, root, onClose, app }: {
+  x: number; y: number; root?: string; onClose: () => void; app: ReturnType<typeof useApp>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+    window.addEventListener('mousedown', h);
+    return () => window.removeEventListener('mousedown', h);
+  }, [onClose]);
+
+  const changeVault = async () => {
+    onClose();
+    const dir = await window.rdk.chooseVaultDirectory();
+    if (!dir) return;
+    await window.rdk.setPreferences({ vaultPath: dir });
+    app.refreshData();
+    app.refreshStatus();
+    app.toast('Vault changed');
+  };
+  const reindex = async () => {
+    onClose();
+    app.toast('Re-indexing vault…');
+    const r = await window.rdk.reindex();
+    app.toast(r.ok ? 'Re-indexed' : (r.error ?? 'Re-index failed'), !r.ok);
+    app.refreshData();
+    app.refreshStatus();
+  };
+
+  return (
+    <div className="ctx-menu" ref={ref} style={{ left: x, top: y }}>
+      <div className="ctx-item" onClick={() => { onClose(); if (root) window.rdk.revealInFileManager(root); }}>open vault folder</div>
+      <div className="ctx-item" onClick={changeVault}>change vault…</div>
+      <div className="ctx-sep" />
+      <div className="ctx-item" onClick={reindex}>re-index vault</div>
+    </div>
+  );
+}
+
+// In-app text prompt (Electron doesn't support window.prompt).
+function NamePrompt({ title, defaultValue, onSubmit, onClose }: {
+  title: string; defaultValue: string; onSubmit: (name: string) => void; onClose: () => void;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+    // select the base name (before the extension) for quick renaming
+    const dot = defaultValue.lastIndexOf('.');
+    ref.current?.setSelectionRange(0, dot > 0 ? dot : defaultValue.length);
+  }, [defaultValue]);
+
+  return (
+    <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="name-prompt">
+        <div className="np-title">{title}</div>
+        <input
+          ref={ref}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') onSubmit(value);
+            if (e.key === 'Escape') onClose();
+          }}
+          placeholder="untitled.md"
+        />
+        <div className="np-actions">
+          <button className="ghost" onClick={onClose}>cancel</button>
+          <button className="primary" onClick={() => onSubmit(value)}>create</button>
+        </div>
+      </div>
     </div>
   );
 }

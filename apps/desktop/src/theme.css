@@ -239,6 +239,11 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 .editor-area:focus { box-shadow: none; }
 .editor-hint { flex-shrink: 0; padding: 6px 14px; font-size: var(--fs-xs); color: var(--muted); border-top: 1px solid var(--border); background: var(--bg-chrome); }
 .hdr-btn { padding: 2px 8px; font-size: var(--fs-xs); border-color: var(--border-bright); }
+.vault-name-btn {
+  border: none; background: transparent; padding: 2px 4px;
+  color: var(--phosphor-dim); text-transform: none; font-size: var(--fs-xs); cursor: pointer;
+}
+.vault-name-btn:hover { color: var(--text-bright); background: transparent; border: none; }
 .md { color: var(--text); line-height: 1.7; }
 .md h1, .md h2, .md h3 { color: var(--text-bright); border-bottom: 1px solid var(--border); padding-bottom: 4px; }
 .md a { color: var(--phosphor); }
@@ -283,6 +288,12 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 
 /* ── Settings / Onboarding ─────────────────────────────────────────────────── */
 .modal-overlay { position: fixed; inset: 0; z-index: 1500; background: rgba(0, 0, 0, 0.6); display: flex; justify-content: center; align-items: center; }
+
+/* ── Name prompt (new note) ───────────────────────────────────────────────── */
+.name-prompt { width: 420px; max-width: 90vw; background: var(--bg-elev); border: 1px solid var(--phosphor); box-shadow: 0 0 30px rgba(57, 255, 106, 0.12); padding: 16px; }
+.name-prompt .np-title { font-size: var(--fs-sm); color: var(--phosphor-dim); margin-bottom: 10px; letter-spacing: 0.04em; }
+.name-prompt input { width: 100%; }
+.name-prompt .np-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .modal { width: 720px; max-width: 94vw; max-height: 86vh; overflow-y: auto; background: var(--bg-panel); border: 1px solid var(--border-bright); }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .modal-header .title { color: var(--text-bright); letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--fs-sm); }
