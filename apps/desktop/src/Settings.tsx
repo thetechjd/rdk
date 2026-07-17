@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Account, BillingInterval, McpInfo, NodeStatus, Plan, Preferences } from '../shared/ipc';
 import { useApp } from './store';
+import { LoginForm } from './LoginForm';
 
 type Section = 'node' | 'vault' | 'account' | 'mcp' | 'prefs';
 
@@ -196,16 +197,13 @@ function AccountSection() {
 
       <div className="field">
         <label>account</label>
-        {acct?.signedIn ? (
+        {acct?.signedIn && !acct?.sessionExpired ? (
           <div className="row">
             <span>{acct.email ?? acct.nodeId}</span>
             <button onClick={() => window.rdk.signOut().then(() => void refresh())}>sign out</button>
           </div>
         ) : (
-          <div className="row">
-            <span style={{ color: 'var(--muted)' }}>not signed in</span>
-            <button className="primary" onClick={() => window.rdk.signIn()}>sign in →</button>
-          </div>
+          <LoginForm onSuccess={() => void refresh()} />
         )}
       </div>
 

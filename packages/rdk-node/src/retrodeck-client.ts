@@ -12,7 +12,8 @@
 // On 401 we exchange the refresh token for a fresh access token, persist it, and
 // retry once. Only a rejected REFRESH token means the user must log in again.
 
-import { loadConfig, updateConfig } from './config.js';
+import { loadConfig, loadConfigOrNull, updateConfig } from './config.js';
+import { ensureNodeLinked, type LinkResult } from './link-node.js';
 
 /** Thrown only when re-authentication is genuinely required (refresh failed). */
 export class RetrodeckAuthError extends Error {
@@ -90,6 +91,93 @@ export function dashboardUrl(): string {
     try { return loadConfig().retrodeckApiUrl ?? RETRODECK_DEFAULT_URL; } catch { return RETRODECK_DEFAULT_URL; }
   })();
   return base.replace('//api.', '//dashboard.');
+}
+
+// ── Login / logout ───────────────────────────────────────────────────────────
+
+export interface LoginResult {
+  ok: boolean;
+  error?: string;
+  emailVerified?: boolean;
+  plan?: string;
+  /** Outcome of linking this node to the account (dashboard visibility). */
+  link?: LinkResult;
+}
+
+/** Base URL used for login, before any config exists to read from. */
+function retrodeckBase(): string {
+  const cfg = loadConfigOrNull();
+  return cfg?.retrodeckApiUrl ?? process.env.RETRODECK_API_URL ?? RETRODECK_DEFAULT_URL;
+}
+
+/**
+ * Email/password login against the RetroDeck API — the same exchange the CLI's
+ * `rdk account:login` performs. Captures BOTH tokens, resolves the authoritative
+ * plan from /users/me, persists everything to ~/.rdk/config.json (shared with the
+ * CLI), then idempotently links this node to the account so its chunks show up in
+ * the dashboard.
+ */
+export async function login(email: string, password: string): Promise<LoginResult> {
+  const apiBase = retrodeckBase();
+  let data: { accessToken: string; refreshToken: string };
+  try {
+    const res = await fetch(`${apiBase}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 401 || res.status === 403) return { ok: false, error: 'Invalid credentials' };
+    if (res.status >= 500) return { ok: false, error: `RetroDeck is temporarily unavailable (HTTP ${res.status}). Try again shortly.` };
+    if (!res.ok) return { ok: false, error: `Login failed (HTTP ${res.status})` };
+    data = (await res.json()) as { accessToken: string; refreshToken: string };
+  } catch (e) {
+    return { ok: false, error: `Could not reach RetroDeck: ${(e as Error).message}` };
+  }
+  if (!data.accessToken) return { ok: false, error: 'Login failed (no token returned)' };
+
+  const existing = loadConfigOrNull();
+  let userId = existing?.retrodeckUserId ?? '';
+  let plan = existing?.plan;
+  let emailVerified: boolean | undefined;
+
+  // /users/me is the authoritative source of the plan (the token doesn't carry it).
+  try {
+    const meRes = await fetch(`${apiBase}/api/v1/users/me`, {
+      headers: { Authorization: `Bearer ${data.accessToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (meRes.ok) {
+      const me = (await meRes.json()) as { user: { id: string; emailVerified: boolean; planId?: string } };
+      userId = me.user.id;
+      plan = me.user.planId ?? plan ?? 'free';
+      emailVerified = me.user.emailVerified;
+    }
+  } catch { /* non-fatal — tokens are still good */ }
+
+  updateConfig({
+    retrodeckAccessToken: data.accessToken,
+    retrodeckRefreshToken: data.refreshToken,
+    retrodeckUserId: userId,
+    retrodeckApiUrl: apiBase,
+    plan,
+    ...(emailVerified !== undefined ? { emailVerified } : {}),
+  });
+
+  // Link the node so the dashboard can resolve its chunks. Pass the fresh token
+  // explicitly (as the CLI does) so it links even if the check can't be done.
+  let link: LinkResult | undefined;
+  try { link = await ensureNodeLinked({ accessToken: data.accessToken }); } catch { /* non-fatal */ }
+
+  return { ok: true, emailVerified, plan, link };
+}
+
+/** Clear the RetroDeck session. The node's own apiKey/identity is untouched. */
+export function logout(): void {
+  updateConfig({
+    retrodeckAccessToken: undefined,
+    retrodeckRefreshToken: undefined,
+  });
 }
 
 // ── Account ──────────────────────────────────────────────────────────────────

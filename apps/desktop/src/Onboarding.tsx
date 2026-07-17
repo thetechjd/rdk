@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { VisibilityChoice } from '../shared/ipc';
+import { LoginForm } from './LoginForm';
 
 const STEPS = ['account', 'vault', 'plan', 'node', 'mcp'] as const;
 type Step = typeof STEPS[number];
@@ -7,7 +8,7 @@ type Step = typeof STEPS[number];
 export function Onboarding({ onDone }: { onDone: () => void }) {
   const [i, setI] = useState(0);
   const [vaultPath, setVaultPath] = useState('');
-  const [email, setEmail] = useState('');
+  const [signedIn, setSignedIn] = useState(false);
   const [visibility, setVisibility] = useState<VisibilityChoice>('private');
   const [autoStart, setAutoStart] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -25,7 +26,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const finish = async () => {
     setBusy(true);
-    const r = await window.rdk.initNode({ email: email || undefined, vaultPath, visibility, autoStart });
+    // Signing in (above) already persisted the account + node link; init just
+    // establishes the local node config for the chosen vault.
+    const r = await window.rdk.initNode({ vaultPath, visibility, autoStart });
     if (r.ok) {
       if (autoStart) await window.rdk.setAutoStart(true).catch(() => {});
       await window.rdk.reindex().catch(() => {});
@@ -54,12 +57,13 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           {step === 'account' && (
             <>
               <div className="wizard-title">Sign in</div>
-              <div className="hint">Create or sign in to your RetroDeck account. Signup opens in your browser; you can also continue as a local-only node and sign in later.</div>
-              <div className="field">
-                <label>email (optional)</label>
-                <input value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" />
+              <div className="hint">
+                Sign in to your RetroDeck account to serve on the network and manage your plan.
+                You can also skip this and run as a local-only node — sign in later from Settings → Account.
               </div>
-              <button onClick={() => window.rdk.signIn()}>open browser sign-in →</button>
+              {signedIn
+                ? <div className="hint" style={{ color: 'var(--phosphor)' }}>◆ signed in — continue below.</div>
+                : <LoginForm onSuccess={() => setSignedIn(true)} />}
             </>
           )}
 

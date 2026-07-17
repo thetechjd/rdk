@@ -40,8 +40,8 @@ import {
 } from './platform';
 import type {
   Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
-  GraphEdge, GraphNode, McpInfo, NodeStatus, Plan, PlatformCapabilities, Preferences,
-  QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
+  GraphEdge, GraphNode, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
+  Preferences, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
 } from '../shared/ipc';
 
 const IGNORE_DIRS = new Set(['.git', '.obsidian', 'node_modules', '.trash', '.rdk']);
@@ -633,6 +633,31 @@ export class NodeService {
       if (e instanceof retrodeck.RetrodeckAuthError) return { ...base, sessionExpired: true };
       return base;
     }
+  }
+
+  /** Native email/password login (same exchange as `rdk account:login`). */
+  async login(email: string, password: string): Promise<LoginOutcome> {
+    const r = await retrodeck.login(email, password);
+    this.config = loadConfigOrNull(); // pick up the freshly persisted tokens/plan
+    if (!r.ok) return { ok: false, error: r.error };
+    return {
+      ok: true,
+      emailVerified: r.emailVerified,
+      plan: r.plan,
+      linkStatus: r.link?.status,
+      linkReason: r.link?.reason,
+    };
+  }
+
+  signOut(): { ok: boolean } {
+    retrodeck.logout();
+    this.config = loadConfigOrNull();
+    return { ok: true };
+  }
+
+  /** RetroDeck dashboard origin (derived from the API host) for browser handoffs. */
+  getDashboardUrl(): string {
+    return retrodeck.dashboardUrl();
   }
 
   /** Earnings live on RDK Central and authenticate with the NODE apiKey. */

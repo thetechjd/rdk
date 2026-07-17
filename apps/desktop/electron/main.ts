@@ -132,15 +132,14 @@ function registerHandlers(): void {
     },
     // account / earnings / mcp / prefs
     getAccount: () => service.getAccount(),
-    signIn: async () => {
-      const acct = await service.getAccount();
-      const url = `${acct.centralApiUrl ?? 'https://rdk.network'}/signin?source=desktop`;
-      await shell.openExternal(url);
-      return { ok: true };
-    },
-    signOut: () => ({ ok: true }),
-    openUpgrade: async () => { const a = await service.getAccount(); await shell.openExternal(`${a.centralApiUrl ?? 'https://rdk.network'}/billing`); },
-    openTopUp: async () => { const a = await service.getAccount(); await shell.openExternal(`${a.centralApiUrl ?? 'https://rdk.network'}/balance/topup`); },
+    // Native login — no browser round-trip. Tokens land in ~/.rdk/config.json
+    // (shared with the CLI), so signing in here also re-authenticates `rdk`.
+    login: (email: never, password: never) => service.login(email, password),
+    signOut: () => service.signOut(),
+    // Account creation / password reset still belong on the web.
+    openSignup: async () => { await shell.openExternal(`${service.getDashboardUrl()}/signup`); },
+    openUpgrade: async () => { await shell.openExternal(`${service.getDashboardUrl()}/billing`); },
+    openTopUp: async () => { await shell.openExternal(`${service.getDashboardUrl()}/balance`); },
     getEarnings: () => service.getEarnings(),
     // Billing (RetroDeck API). selectPlan/createTopup open the web checkout
     // themselves; the renderer then polls verifySubscription/verifyTopup.

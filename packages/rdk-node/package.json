@@ -26,6 +26,10 @@
       "import": "./dist/retrodeck-client.js",
       "types": "./dist/retrodeck-client.d.ts"
     },
+    "./link-node": {
+      "import": "./dist/link-node.js",
+      "types": "./dist/link-node.d.ts"
+    },
     "./ws/*": {
       "import": "./dist/ws/*.js",
       "types": "./dist/ws/*.d.ts"

@@ -322,6 +322,12 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 .field .row input { flex: 1; }
 .snippet-box { background: var(--bg-deep); border: 1px solid var(--border); padding: 12px; font-size: var(--fs-sm); color: var(--phosphor-dim); white-space: pre; overflow-x: auto; }
 
+/* ── Native login form ────────────────────────────────────────────────────── */
+.login-form { display: flex; flex-direction: column; gap: 10px; }
+.login-form .field { gap: 4px; }
+.login-form input { width: 100%; }
+.login-form .row { gap: 8px; margin-top: 2px; }
+
 /* ── Plan picker (Settings → Account) ─────────────────────────────────────── */
 .plan-picker { margin-top: 10px; border: 1px solid var(--border); background: var(--bg-deep); padding: 10px; }
 .plan-row {

@@ -10,6 +10,7 @@ export { CentralClient } from './central-client.js';
 // service from RDK Central, with its own token. Namespaced to avoid collisions.
 export * as retrodeck from './retrodeck-client.js';
 export { RetrodeckAuthError, type ApiPlan, type BalanceInfo } from './retrodeck-client.js';
+export { ensureNodeLinked, type LinkResult } from './link-node.js';
 export type { CentralClientConfig, EarningsSummary, AccountInfo } from './central-client.js';
 export { NodeController } from './node-controller.js';
 export type { NodeControllerOptions, NodeRuntimeStatus, NodeLogger } from './node-controller.js';

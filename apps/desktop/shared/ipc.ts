@@ -169,6 +169,17 @@ export interface Plan {
 
 export type BillingInterval = 'monthly' | 'yearly';
 
+/** Result of a native RetroDeck login. */
+export interface LoginOutcome {
+  ok: boolean;
+  error?: string;
+  emailVerified?: boolean;
+  plan?: string;
+  /** Whether this node got linked to the account (drives dashboard visibility). */
+  linkStatus?: 'linked' | 'already-linked' | 'skipped' | 'failed';
+  linkReason?: string;
+}
+
 export interface EarningsSummary {
   totalUsdc: number;
   byDocument: { title: string; chunkId: string; earnedUsdc: number; retrievals: number }[];
@@ -259,8 +270,16 @@ export interface RdkApi {
 
   // Account / earnings / mcp / prefs
   getAccount(): Promise<Account>;
-  signIn(): Promise<{ ok: boolean; error?: string }>;   // browser handoff
+  /**
+   * Native email/password login against the RetroDeck API — captures both tokens,
+   * resolves the plan, and links this node to the account. Same exchange as the
+   * CLI's `rdk account:login`; tokens land in the shared ~/.rdk/config.json.
+   */
+  login(email: string, password: string): Promise<LoginOutcome>;
+  /** Clears the RetroDeck session (the node's own identity/apiKey is untouched). */
   signOut(): Promise<{ ok: boolean }>;
+  /** Browser handoff for account creation / password reset. */
+  openSignup(): Promise<void>;
   openUpgrade(): Promise<void>;                          // browser handoff (dashboard billing)
   openTopUp(): Promise<void>;                            // browser handoff (dashboard balance)
   getEarnings(): Promise<EarningsSummary>;
@@ -300,7 +319,7 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'deleteChunk', 'getRetrievedFor',
   'getGraphData', 'query',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
-  'getAccount', 'signIn', 'signOut', 'openUpgrade', 'openTopUp', 'getEarnings',
+  'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',
   'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
   'getMcpInfo', 'getPreferences', 'setPreferences', 'openExternal',
 ];
