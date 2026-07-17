@@ -149,10 +149,25 @@ export interface Account {
   email?: string;
   plan: string;
   balanceUsdc?: number;
+  /** Balance reserved against credit; withdrawable = balance − creditLimit. */
+  creditLimitUsd?: number;
   walletAddress?: string;
   nodeId?: string;
   centralApiUrl?: string;
+  /** True when the RetroDeck session expired and the user must sign in again. */
+  sessionExpired?: boolean;
 }
+
+/** A subscription plan as served by the RetroDeck API (never hardcoded). */
+export interface Plan {
+  id: string;
+  name: string;
+  priceMonthly: number;
+  maxQueriesDay: number;
+  maxChunks: number;
+}
+
+export type BillingInterval = 'monthly' | 'yearly';
 
 export interface EarningsSummary {
   totalUsdc: number;
@@ -246,9 +261,26 @@ export interface RdkApi {
   getAccount(): Promise<Account>;
   signIn(): Promise<{ ok: boolean; error?: string }>;   // browser handoff
   signOut(): Promise<{ ok: boolean }>;
-  openUpgrade(): Promise<void>;                          // browser handoff
-  openTopUp(): Promise<void>;                            // browser handoff
+  openUpgrade(): Promise<void>;                          // browser handoff (dashboard billing)
+  openTopUp(): Promise<void>;                            // browser handoff (dashboard balance)
   getEarnings(): Promise<EarningsSummary>;
+
+  // ── Subscription (RetroDeck API) ──────────────────────────────────────────
+  /** Live plans from the API — never hardcoded. */
+  getPlans(): Promise<{ ok: boolean; plans?: Plan[]; error?: string }>;
+  /**
+   * Free applies immediately; paid returns a checkoutUrl which the main process
+   * opens in the browser (the web checkout takes card OR crypto). Poll
+   * verifySubscription() afterwards.
+   */
+  selectPlan(planId: string, interval?: BillingInterval): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }>;
+  verifySubscription(): Promise<{ paid: boolean; planId?: string; planName?: string }>;
+
+  // ── Balance top-up (RetroDeck API) ────────────────────────────────────────
+  /** Creates a checkout and opens it in the browser. Poll verifyTopup() after. */
+  createTopup(amountUsd: number): Promise<{ ok: boolean; paymentId?: string; error?: string }>;
+  /** Verifying is what CREDITS the balance (no async webhook). Safe to re-run. */
+  verifyTopup(paymentRef?: string): Promise<{ completed: boolean; balanceUsdc?: number }>;
   getMcpInfo(): Promise<McpInfo>;
   getPreferences(): Promise<Preferences>;
   setPreferences(prefs: Partial<Preferences>): Promise<Preferences>;
@@ -269,5 +301,6 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'getGraphData', 'query',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
   'getAccount', 'signIn', 'signOut', 'openUpgrade', 'openTopUp', 'getEarnings',
+  'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
   'getMcpInfo', 'getPreferences', 'setPreferences', 'openExternal',
 ];

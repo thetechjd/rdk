@@ -1,0 +1,179 @@
+// packages/rdk-node/src/retrodeck-client.ts
+//
+// Authenticated client for the RetroDeck API (api.retrodeck.ai) — the account /
+// plans / balance / top-up / subscription backend. This is a DIFFERENT service
+// from RDK Central (api.rdk.network), which owns node registration, chunk sync
+// and tips/earnings and authenticates with the node apiKey. Mixing them up sends
+// account calls to the wrong host with the wrong token.
+//
+// Auth model (mirrors packages/rdk-cli/src/retrodeck-api.ts):
+//   - durable credential : retrodeckRefreshToken (long-lived)
+//   - short-lived        : retrodeckAccessToken (~24h JWT)
+// On 401 we exchange the refresh token for a fresh access token, persist it, and
+// retry once. Only a rejected REFRESH token means the user must log in again.
+
+import { loadConfig, updateConfig } from './config.js';
+
+/** Thrown only when re-authentication is genuinely required (refresh failed). */
+export class RetrodeckAuthError extends Error {
+  constructor(message = 'RetroDeck session expired') {
+    super(message);
+    this.name = 'RetrodeckAuthError';
+  }
+}
+
+export const RETRODECK_DEFAULT_URL = 'https://api.retrodeck.ai';
+
+export interface ApiPlan {
+  id: string;
+  name: string;
+  price_monthly: number;
+  max_queries_day: number;
+  max_chunks: number;
+}
+
+export interface BalanceInfo {
+  balanceUsdc: number;
+  creditLimitUsd: number;
+}
+
+async function refreshAccessToken(apiBase: string, refreshToken: string): Promise<string> {
+  const res = await fetch(`${apiBase}/api/v1/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new RetrodeckAuthError();
+  const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
+  if (!data.accessToken) throw new RetrodeckAuthError();
+  updateConfig({
+    retrodeckAccessToken: data.accessToken,
+    // Some servers rotate the refresh token on use — persist it if returned.
+    ...(data.refreshToken ? { retrodeckRefreshToken: data.refreshToken } : {}),
+  });
+  return data.accessToken;
+}
+
+/** Fetch a RetroDeck path with the stored access token; refresh + retry once on 401. */
+export async function retrodeckFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const config = loadConfig();
+  const apiBase = config.retrodeckApiUrl ?? RETRODECK_DEFAULT_URL;
+  if (!config.retrodeckAccessToken) throw new RetrodeckAuthError('Not logged in to RetroDeck');
+
+  const withAuth = (token: string): RequestInit => ({
+    signal: AbortSignal.timeout(15_000),
+    ...init,
+    headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}` },
+  });
+
+  const res = await fetch(`${apiBase}${path}`, withAuth(config.retrodeckAccessToken));
+  if (res.status !== 401) return res;
+
+  if (!config.retrodeckRefreshToken) throw new RetrodeckAuthError();
+  const fresh = await refreshAccessToken(apiBase, config.retrodeckRefreshToken);
+  return fetch(`${apiBase}${path}`, withAuth(fresh));
+}
+
+/** True when a RetroDeck session exists (an access token is stored). */
+export function isLoggedIn(): boolean {
+  try {
+    return !!loadConfig().retrodeckAccessToken;
+  } catch {
+    return false;
+  }
+}
+
+/** The dashboard origin, derived from the API host (api. → dashboard.). */
+export function dashboardUrl(): string {
+  const base = (() => {
+    try { return loadConfig().retrodeckApiUrl ?? RETRODECK_DEFAULT_URL; } catch { return RETRODECK_DEFAULT_URL; }
+  })();
+  return base.replace('//api.', '//dashboard.');
+}
+
+// ── Account ──────────────────────────────────────────────────────────────────
+
+export async function getMe(): Promise<{ id?: string; email?: string; emailVerified?: boolean; planId?: string } | null> {
+  const res = await retrodeckFetch('/api/v1/users/me');
+  if (!res.ok) return null;
+  const data = (await res.json()) as { user?: { id?: string; email?: string; emailVerified?: boolean; planId?: string } };
+  return data.user ?? null;
+}
+
+export async function getBalance(): Promise<BalanceInfo | null> {
+  const res = await retrodeckFetch('/api/v1/balances/me');
+  if (!res.ok) return null;
+  const d = (await res.json()) as { balanceUsdc?: number; creditLimitUsd?: number };
+  return { balanceUsdc: Number(d.balanceUsdc ?? 0), creditLimitUsd: Number(d.creditLimitUsd ?? 0) };
+}
+
+// ── Plans / subscription ─────────────────────────────────────────────────────
+
+export async function getPlans(): Promise<ApiPlan[]> {
+  const res = await retrodeckFetch('/api/v1/plans');
+  if (!res.ok) throw new Error(`Could not fetch plans (HTTP ${res.status})`);
+  return (await res.json()) as ApiPlan[];
+}
+
+/**
+ * Select a plan. Free is applied immediately (no checkout). Paid plans return a
+ * `checkoutUrl` to open in the browser — the web checkout handles BOTH card and
+ * crypto, so no payment credentials are ever collected in-app.
+ */
+export async function selectPlan(planId: string, interval?: 'monthly' | 'yearly'): Promise<{ checkoutUrl: string | null }> {
+  const body: Record<string, unknown> = interval ? { planId, interval, source: 'desktop' } : { planId };
+  const res = await retrodeckFetch('/api/v1/plans/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Plan change failed (HTTP ${res.status})`);
+  const d = (await res.json()) as { checkoutUrl?: string | null };
+  return { checkoutUrl: d.checkoutUrl ?? null };
+}
+
+/** Poll after a checkout handoff. Persists the new plan to config when paid. */
+export async function verifySubscription(): Promise<{ paid: boolean; planId?: string; planName?: string }> {
+  const res = await retrodeckFetch('/api/v1/plans/verify-payment');
+  if (!res.ok) return { paid: false };
+  const v = (await res.json()) as { paid?: boolean; plan?: { id?: string; name?: string } };
+  if (v.paid && v.plan?.id) updateConfig({ plan: v.plan.id });
+  return { paid: !!v.paid, planId: v.plan?.id, planName: v.plan?.name };
+}
+
+// ── Balance top-up ───────────────────────────────────────────────────────────
+
+/**
+ * Create a Stripe top-up checkout. (The CLI's `--crypto` path drives the external
+ * interactive `cryptocadet` binary, which a packaged desktop app can't host — the
+ * browser checkout covers card and crypto instead.)
+ */
+export async function createTopup(amountUsd: number): Promise<{ checkoutUrl: string | null; paymentId?: string }> {
+  const res = await retrodeckFetch('/api/v1/balances/topup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amountUsd, method: 'stripe', source: 'desktop', returnUrl: dashboardUrl() }),
+  });
+  if (!res.ok) throw new Error(`Could not create checkout (HTTP ${res.status})`);
+  const d = (await res.json()) as { checkoutUrl?: string | null; paymentId?: string };
+  return { checkoutUrl: d.checkoutUrl ?? null, paymentId: d.paymentId };
+}
+
+/**
+ * Verify (and CREDIT) a top-up. Crediting happens on verification — there is no
+ * async Stripe webhook — so this doubles as the self-heal for a payment that
+ * completed while the app wasn't looking.
+ */
+export async function verifyTopup(paymentRef?: string): Promise<{ completed: boolean; balanceUsdc?: number }> {
+  const res = paymentRef
+    ? await retrodeckFetch('/api/v1/balances/verify-topup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paymentRef }),
+      })
+    : await retrodeckFetch('/api/v1/balances/verify-topup');
+  if (!res.ok) return { completed: false };
+  const v = (await res.json()) as { completed?: boolean; balance?: number };
+  return { completed: !!v.completed, balanceUsdc: v.balance != null ? Number(v.balance) : undefined };
+}

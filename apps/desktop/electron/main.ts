@@ -142,6 +142,13 @@ function registerHandlers(): void {
     openUpgrade: async () => { const a = await service.getAccount(); await shell.openExternal(`${a.centralApiUrl ?? 'https://rdk.network'}/billing`); },
     openTopUp: async () => { const a = await service.getAccount(); await shell.openExternal(`${a.centralApiUrl ?? 'https://rdk.network'}/balance/topup`); },
     getEarnings: () => service.getEarnings(),
+    // Billing (RetroDeck API). selectPlan/createTopup open the web checkout
+    // themselves; the renderer then polls verifySubscription/verifyTopup.
+    getPlans: () => service.getPlans(),
+    selectPlan: (planId: never, interval: never) => service.selectPlan(planId, interval),
+    verifySubscription: () => service.verifySubscription(),
+    createTopup: (amountUsd: never) => service.createTopup(amountUsd),
+    verifyTopup: (paymentRef: never) => service.verifyTopup(paymentRef),
     getMcpInfo: () => service.getMcpInfo(),
     getPreferences: () => service.getPreferences(),
     setPreferences: (prefs: never) => service.setPreferences(prefs),

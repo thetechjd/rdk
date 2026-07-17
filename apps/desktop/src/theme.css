@@ -321,6 +321,18 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 .field .row { display: flex; gap: 8px; align-items: center; }
 .field .row input { flex: 1; }
 .snippet-box { background: var(--bg-deep); border: 1px solid var(--border); padding: 12px; font-size: var(--fs-sm); color: var(--phosphor-dim); white-space: pre; overflow-x: auto; }
+
+/* ── Plan picker (Settings → Account) ─────────────────────────────────────── */
+.plan-picker { margin-top: 10px; border: 1px solid var(--border); background: var(--bg-deep); padding: 10px; }
+.plan-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left; padding: 9px 10px; margin-bottom: 6px;
+  background: transparent; border: 1px solid var(--border-bright);
+}
+.plan-row:hover:not(:disabled) { border-color: var(--phosphor); background: rgba(57,255,106,0.06); }
+.plan-row:disabled { opacity: 0.55; }
+.plan-row .pr-name { color: var(--text-bright); text-transform: none; }
+.plan-row .pr-meta { color: var(--cassette); font-size: var(--fs-xs); text-transform: none; }
 .hint { font-size: var(--fs-xs); color: var(--muted); }
 .hint.warn { color: var(--cassette); }
 

@@ -30,14 +30,18 @@ import {
   type RDKConfig,
 } from '@rdk/node/config';
 import { SyncService } from '@rdk/node/sync-service';
+// RetroDeck API — account/plans/balance/top-up/subscription. A different service
+// (and token) from RDK Central; see the note above getAccount().
+import * as retrodeck from '@rdk/node/retrodeck-client';
+import { shell } from 'electron';
 import {
   autoStartSupported,
   serviceInstallSupported,
 } from './platform';
 import type {
-  Account, ChunkView, ContentView, EarningsSummary, FileState, GraphData, GraphEdge,
-  GraphNode, McpInfo, NodeStatus, PlatformCapabilities, Preferences, QueryResponse,
-  RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
+  Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
+  GraphEdge, GraphNode, McpInfo, NodeStatus, Plan, PlatformCapabilities, Preferences,
+  QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
 } from '../shared/ipc';
 
 const IGNORE_DIRS = new Set(['.git', '.obsidian', 'node_modules', '.trash', '.rdk']);
@@ -590,36 +594,124 @@ export class NodeService {
     }
   }
 
-  // ── account / earnings / mcp / prefs (spike: config + RetroDeck HTTP) ─────────
+  // ── account / billing / earnings ──────────────────────────────────────────
+  // TWO backends, do not mix them up:
+  //   RetroDeck API (retrodeckApiUrl + retrodeckAccessToken) → account, plans,
+  //     balance, top-up, subscription. Handled by @rdk/node/retrodeck-client.
+  //   RDK Central  (centralApiUrl + node apiKey)             → chunks, tips/earnings.
 
   async getAccount(): Promise<Account> {
     const cfg = this.getConfig();
-    const signedIn = !!cfg?.retrodeckAccessToken;
-    let balanceUsdc: number | undefined;
-    if (signedIn && cfg?.centralApiUrl) {
-      balanceUsdc = await this.fetchJson<{ balanceUsdc: number }>(
-        `${cfg.centralApiUrl}/api/v1/balances/me`, cfg.retrodeckAccessToken,
-      ).then(r => r?.balanceUsdc).catch(() => undefined);
-    }
-    return {
+    const signedIn = retrodeck.isLoggedIn();
+    const base: Account = {
       signedIn,
       email: cfg?.retrodeckUserId,
       plan: cfg?.plan ?? 'free',
-      balanceUsdc,
       walletAddress: cfg?.walletAddress,
       nodeId: cfg?.nodeId,
       centralApiUrl: cfg?.centralApiUrl,
     };
+    if (!signedIn) return base;
+
+    try {
+      // Self-heal: credit any top-up that completed but was never verified
+      // (crediting happens on verification — there's no async Stripe webhook).
+      await retrodeck.verifyTopup().catch(() => undefined);
+      const [me, bal] = await Promise.all([
+        retrodeck.getMe().catch(() => null),
+        retrodeck.getBalance().catch(() => null),
+      ]);
+      return {
+        ...base,
+        email: me?.email ?? base.email,
+        plan: me?.planId ?? base.plan,
+        balanceUsdc: bal?.balanceUsdc,
+        creditLimitUsd: bal?.creditLimitUsd,
+      };
+    } catch (e) {
+      // Refresh token rejected → the user genuinely has to sign in again.
+      if (e instanceof retrodeck.RetrodeckAuthError) return { ...base, sessionExpired: true };
+      return base;
+    }
   }
 
+  /** Earnings live on RDK Central and authenticate with the NODE apiKey. */
   async getEarnings(): Promise<EarningsSummary> {
     const cfg = this.getConfig();
     const empty: EarningsSummary = { totalUsdc: 0, byDocument: [], overTime: [] };
-    if (!cfg?.centralApiUrl || !cfg.retrodeckAccessToken) return empty;
+    if (!cfg?.centralApiUrl || !cfg.apiKey) return empty;
     const data = await this.fetchJson<EarningsSummary>(
-      `${cfg.centralApiUrl}/api/v1/tips/earnings`, cfg.retrodeckAccessToken,
+      `${cfg.centralApiUrl}/api/v1/tips/earnings`, cfg.apiKey,
     ).catch(() => null);
     return data ?? empty;
+  }
+
+  // ── Subscription ──────────────────────────────────────────────────────────
+
+  async getPlans(): Promise<{ ok: boolean; plans?: Plan[]; error?: string }> {
+    try {
+      const plans = await retrodeck.getPlans();
+      return {
+        ok: true,
+        plans: plans.map(p => ({
+          id: p.id,
+          name: p.name,
+          priceMonthly: Number(p.price_monthly ?? 0),
+          maxQueriesDay: Number(p.max_queries_day ?? 0),
+          maxChunks: Number(p.max_chunks ?? 0),
+        })),
+      };
+    } catch (e) {
+      return { ok: false, error: this.authMessage(e) };
+    }
+  }
+
+  async selectPlan(planId: string, interval?: BillingInterval): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }> {
+    try {
+      const { checkoutUrl } = await retrodeck.selectPlan(planId, interval);
+      if (checkoutUrl) await shell.openExternal(checkoutUrl); // paid → web checkout (card or crypto)
+      else this.config = loadConfigOrNull();                  // free → applied immediately
+      return { ok: true, checkoutUrl };
+    } catch (e) {
+      return { ok: false, error: this.authMessage(e) };
+    }
+  }
+
+  async verifySubscription(): Promise<{ paid: boolean; planId?: string; planName?: string }> {
+    try {
+      const r = await retrodeck.verifySubscription();
+      if (r.paid) this.config = loadConfigOrNull(); // plan persisted by the client
+      return r;
+    } catch {
+      return { paid: false };
+    }
+  }
+
+  // ── Balance top-up ────────────────────────────────────────────────────────
+
+  async createTopup(amountUsd: number): Promise<{ ok: boolean; paymentId?: string; error?: string }> {
+    try {
+      const { checkoutUrl, paymentId } = await retrodeck.createTopup(amountUsd);
+      if (!checkoutUrl) return { ok: false, error: 'No checkout URL returned.' };
+      await shell.openExternal(checkoutUrl);
+      return { ok: true, paymentId };
+    } catch (e) {
+      return { ok: false, error: this.authMessage(e) };
+    }
+  }
+
+  async verifyTopup(paymentRef?: string): Promise<{ completed: boolean; balanceUsdc?: number }> {
+    try {
+      return await retrodeck.verifyTopup(paymentRef);
+    } catch {
+      return { completed: false };
+    }
+  }
+
+  private authMessage(e: unknown): string {
+    return e instanceof retrodeck.RetrodeckAuthError
+      ? 'Your RetroDeck session expired — sign in again.'
+      : (e as Error).message;
   }
 
   getMcpInfo(): McpInfo {

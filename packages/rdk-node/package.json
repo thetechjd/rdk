@@ -22,6 +22,10 @@
       "import": "./dist/central-client.js",
       "types": "./dist/central-client.d.ts"
     },
+    "./retrodeck-client": {
+      "import": "./dist/retrodeck-client.js",
+      "types": "./dist/retrodeck-client.d.ts"
+    },
     "./ws/*": {
       "import": "./dist/ws/*.js",
       "types": "./dist/ws/*.d.ts"
