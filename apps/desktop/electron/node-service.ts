@@ -203,7 +203,7 @@ export class NodeService {
 
   async indexPaths(paths: string[], visibility: VisibilityChoice): Promise<{ indexed: number; error?: string }> {
     if (!(await this.embedderAvailable())) {
-      return { indexed: 0, error: 'Embedding model not installed. Install it from Settings → Node.' };
+      return { indexed: 0, error: 'Embedding model unavailable. It downloads (~23MB) on first use — check your network connection and try again.' };
     }
     const indexer = this.getIndexer(visibility);
     const files = this.expandToFiles(paths);

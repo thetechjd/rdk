@@ -108,12 +108,18 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@huggingface/jinja':
+        specifier: 0.2.2
+        version: 0.2.2
       '@rdk/core':
         specifier: workspace:*
         version: link:../../packages/rdk-core
       '@rdk/node':
         specifier: workspace:*
         version: link:../../packages/rdk-node
+      '@xenova/transformers':
+        specifier: 2.17.2
+        version: 2.17.2
       better-sqlite3:
         specifier: ^12.0.0
         version: 12.10.0
@@ -123,6 +129,18 @@ importers:
       marked:
         specifier: ^14.1.2
         version: 14.1.4
+      onnxruntime-common:
+        specifier: 1.14.0
+        version: 1.14.0
+      onnxruntime-node:
+        specifier: 1.14.0
+        version: 1.14.0
+      onnxruntime-web:
+        specifier: 1.14.0
+        version: 1.14.0
+      sharp:
+        specifier: 0.32.6
+        version: 0.32.6
     devDependencies:
       '@electron/rebuild':
         specifier: ^3.7.0
@@ -166,10 +184,6 @@ importers:
       vite:
         specifier: ^5.4.11
         version: 5.4.21(@types/node@22.19.19)
-    optionalDependencies:
-      '@xenova/transformers':
-        specifier: ^2.17.2
-        version: 2.17.2
 
   packages/rdk-adapter-filesystem:
     dependencies:
@@ -4411,8 +4425,7 @@ snapshots:
 
   '@gar/promisify@1.1.3': {}
 
-  '@huggingface/jinja@0.2.2':
-    optional: true
+  '@huggingface/jinja@0.2.2': {}
 
   '@ioredis/commands@1.10.0': {}
 
@@ -4627,37 +4640,27 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@protobufjs/aspromise@1.1.2':
-    optional: true
+  '@protobufjs/aspromise@1.1.2': {}
 
-  '@protobufjs/base64@1.1.2':
-    optional: true
+  '@protobufjs/base64@1.1.2': {}
 
-  '@protobufjs/codegen@2.0.5':
-    optional: true
+  '@protobufjs/codegen@2.0.5': {}
 
-  '@protobufjs/eventemitter@1.1.1':
-    optional: true
+  '@protobufjs/eventemitter@1.1.1': {}
 
   '@protobufjs/fetch@1.1.1':
     dependencies:
       '@protobufjs/aspromise': 1.1.2
-    optional: true
 
-  '@protobufjs/float@1.0.2':
-    optional: true
+  '@protobufjs/float@1.0.2': {}
 
-  '@protobufjs/inquire@1.1.2':
-    optional: true
+  '@protobufjs/inquire@1.1.2': {}
 
-  '@protobufjs/path@1.1.2':
-    optional: true
+  '@protobufjs/path@1.1.2': {}
 
-  '@protobufjs/pool@1.1.0':
-    optional: true
+  '@protobufjs/pool@1.1.0': {}
 
-  '@protobufjs/utf8@1.1.1':
-    optional: true
+  '@protobufjs/utf8@1.1.1': {}
 
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
@@ -4869,8 +4872,7 @@ snapshots:
     dependencies:
       '@types/node': 22.19.19
 
-  '@types/long@4.0.2':
-    optional: true
+  '@types/long@4.0.2': {}
 
   '@types/luxon@3.4.2': {}
 
@@ -4980,7 +4982,6 @@ snapshots:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
-    optional: true
 
   '@xmldom/xmldom@0.9.10': {}
 
@@ -5172,15 +5173,13 @@ snapshots:
     dependencies:
       possible-typed-array-names: 1.1.0
 
-  b4a@1.8.1:
-    optional: true
+  b4a@1.8.1: {}
 
   balanced-match@1.0.2: {}
 
   balanced-match@4.0.4: {}
 
-  bare-events@2.9.1:
-    optional: true
+  bare-events@2.9.1: {}
 
   bare-fs@4.7.2:
     dependencies:
@@ -5192,15 +5191,12 @@ snapshots:
     transitivePeerDependencies:
       - bare-abort-controller
       - react-native-b4a
-    optional: true
 
-  bare-os@3.9.1:
-    optional: true
+  bare-os@3.9.1: {}
 
   bare-path@3.0.1:
     dependencies:
       bare-os: 3.9.1
-    optional: true
 
   bare-stream@2.13.1(bare-events@2.9.1):
     dependencies:
@@ -5210,12 +5206,10 @@ snapshots:
       bare-events: 2.9.1
     transitivePeerDependencies:
       - react-native-b4a
-    optional: true
 
   bare-url@2.4.3:
     dependencies:
       bare-path: 3.0.1
-    optional: true
 
   base64-js@1.5.1: {}
 
@@ -5523,7 +5517,6 @@ snapshots:
     dependencies:
       color-name: 1.1.4
       simple-swizzle: 0.2.4
-    optional: true
 
   color-support@1.1.3: {}
 
@@ -5531,7 +5524,6 @@ snapshots:
     dependencies:
       color-convert: 2.0.1
       color-string: 1.9.1
-    optional: true
 
   combined-stream@1.0.8:
     dependencies:
@@ -5944,7 +5936,6 @@ snapshots:
       bare-events: 2.9.1
     transitivePeerDependencies:
       - bare-abort-controller
-    optional: true
 
   eventsource-parser@3.1.0: {}
 
@@ -6084,8 +6075,7 @@ snapshots:
 
   fast-deep-equal@3.1.3: {}
 
-  fast-fifo@1.3.2:
-    optional: true
+  fast-fifo@1.3.2: {}
 
   fast-json-stable-stringify@2.1.0: {}
 
@@ -6139,8 +6129,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  flatbuffers@1.12.0:
-    optional: true
+  flatbuffers@1.12.0: {}
 
   for-each@0.3.5:
     dependencies:
@@ -6338,8 +6327,7 @@ snapshots:
       section-matter: 1.0.0
       strip-bom-string: 1.0.0
 
-  guid-typescript@1.0.9:
-    optional: true
+  guid-typescript@1.0.9: {}
 
   has-flag@4.0.0: {}
 
@@ -6464,8 +6452,7 @@ snapshots:
 
   ipaddr.js@1.9.1: {}
 
-  is-arrayish@0.3.4:
-    optional: true
+  is-arrayish@0.3.4: {}
 
   is-binary-path@2.1.0:
     dependencies:
@@ -6667,8 +6654,7 @@ snapshots:
       chalk: 5.6.2
       is-unicode-supported: 1.3.0
 
-  long@4.0.0:
-    optional: true
+  long@4.0.0: {}
 
   loose-envify@1.4.0:
     dependencies:
@@ -6879,8 +6865,7 @@ snapshots:
 
   node-addon-api@5.1.0: {}
 
-  node-addon-api@6.1.0:
-    optional: true
+  node-addon-api@6.1.0: {}
 
   node-api-version@0.2.1:
     dependencies:
@@ -6968,15 +6953,12 @@ snapshots:
   onnx-proto@4.0.4:
     dependencies:
       protobufjs: 6.11.6
-    optional: true
 
-  onnxruntime-common@1.14.0:
-    optional: true
+  onnxruntime-common@1.14.0: {}
 
   onnxruntime-node@1.14.0:
     dependencies:
       onnxruntime-common: 1.14.0
-    optional: true
 
   onnxruntime-web@1.14.0:
     dependencies:
@@ -6986,7 +6968,6 @@ snapshots:
       onnx-proto: 4.0.4
       onnxruntime-common: 1.14.0
       platform: 1.3.6
-    optional: true
 
   ora@5.4.1:
     dependencies:
@@ -7108,8 +7089,7 @@ snapshots:
 
   pkce-challenge@5.0.1: {}
 
-  platform@1.3.6:
-    optional: true
+  platform@1.3.6: {}
 
   plist@3.1.1:
     dependencies:
@@ -7178,7 +7158,6 @@ snapshots:
       '@types/long': 4.0.2
       '@types/node': 22.19.19
       long: 4.0.0
-    optional: true
 
   proxy-addr@2.0.7:
     dependencies:
@@ -7487,7 +7466,6 @@ snapshots:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
-    optional: true
 
   shebang-command@2.0.0:
     dependencies:
@@ -7538,7 +7516,6 @@ snapshots:
   simple-swizzle@0.2.4:
     dependencies:
       is-arrayish: 0.3.4
-    optional: true
 
   simple-update-notifier@2.0.0:
     dependencies:
@@ -7606,7 +7583,6 @@ snapshots:
     transitivePeerDependencies:
       - bare-abort-controller
       - react-native-b4a
-    optional: true
 
   string-width@4.2.3:
     dependencies:
@@ -7687,7 +7663,6 @@ snapshots:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
-    optional: true
 
   tar-stream@2.2.0:
     dependencies:
@@ -7707,7 +7682,6 @@ snapshots:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
-    optional: true
 
   tar@6.2.1:
     dependencies:
@@ -7724,7 +7698,6 @@ snapshots:
     transitivePeerDependencies:
       - bare-abort-controller
       - react-native-b4a
-    optional: true
 
   temp-file@3.4.0:
     dependencies:
@@ -7736,7 +7709,6 @@ snapshots:
       b4a: 1.8.1
     transitivePeerDependencies:
       - react-native-b4a
-    optional: true
 
   tmp-promise@3.0.3:
     dependencies:

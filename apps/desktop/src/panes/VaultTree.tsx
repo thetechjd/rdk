@@ -10,29 +10,38 @@ export function VaultTree() {
   const [menu, setMenu] = useState<{ x: number; y: number; node: VaultNode } | null>(null);
   const [naming, setNaming] = useState<{ parentRelPath: string } | null>(null);
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(null);
+  const [indexing, setIndexing] = useState<{ paths: string[] } | null>(null);
 
   const load = useCallback(() => { window.rdk.getVaultTree().then(setTree); }, []);
   useEffect(() => { load(); }, [load, app.dataVersion]);
 
-  const indexDropped = useCallback(async (paths: string[]) => {
-    if (paths.length === 0) return;
-    const visibility: VisibilityChoice =
-      // eslint-disable-next-line no-alert
-      window.confirm(`Index ${paths.length} item(s) publicly (earn tips)?\n\nOK = PUBLIC · Cancel = PRIVATE (default)`)
-        ? 'public' : 'private';
-    app.toast(`Indexing ${paths.length} item(s)…`);
+  // Indexing always asks for the visibility explicitly — LOCAL (cancel), PRIVATE, or PUBLIC.
+  const askIndex = useCallback((paths: string[]) => {
+    const clean = paths.filter(Boolean);
+    if (clean.length) setIndexing({ paths: clean });
+  }, []);
+
+  const doIndex = useCallback(async (visibility: VisibilityChoice) => {
+    const paths = indexing?.paths ?? [];
+    setIndexing(null);
+    if (!paths.length) return;
+    app.toast(`Indexing ${paths.length} item(s) as ${visibility}…`);
     const r = await window.rdk.indexPaths(paths, visibility);
-    app.toast(r.error ? r.error : `Indexed ${r.indexed} chunk(s) ${visibility}`, !!r.error);
+    app.toast(r.error ? r.error : `Indexed ${r.indexed} chunk(s) — ${visibility}`, !!r.error);
     app.refreshData();
     app.refreshStatus();
-  }, [app]);
+  }, [indexing, app]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const paths = Array.from(e.dataTransfer.files).map(f => window.rdkNative.pathForFile(f)).filter(Boolean);
-    void indexDropped(paths);
-  }, [indexDropped]);
+    // Internal drag from the tree, or external files from the OS file manager.
+    const internal = e.dataTransfer.getData('application/x-rdk-path');
+    const paths = internal
+      ? [internal]
+      : Array.from(e.dataTransfer.files).map(f => window.rdkNative.pathForFile(f)).filter(Boolean);
+    askIndex(paths);
+  }, [askIndex]);
 
   const onFileClick = (node: VaultNode) => {
     if (node.chunkIds && node.chunkIds.length > 0) {
@@ -100,7 +109,9 @@ export function VaultTree() {
           )}
         </div>
 
-        <div className={`dropzone${dragOver ? ' over' : ''}`}>drop files to index</div>
+        <div className={`dropzone${dragOver ? ' over' : ''}`}>
+          {dragOver ? 'drop to index (choose private/public)' : 'drag files here to index — or drop from your file manager'}
+        </div>
       </div>
 
       <div className="tree-counts">
@@ -118,6 +129,9 @@ export function VaultTree() {
           onSubmit={submitNewNote}
           onClose={() => setNaming(null)}
         />
+      )}
+      {indexing && (
+        <IndexChoice count={indexing.paths.length} onChoose={doIndex} onClose={() => setIndexing(null)} />
       )}
     </>
   );
@@ -154,11 +168,49 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
     <div
       className={`tree-row${selected ? ' selected' : ''}`}
       style={{ paddingLeft: 12 + depth * 12 + 10 }}
+      draggable
+      onDragStart={e => {
+        e.dataTransfer.setData('application/x-rdk-path', node.path);
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
+      title="Drag onto the drop zone below to index (private/public), or right-click for options"
       onClick={() => onFileClick(node)}
       onContextMenu={e => { e.preventDefault(); onContext(e.clientX, e.clientY, node); }}
     >
       <span className={`dot ${node.state}`} />
       <span className="name">{node.name}</span>
+    </div>
+  );
+}
+
+// Explicit LOCAL / PRIVATE / PUBLIC choice when indexing (files are the source of
+// truth; the three states are distinct — see the glossary).
+function IndexChoice({ count, onChoose, onClose }: {
+  count: number; onChoose: (v: VisibilityChoice) => void; onClose: () => void;
+}) {
+  return (
+    <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="index-choice">
+        <div className="ic-head">Index {count} item{count > 1 ? 's' : ''} to the network as…</div>
+        <button className="ic-opt" onClick={() => onChoose('private')}>
+          <span className="dot private" />
+          <span className="ic-text">
+            <b className="state-private">private</b>
+            <small>Encrypted and indexed on the network. Only you (and team members you share your vault key with) can read it.</small>
+          </span>
+        </button>
+        <button className="ic-opt" onClick={() => onChoose('public')}>
+          <span className="dot public" />
+          <span className="ic-text">
+            <b className="state-public">public</b>
+            <small>Plaintext on the network. Anyone can read it and it earns tips when retrieved. Immutable once published.</small>
+          </span>
+        </button>
+        <div className="ic-foot">
+          <span className="hint">Cancel keeps it <b className="state-local">local</b> — on your machine only, not indexed.</span>
+          <button className="ghost" onClick={onClose}>cancel</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -199,8 +251,8 @@ function ContextMenu({ x, y, node, onClose, app, newNote }: {
 
   return (
     <div className="ctx-menu" ref={ref} style={{ left: x, top: y }}>
-      <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'private'), 'Indexed privately')}>index privately</div>
-      <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'public'), 'Indexed publicly')}>publish publicly</div>
+      <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'private'), 'Indexed — private')}>index as <span className="state-private">private</span></div>
+      <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'public'), 'Indexed — public')}>index as <span className="state-public">public</span></div>
       {indexed && !isPublic && firstChunk && (
         <div className="ctx-item" onClick={() => run(() => window.rdk.publishChunk(firstChunk), 'Published')}>publish this chunk</div>
       )}

@@ -294,6 +294,21 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 .name-prompt .np-title { font-size: var(--fs-sm); color: var(--phosphor-dim); margin-bottom: 10px; letter-spacing: 0.04em; }
 .name-prompt input { width: 100%; }
 .name-prompt .np-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+/* ── Index visibility choice (local / private / public) ───────────────────── */
+.index-choice { width: 460px; max-width: 92vw; background: var(--bg-elev); border: 1px solid var(--border-bright); box-shadow: 0 10px 40px rgba(0,0,0,0.6); padding: 16px; }
+.index-choice .ic-head { font-size: var(--fs-sm); color: var(--text-bright); margin-bottom: 12px; letter-spacing: 0.02em; }
+.index-choice .ic-opt {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  padding: 12px; margin-bottom: 8px; background: var(--bg-deep); border: 1px solid var(--border-bright);
+}
+.index-choice .ic-opt:hover { border-color: var(--phosphor); background: rgba(57,255,106,0.05); }
+.index-choice .ic-opt .dot { margin-top: 4px; }
+.index-choice .ic-text { display: flex; flex-direction: column; gap: 3px; }
+.index-choice .ic-text b { font-size: var(--fs-md); text-transform: lowercase; letter-spacing: 0.04em; }
+.index-choice .ic-text small { font-size: var(--fs-xs); color: var(--phosphor-dim); line-height: 1.5; }
+.index-choice .ic-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.index-choice .ic-foot .hint { font-size: var(--fs-xs); }
 .modal { width: 720px; max-width: 94vw; max-height: 86vh; overflow-y: auto; background: var(--bg-panel); border: 1px solid var(--border-bright); }
 .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
 .modal-header .title { color: var(--text-bright); letter-spacing: 0.12em; text-transform: uppercase; font-size: var(--fs-sm); }

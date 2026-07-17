@@ -8,6 +8,8 @@ asar: true
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
   - "**/node_modules/onnxruntime-node/**"
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/**"
 
 files:
   - "out/**"
