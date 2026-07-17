@@ -2,8 +2,7 @@ appId: ai.retrodeck.rdk.desktop
 productName: RDK
 copyright: Copyright © RetroDeck
 
-# Native modules (better-sqlite3, onnxruntime) must live OUTSIDE the asar or their
-# .node/.dll files can't be dlopen'd. asarUnpack keeps them on the real filesystem.
+# Native modules must live OUTSIDE the asar or their .node/.so can't be dlopen'd.
 asar: true
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
@@ -14,8 +13,12 @@ asarUnpack:
 files:
   - "out/**"
   - "package.json"
-  # Trim junk that pnpm-deployed workspace deps carry along.
-  - "!**/node_modules/**/{.turbo,src,tsconfig*.json,*.map}"
+  # Trim TS sources from OUR OWN workspace packages only (they ship dist/).
+  # NEVER use a blanket `**/node_modules/**/src` exclusion: plenty of real
+  # packages ship their code in src/ — @xenova/transformers' entry point is
+  # literally ./src/transformers.js, and stripping it broke the embedding model
+  # with ERR_MODULE_NOT_FOUND.
+  - "!**/node_modules/@rdk/*/{src,.turbo,tsconfig*.json}"
 
 directories:
   buildResources: build
