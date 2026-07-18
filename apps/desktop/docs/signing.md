@@ -74,7 +74,7 @@ secret.** Add exactly these names — the workflow reads them by name:
 |---|---|
 | `CSC_LINK` | base64 of `DeveloperID.p12` (from step 1) |
 | `CSC_KEY_PASSWORD` | the `.p12` export password |
-| `APPLE_API_KEY_P8` | the **entire contents** of `AuthKey_XXXX.p8` (paste the whole file, `-----BEGIN…END-----`) |
+| `APPLE_API_KEY_P8` | the **entire contents** of `AuthKey_XXXX.p8` (paste the whole file, `-----BEGIN…END-----`). Base64-encoding it is also accepted — the workflow normalizes either form. Do **not** base64 it and then also wrap it in anything else. |
 | `APPLE_API_KEY_ID` | the Key ID |
 | `APPLE_API_ISSUER` | the Issuer UUID |
 

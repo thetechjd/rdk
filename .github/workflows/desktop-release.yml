@@ -63,7 +63,18 @@ jobs:
           if [ -n "$CSC_LINK" ] && [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ]; then
             echo "Signing credentials present → sign + notarize."
             KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-            printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+            # notarytool needs the raw PEM .p8. Accept the secret either as raw PEM
+            # text OR base64-encoded (a common mistake — people base64 it like the
+            # .p12) and normalize to real PEM here.
+            if printf '%s' "$APPLE_API_KEY_P8" | grep -q 'BEGIN PRIVATE KEY'; then
+              printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+            else
+              printf '%s' "$APPLE_API_KEY_P8" | openssl base64 -d -A > "$KEY_PATH"
+            fi
+            if ! grep -q 'BEGIN PRIVATE KEY' "$KEY_PATH"; then
+              echo "::error::APPLE_API_KEY_P8 is neither a valid .p8 PEM nor valid base64 of one (expected -----BEGIN PRIVATE KEY-----). Re-add the secret as the raw contents of AuthKey_XXXX.p8."
+              exit 1
+            fi
             echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
             echo "RDK_MAC_NOTARIZE=true"   >> "$GITHUB_ENV"
           else
