@@ -54,12 +54,22 @@ ER="$(node -e 'const p=require.resolve("@electron/rebuild/package.json");const d
 echo "→ rebuilding better-sqlite3 for Electron $ELECTRON_VER"
 node "$ER" --version "$ELECTRON_VER" --module-dir "$DEPLOY" --only better-sqlite3 --force
 
-echo "→ electron-builder ${TARGET:-(current OS)}"
+# Notarization stays OFF by default (electron-builder.yml has notarize:false) so
+# unsigned local/CI builds keep working with no Apple credentials. The mac-release
+# job sets RDK_MAC_NOTARIZE=true once signing+notary secrets are present, which
+# flips it on via a CLI override — no per-run edit of the yml required.
+NOTARIZE_ARG=""
+if [[ "${RDK_MAC_NOTARIZE:-}" == "true" ]]; then
+  NOTARIZE_ARG="-c.mac.notarize=true"
+fi
+
+echo "→ electron-builder ${TARGET:-(current OS)}${NOTARIZE_ARG:+ (notarize)}"
 CI=true node "$EB" $TARGET \
   --projectDir "$DEPLOY" \
   --config "$DEPLOY/electron-builder.yml" \
   -c.electronVersion="$ELECTRON_VER" \
-  -c.npmRebuild=false
+  -c.npmRebuild=false \
+  $NOTARIZE_ARG
 
 echo "→ installers in $DEPLOY/release:"
 ls -1 "$DEPLOY/release" | grep -E '\.(AppImage|deb|dmg|zip)$' || echo "  (none matched — check electron-builder output above)"

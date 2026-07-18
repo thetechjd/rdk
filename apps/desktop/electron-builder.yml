@@ -24,12 +24,15 @@ directories:
   buildResources: build
   output: release
 
-# ── macOS — SHIPS. Requires Developer ID cert + notarization for a downloadable app.
-#    Set CSC_LINK / CSC_KEY_PASSWORD and APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID
-#    in the release environment. Without these, Gatekeeper blocks the .app (see docs/feasibility-report.md §6).
+# ── macOS — SHIPS. Signing + notarization are wired in the Desktop Release workflow
+#    and turn on automatically when these repo secrets exist (see docs/signing.md):
+#      CSC_LINK, CSC_KEY_PASSWORD           → Developer ID Application cert (signing)
+#      APPLE_API_KEY_P8/_ID, APPLE_API_ISSUER → App Store Connect key (notarization)
+#    Team: B6B5DGK88V. Without the secrets the build is unsigned (Gatekeeper blocks it
+#    on other Macs) — see docs/feasibility-report.md §6.
 mac:
   category: public.app-category.productivity
-  icon: build/icon.png   # electron-builder generates a proper .icns from this on the mac runner
+  icon: build/icon.png
   target:
     - dmg
     - zip
@@ -37,11 +40,12 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # Notarization stays off until Apple credentials are present. When ready, set
-  # `notarize: true` here (under mac) and provide APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD
-  # / APPLE_TEAM_ID in the environment.
+  # Default OFF so unsigned builds need no Apple credentials. The workflow flips it on
+  # per-run (RDK_MAC_NOTARIZE=true → -c.mac.notarize=true) once the secrets are set;
+  # notarization then authenticates with the App Store Connect API key in
+  # APPLE_API_KEY / APPLE_API_KEY_ID / APPLE_API_ISSUER (the key's issuer identifies
+  # the team, so no teamId is needed for the API-key flow).
   notarize: false
-
 # ── Linux — SHIPS. No signing gate.
 linux:
   category: Utility

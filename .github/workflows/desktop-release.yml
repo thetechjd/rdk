@@ -13,9 +13,14 @@ name: Desktop Release
 # (macos-latest = arm64, ubuntu-latest = x64). Add matrix entries (macos-13 → x64,
 # ubuntu-24.04-arm → linux-arm64) when those targets are needed.
 #
-# macOS artifacts are UNSIGNED (CSC_IDENTITY_AUTO_DISCOVERY=false). A downloaded
-# unsigned .app hits Gatekeeper on other Macs — for real distribution add a
-# Developer ID cert + notarization (apps/desktop/docs/feasibility-report.md §6).
+# macOS signing + notarization are AUTOMATIC when these five repo secrets exist;
+# without them the mac build is UNSIGNED (and hits Gatekeeper on other Macs), exactly
+# as before. See apps/desktop/docs/signing.md for how to produce them.
+#   CSC_LINK            base64 of the Developer ID Application .p12   (signing)
+#   CSC_KEY_PASSWORD    that .p12's export password                  (signing)
+#   APPLE_API_KEY_P8    full text of the AuthKey_XXXX.p8             (notarization)
+#   APPLE_API_KEY_ID    the .p8 key id                               (notarization)
+#   APPLE_API_ISSUER    App Store Connect issuer UUID                (notarization)
 
 on:
   workflow_dispatch: {}
@@ -38,9 +43,33 @@ jobs:
             target: '--linux'
     runs-on: ${{ matrix.os }}
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'   # skip macOS signing until a cert is wired in
+      # Mapped from repo secrets. Harmless/ignored on the Linux runner; consumed by
+      # electron-builder on macOS. APPLE_API_KEY itself is NOT set here — it must be a
+      # FILE PATH, which the "Prepare macOS signing" step writes from APPLE_API_KEY_P8.
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
     steps:
       - uses: actions/checkout@v4
+
+      # Sign + notarize only when the secrets exist; otherwise build unsigned (the
+      # prior behaviour). No secret ever reaches the Linux runner's build.
+      - name: Prepare macOS signing & notarization
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -n "$CSC_LINK" ] && [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ]; then
+            echo "Signing credentials present → sign + notarize."
+            KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+            echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
+            echo "RDK_MAC_NOTARIZE=true"   >> "$GITHUB_ENV"
+          else
+            echo "No signing secrets → building UNSIGNED."
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          fi
 
       - uses: pnpm/action-setup@v4  # reads packageManager from package.json
 
