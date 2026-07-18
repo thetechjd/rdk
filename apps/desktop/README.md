@@ -12,6 +12,14 @@ because it's a Node runtime.
 > the prerequisite audit (core consumability, Windows W1/W2/W3, signing, CLI parity)
 > that gates this build, plus the `@rdk/node` extraction plan.
 
+## Getting started (for testers/users)
+
+Download-and-run guides, separate from the developer notes below:
+
+- **macOS** — [`docs/getting-started-mac.md`](docs/getting-started-mac.md)
+- **Linux** — [`docs/getting-started-linux.md`](docs/getting-started-linux.md)
+- **Signing/notarization (macOS distribution)** — [`docs/signing.md`](docs/signing.md)
+
 ## Architecture
 
 ```
