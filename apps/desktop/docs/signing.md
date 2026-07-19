@@ -1,11 +1,24 @@
+# Desktop code signing (macOS + Windows)
+
+How the RDK desktop app gets signed builds that open cleanly on other people's
+machines — no "damaged"/"unidentified developer" on macOS, no "Unknown Publisher" on
+Windows. **macOS is below; Windows (Azure Trusted Signing) is the [last section](#windows-azure-trusted-signing).**
+
+**None of this touches the production droplet or `central-api`.** All signing happens
+on the GitHub Actions runners, driven by repo **secrets**.
+
+> **Just need a testable build now?** You don't need any signing to test. Windows:
+> SmartScreen → *More info → Run anyway*. macOS: right-click → *Open → Open*. And for a
+> **fast signed (un-notarized) macOS build** to hand to testers without waiting on
+> Apple's notary queue, run the workflow via **Run workflow** and set **`mac_notarize`
+> = false**.
+
+---
+
 # macOS code signing & notarization
 
 How the RDK desktop app gets a signed, notarized macOS build that opens cleanly on
 other people's Macs (no "unidentified developer" / "damaged" Gatekeeper block).
-
-**None of this touches the production droplet or `central-api`.** Signing and
-notarization happen only on the `macos-latest` GitHub Actions runner, driven by repo
-**secrets**. Your DigitalOcean droplet needs no Apple credentials.
 
 ---
 
@@ -154,4 +167,87 @@ and that notarization actually succeeded in the log.
 **`.p8` expired?** It doesn't. Certificates expire (Developer ID: ~5 years); the App
 Store Connect API key does not. If you rotate the cert, re-export the `.p12` and update
 `CSC_LINK` / `CSC_KEY_PASSWORD`.
+
+---
+
+# Windows (Azure Trusted Signing)
+
+Eliminates the SmartScreen **"Unknown Publisher"** prompt. We use **Azure Trusted
+Signing** — Microsoft's managed service (~$10/mo). It's cheaper than an OV/EV cert and
+grants **immediate SmartScreen trust** (no reputation ramp-up). Since mid-2023 code
+keys must live on certified hardware, so there's no exportable `.pfx` — a cloud service
+like this is the CI-friendly path. electron-builder installs the `TrustedSigning`
+module itself; there's no dlib to manage.
+
+**Eligibility:** Trusted Signing needs a verifiable legal business identity (Microsoft
+vets it; orgs <3 years old face extra validation). Confirm you qualify before buying.
+
+## 1. Create the Azure resources (once)
+
+In the Azure Portal:
+
+1. **Create a Trusted Signing account** (search "Trusted Signing"). Pick a region —
+   note its endpoint, e.g. `https://eus.codesigning.azure.net/` (East US).
+2. Complete **identity validation** for your organization (this is the vetting step).
+3. Create a **Certificate Profile** (type: *Public Trust*). Note its **name**.
+4. Grant your identity the **Trusted Signing Certificate Profile Signer** role on the
+   account.
+
+## 2. Create a service principal for CI
+
+CI authenticates as an Entra **service principal** (not your login):
+
+```bash
+az ad sp create-for-rbac --name "rdk-desktop-signing"
+# → returns appId (client id), password (client secret), tenant
+```
+
+Then assign that SP the **Trusted Signing Certificate Profile Signer** role on the
+Trusted Signing account (Portal → the account → Access control (IAM) → Add role
+assignment).
+
+## 3. Add six repo secrets
+
+| Secret | Value |
+|---|---|
+| `AZURE_TENANT_ID` | the SP's tenant id |
+| `AZURE_CLIENT_ID` | the SP's appId |
+| `AZURE_CLIENT_SECRET` | the SP's password |
+| `AZURE_CODE_SIGNING_ENDPOINT` | region URI, e.g. `https://eus.codesigning.azure.net/` |
+| `AZURE_CODE_SIGNING_ACCOUNT` | Trusted Signing account name |
+| `AZURE_CERT_PROFILE` | certificate profile name |
+
+The first three authenticate; the last three tell electron-builder which cert to use.
+All six must be present or the Windows build stays **unsigned** (the "Prepare Windows
+signing" step prints which path it took).
+
+## 4. Build & verify
+
+Run the workflow (or push a `desktop-v*` tag). The **windows-latest** job signs the
+`.exe` via `Invoke-TrustedSigning`. On a Windows box, confirm:
+
+```powershell
+Get-AuthenticodeSignature 'RDK Setup 0.1.0.exe' | Format-List Status, SignerCertificate
+# Status → Valid ;  SignerCertificate subject → your org name
+```
+
+Download it and the SmartScreen prompt should now show **your publisher name** (and
+disappear entirely once Trusted Signing's reputation applies, which is immediate for
+Trusted Signing).
+
+## Troubleshooting (Windows)
+
+**Still "Unknown Publisher" / unsigned** → the "Prepare Windows signing" step logged
+`building UNSIGNED` because one of the six secrets is missing/misnamed. All six are
+required.
+
+**`Invoke-TrustedSigning` auth error** → the service principal lacks the **Certificate
+Profile Signer** role on the account, or `AZURE_CLIENT_SECRET` is stale (SP secrets
+expire — regenerate and update the secret).
+
+**`ERROR: Az.CodeSigning`/module install fails** → transient PSGallery/NuGet hiccup on
+the runner; the build's sign-retry (3×) usually clears it. Re-run if not.
+
+**Wrong endpoint region** → `AZURE_CODE_SIGNING_ENDPOINT` must match the region the
+account was created in, or signing 404s.
 </content>

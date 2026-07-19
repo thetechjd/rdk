@@ -27,8 +27,20 @@ name: Desktop Release
 #   APPLE_API_KEY_ID    the .p8 key id                               (notarization)
 #   APPLE_API_ISSUER    App Store Connect issuer UUID                (notarization)
 
+# Windows signing (Azure Trusted Signing) is AUTOMATIC when these repo secrets exist;
+# without them the .exe is UNSIGNED (installable, one SmartScreen prompt). See signing.md.
+#   AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET   Entra service principal (auth)
+#   AZURE_CODE_SIGNING_ENDPOINT   region URI e.g. https://eus.codesigning.azure.net/
+#   AZURE_CODE_SIGNING_ACCOUNT    Trusted Signing account name
+#   AZURE_CERT_PROFILE            certificate profile name
+
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mac_notarize:
+        description: 'Notarize the macOS build. Slow (Apple queue). Set false for a fast signed-only build to hand to testers.'
+        type: boolean
+        default: true
   push:
     tags:
       - 'desktop-v*.*.*'
@@ -57,6 +69,11 @@ jobs:
       CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
       APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
       APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      # Azure Trusted Signing auth (Entra service principal). electron-builder reads
+      # these directly during the Windows sign; ignored on mac/linux.
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
@@ -66,9 +83,11 @@ jobs:
         if: runner.os == 'macOS'
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          # Empty on tag pushes (→ notarize). The dispatch toggle can set it 'false'
+          # to get a fast signed-only build for testers (Apple's notary queue is slow).
+          MAC_NOTARIZE: ${{ github.event.inputs.mac_notarize }}
         run: |
           if [ -n "$CSC_LINK" ] && [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_API_KEY_ID" ]; then
-            echo "Signing credentials present → sign + notarize."
             KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
             # notarytool needs the raw PEM .p8. Accept the secret either as raw PEM
             # text OR base64-encoded (a common mistake — people base64 it like the
@@ -83,10 +102,38 @@ jobs:
               exit 1
             fi
             echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
-            echo "RDK_MAC_NOTARIZE=true"   >> "$GITHUB_ENV"
+            if [ "$MAC_NOTARIZE" = "false" ]; then
+              echo "Signing credentials present → sign only (notarization skipped by dispatch input). Testers open via right-click → Open."
+            else
+              echo "Signing credentials present → sign + notarize."
+              echo "RDK_MAC_NOTARIZE=true" >> "$GITHUB_ENV"
+            fi
           else
             echo "No signing secrets → building UNSIGNED."
             echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          fi
+
+      # Windows Azure Trusted Signing — sign only when the secrets exist; otherwise the
+      # .exe is unsigned (installable, one-time SmartScreen prompt). The endpoint/account/
+      # profile are non-secret config; the auth SP vars are set at job level above.
+      - name: Prepare Windows signing (Azure Trusted Signing)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          AZURE_CODE_SIGNING_ENDPOINT: ${{ secrets.AZURE_CODE_SIGNING_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+        run: |
+          if [ -n "$AZURE_CLIENT_SECRET" ] && [ -n "$AZURE_CODE_SIGNING_ENDPOINT" ] && [ -n "$AZURE_CODE_SIGNING_ACCOUNT" ] && [ -n "$AZURE_CERT_PROFILE" ]; then
+            echo "Azure Trusted Signing configured → signing Windows build."
+            {
+              echo "RDK_WIN_AZURE_SIGN=true"
+              echo "RDK_WIN_AZURE_ENDPOINT=$AZURE_CODE_SIGNING_ENDPOINT"
+              echo "RDK_WIN_AZURE_ACCOUNT=$AZURE_CODE_SIGNING_ACCOUNT"
+              echo "RDK_WIN_AZURE_PROFILE=$AZURE_CERT_PROFILE"
+            } >> "$GITHUB_ENV"
+          else
+            echo "No Azure signing secrets → building UNSIGNED Windows .exe (SmartScreen 'unknown publisher')."
           fi
 
       - uses: pnpm/action-setup@v4  # reads packageManager from package.json

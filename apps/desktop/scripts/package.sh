@@ -58,32 +58,46 @@ node "$ER" --version "$ELECTRON_VER" --module-dir "$DEPLOY" --only better-sqlite
 # unsigned local/CI builds keep working with no Apple credentials. The mac-release
 # job sets RDK_MAC_NOTARIZE=true once signing+notary secrets are present, which
 # flips it on via a CLI override — no per-run edit of the yml required.
-NOTARIZE_ARG=""
+# Signing/notarization overrides are appended per-platform only when the release job
+# has the credentials (electron-builder.yml ships neither, so unsigned builds need no
+# secrets). The mac job sets RDK_MAC_NOTARIZE; the win job sets RDK_WIN_AZURE_SIGN plus
+# the (non-secret) Trusted Signing endpoint/account/profile — auth is via the
+# AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET env that electron-builder reads.
+EB_EXTRA=()
+SIGNING=false
 if [[ "${RDK_MAC_NOTARIZE:-}" == "true" ]]; then
-  NOTARIZE_ARG="-c.mac.notarize=true"
+  EB_EXTRA+=( -c.mac.notarize=true )
+  SIGNING=true
+fi
+if [[ "${RDK_WIN_AZURE_SIGN:-}" == "true" ]]; then
+  EB_EXTRA+=( -c.win.azureSignOptions.endpoint="$RDK_WIN_AZURE_ENDPOINT" )
+  EB_EXTRA+=( -c.win.azureSignOptions.codeSigningAccountName="$RDK_WIN_AZURE_ACCOUNT" )
+  EB_EXTRA+=( -c.win.azureSignOptions.certificateProfileName="$RDK_WIN_AZURE_PROFILE" )
+  SIGNING=true
 fi
 
 run_electron_builder() {
+  # ${EB_EXTRA[@]+"…"} guards empty-array expansion under `set -u` on bash 3.2 (macOS).
   CI=true node "$EB" $TARGET \
     --projectDir "$DEPLOY" \
     --config "$DEPLOY/electron-builder.yml" \
     -c.electronVersion="$ELECTRON_VER" \
     -c.npmRebuild=false \
-    $NOTARIZE_ARG
+    ${EB_EXTRA[@]+"${EB_EXTRA[@]}"}
 }
 
-echo "→ electron-builder ${TARGET:-(current OS)}${NOTARIZE_ARG:+ (notarize)}"
-if [[ -n "$NOTARIZE_ARG" ]]; then
-  # Notarization polls Apple's servers, which intermittently drop the connection on
-  # hosted runners (NSURLErrorDomain -1009 "offline" / "No network route") — a network
-  # blip, not a credential problem. Retry a few times before failing the build.
+echo "→ electron-builder ${TARGET:-(current OS)}$([[ "$SIGNING" == true ]] && echo ' (signing)')"
+if [[ "$SIGNING" == true ]]; then
+  # Notarization (Apple) and Trusted Signing (Azure) both call remote services that
+  # intermittently drop the connection on hosted runners (e.g. NSURLErrorDomain -1009
+  # "No network route") — a network blip, not a credential problem. Retry a few times.
   ATTEMPT=1; MAX=3
   until run_electron_builder; do
     if [ "$ATTEMPT" -ge "$MAX" ]; then
       echo "✗ electron-builder failed after $MAX attempts (see error above)."
       exit 1
     fi
-    echo "→ notarize/build attempt $ATTEMPT failed (likely a transient Apple network error); retrying in 30s…"
+    echo "→ sign/build attempt $ATTEMPT failed (possibly a transient signing-service network error); retrying in 30s…"
     ATTEMPT=$((ATTEMPT + 1))
     sleep 30
   done
