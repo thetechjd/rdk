@@ -1,17 +1,22 @@
 name: Desktop Release
 
 # Builds the RDK desktop app (apps/desktop) into installable artifacts:
-#   - macOS  → .dmg + .zip     (arm64 on macos-latest)
-#   - Linux  → .AppImage + .deb (x64 on ubuntu-latest)
+#   - macOS   → .dmg + .zip     (arm64 on macos-latest)
+#   - Linux   → .AppImage + .deb (x64 on ubuntu-latest)
+#   - Windows → .exe (nsis)      (x64 on windows-latest)
+#
+# Native modules (better-sqlite3) can't be cross-compiled, so each installer is built
+# on its own OS runner. Windows-latest carries the MSVC toolchain that @electron/rebuild
+# needs. The Windows .exe is UNSIGNED — installable, but shows a one-time SmartScreen
+# "unknown publisher" prompt until an Authenticode cert is added (report §6, W-analog).
 #
 # All the tricky packaging logic (pnpm deploy → symlink-free app dir →
 # electron-rebuild → electron-builder, invoked via `node` not `pnpm exec` to avoid
-# a devDep-pruning deps-status check) lives in apps/desktop/scripts/package.sh,
-# which is validated locally. This workflow just installs and runs it.
+# a devDep-pruning deps-status check) lives in apps/desktop/scripts/package.sh.
 #
 # NOTE: cross-arch is not covered — each runner builds for its own CPU arch
-# (macos-latest = arm64, ubuntu-latest = x64). Add matrix entries (macos-13 → x64,
-# ubuntu-24.04-arm → linux-arm64) when those targets are needed.
+# (macos-latest = arm64, ubuntu-latest/windows-latest = x64). Add matrix entries
+# (macos-13 → x64, ubuntu-24.04-arm → linux-arm64) when those targets are needed.
 #
 # macOS signing + notarization are AUTOMATIC when these five repo secrets exist;
 # without them the mac build is UNSIGNED (and hits Gatekeeper on other Macs), exactly
@@ -41,6 +46,8 @@ jobs:
             target: '--mac'
           - os: ubuntu-latest
             target: '--linux'
+          - os: windows-latest
+            target: '--win'
     runs-on: ${{ matrix.os }}
     env:
       # Mapped from repo secrets. Harmless/ignored on the Linux runner; consumed by
@@ -92,18 +99,28 @@ jobs:
       - name: Install workspace (with devDeps — needed to build)
         run: pnpm install --frozen-lockfile
 
+      # RUNNER_TEMP is a backslash path on Windows (D:\a\_temp) that neither Git Bash
+      # nor Windows Node handle raw. cygpath -m yields the drive-letter/forward-slash
+      # form (D:/a/_temp) that BOTH accept; pin the deploy dir to it for every step.
+      - name: Compute deploy dir
+        shell: bash
+        run: |
+          if command -v cygpath >/dev/null 2>&1; then
+            echo "RDK_DEPLOY_DIR=$(cygpath -m "$RUNNER_TEMP")/rdk-desktop-deploy" >> "$GITHUB_ENV"
+          else
+            echo "RDK_DEPLOY_DIR=$RUNNER_TEMP/rdk-desktop-deploy" >> "$GITHUB_ENV"
+          fi
+
       - name: Build installers
         shell: bash
         run: bash apps/desktop/scripts/package.sh ${{ matrix.target }}
 
       - name: Collect artifacts
         shell: bash
-        # package.sh defaults its deploy dir to $RUNNER_TEMP/rdk-desktop-deploy
-        # (GitHub sets RUNNER_TEMP automatically).
         run: |
           mkdir -p dist-out
-          find "$RUNNER_TEMP/rdk-desktop-deploy/release" -maxdepth 1 \
-            \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' \) \
+          find "$RDK_DEPLOY_DIR/release" -maxdepth 1 \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.exe' \) \
             -exec cp {} dist-out/ \;
           ls -la dist-out
 
