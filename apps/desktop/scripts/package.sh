@@ -63,13 +63,33 @@ if [[ "${RDK_MAC_NOTARIZE:-}" == "true" ]]; then
   NOTARIZE_ARG="-c.mac.notarize=true"
 fi
 
+run_electron_builder() {
+  CI=true node "$EB" $TARGET \
+    --projectDir "$DEPLOY" \
+    --config "$DEPLOY/electron-builder.yml" \
+    -c.electronVersion="$ELECTRON_VER" \
+    -c.npmRebuild=false \
+    $NOTARIZE_ARG
+}
+
 echo "→ electron-builder ${TARGET:-(current OS)}${NOTARIZE_ARG:+ (notarize)}"
-CI=true node "$EB" $TARGET \
-  --projectDir "$DEPLOY" \
-  --config "$DEPLOY/electron-builder.yml" \
-  -c.electronVersion="$ELECTRON_VER" \
-  -c.npmRebuild=false \
-  $NOTARIZE_ARG
+if [[ -n "$NOTARIZE_ARG" ]]; then
+  # Notarization polls Apple's servers, which intermittently drop the connection on
+  # hosted runners (NSURLErrorDomain -1009 "offline" / "No network route") — a network
+  # blip, not a credential problem. Retry a few times before failing the build.
+  ATTEMPT=1; MAX=3
+  until run_electron_builder; do
+    if [ "$ATTEMPT" -ge "$MAX" ]; then
+      echo "✗ electron-builder failed after $MAX attempts (see error above)."
+      exit 1
+    fi
+    echo "→ notarize/build attempt $ATTEMPT failed (likely a transient Apple network error); retrying in 30s…"
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 30
+  done
+else
+  run_electron_builder
+fi
 
 echo "→ installers in $DEPLOY/release:"
 ls -1 "$DEPLOY/release" | grep -E '\.(AppImage|deb|dmg|zip)$' || echo "  (none matched — check electron-builder output above)"
