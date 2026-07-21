@@ -10,7 +10,7 @@
 //
 // The CryptoCadet CLI holds the wallet key; RDK never sees it. We only spawn the binary.
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,12 +43,54 @@ export type TopupOutcome =
 const CRYPTOCADET_HOME =
   process.env.CRYPTOCADET_HOME ?? path.join(os.homedir(), '.cryptocadet');
 
-/** Locate the CryptoCadet binary on PATH (ENOENT ⇒ not installed). Any exit code counts as
- *  "present" — the CLI exits non-zero on an unknown verb but the binary still ran. */
+/** First CryptoCadet CLI version with the `checkout` verb rdk pays quotes through.
+ *  An older global install (e.g. one the user set up earlier) lacks it — and rdk
+ *  auto-installs ONLY when nothing is found — so we gate on this explicitly. */
+const MIN_CRYPTOCADET = '0.1.4';
+
+/** Compare dotted numeric versions. <0 if a<b, 0 if equal, >0 if a>b. */
+function cmpVersion(a: string, b: string): number {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * spawnSync that actually resolves npm-global bins on Windows.
+ *
+ * npm installs global executables as `.cmd` shims (`cryptocadet.cmd`, `npm.cmd`).
+ * Node's spawn WITHOUT a shell ignores PATHEXT, so `spawnSync('cryptocadet', …)`
+ * ENOENTs even though the shim is on PATH — exactly why PowerShell finds
+ * `cryptocadet` but rdk reported it "not installed", and why the `npm install`
+ * attempt "failed" without npm ever running. Newer Node also refuses to launch a
+ * `.cmd` without a shell (CVE-2024-27980), so `shell: true` is the correct fix.
+ * Under a shell args are NOT auto-quoted, so quote them to keep paths with spaces
+ * (e.g. C:\Users\First Last\…) intact. POSIX behaviour is unchanged.
+ */
+function runSync(cmd: string, args: string[], opts: SpawnSyncOptions = {}) {
+  if (process.platform === 'win32') {
+    const quoted = args.map((a) => `"${String(a).replace(/"/g, '""')}"`);
+    return spawnSync(cmd, quoted, { ...opts, shell: true });
+  }
+  return spawnSync(cmd, args, opts);
+}
+
+/** Locate the CryptoCadet binary on PATH (⇒ null if not installed). */
 function findBin(): string | null {
   for (const bin of ['cryptocadet', 'ccx']) {
-    const r = spawnSync(bin, ['policy:show'], { stdio: 'ignore' });
-    if (!r.error) return bin;
+    // Windows: `where` applies PATHEXT (.cmd/.exe) like the shell does, so it sees
+    // the npm shim; exit 0 ⇒ found. (A plain shell run can't tell "missing" from
+    // "ran and exited non-zero" — a missing command yields status≠0 with no error.)
+    // POSIX: spawn resolves via PATH and ENOENT (r.error) ⇒ absent; any exit code
+    // counts as present — the CLI exits non-zero on an unknown verb but still ran.
+    const found = process.platform === 'win32'
+      ? spawnSync('where', [bin], { stdio: 'ignore', shell: true }).status === 0
+      : !spawnSync(bin, ['policy:show'], { stdio: 'ignore' }).error;
+    if (found) return bin;
   }
   return null;
 }
@@ -56,14 +98,15 @@ function findBin(): string | null {
 /** Run the CLI capturing stdout as JSON; stdin/stderr are inherited so keychain prompts and
  *  errors reach the user. Returns the parsed object, or null on non-zero exit / bad JSON. */
 function runJson<T>(bin: string, args: string[]): T | null {
-  const r = spawnSync(bin, args, {
+  const r = runSync(bin, args, {
     encoding: 'utf8',
     stdio: ['inherit', 'pipe', 'inherit'],
     timeout: 10 * 60 * 1000,
   });
-  if (r.status !== 0 || !r.stdout) return null;
+  const out = r.stdout == null ? '' : r.stdout.toString();
+  if (r.status !== 0 || !out) return null;
   try {
-    return JSON.parse(r.stdout) as T;
+    return JSON.parse(out) as T;
   } catch {
     return null;
   }
@@ -73,33 +116,71 @@ function isInitialized(): boolean {
   return fs.existsSync(path.join(CRYPTOCADET_HOME, 'config.json'));
 }
 
-/** Ensure `cryptocadet` is installed; offer a global npm install if it's missing. */
+/** The installed CLI's version, or null if it's too old to report one (pre-`version` verb). */
+function cadetVersion(bin: string): string | null {
+  return runJson<{ version?: string }>(bin, ['--version'])?.version ?? null;
+}
+
+/** `npm i -g @cryptocadet/cli[@spec]`. Returns true on a clean exit. */
+function npmInstallCadet(spec: string): boolean {
+  const r = runSync('npm', ['install', '-g', spec], { stdio: 'inherit', timeout: 5 * 60 * 1000 });
+  if (r.status !== 0) {
+    // r.error is set when npm itself couldn't be launched (vs. ran and failed) —
+    // surface it so the message isn't misleading about what actually went wrong.
+    if (r.error) note(`  (could not launch npm: ${r.error.message})`);
+    return false;
+  }
+  return true;
+}
+
+/** Ensure `cryptocadet` is installed AND new enough to pay quotes; offer install/update. */
 async function ensureInstalled(): Promise<string | null> {
   let bin = findBin();
-  if (bin) return bin;
 
-  note('CryptoCadet CLI is not installed — it holds your agent wallet and signs payments.');
-  const ok = await confirm({ message: 'Install @cryptocadet/cli now (npm i -g)?', default: true });
-  if (!ok) {
-    note('Skipped. Install it with: npm i -g @cryptocadet/cli   (or https://cryptocadet.app/install.sh)');
-    return null;
-  }
-
-  const r = spawnSync('npm', ['install', '-g', '@cryptocadet/cli'], {
-    stdio: 'inherit',
-    timeout: 5 * 60 * 1000,
-  });
-  if (r.status !== 0) {
-    warning('npm install failed. On a locked-down machine try the standalone installer:');
-    note('  curl -fsSL https://cryptocadet.app/install.sh | sh');
-    return null;
-  }
-  bin = findBin();
+  // Not installed → offer a global install (fresh install pulls a current version).
   if (!bin) {
-    warning('CryptoCadet installed but not on PATH — open a new terminal and re-run rdk init.');
-    return null;
+    note('CryptoCadet CLI is not installed — it holds your agent wallet and signs payments.');
+    const ok = await confirm({ message: 'Install @cryptocadet/cli now (npm i -g)?', default: true });
+    if (!ok) {
+      note('Skipped. Install it with: npm i -g @cryptocadet/cli   (or https://cryptocadet.app/install.sh)');
+      return null;
+    }
+    if (!npmInstallCadet('@cryptocadet/cli')) {
+      warning('npm install failed. On a locked-down machine try the standalone installer:');
+      note('  curl -fsSL https://cryptocadet.app/install.sh | sh');
+      return null;
+    }
+    bin = findBin();
+    if (!bin) {
+      warning('CryptoCadet installed but not on PATH — open a new terminal and re-run rdk init.');
+      return null;
+    }
+    success('CryptoCadet CLI installed');
   }
-  success('CryptoCadet CLI installed');
+
+  // Capability gate: rdk pays via `cryptocadet checkout` (added in 0.1.4). A stale
+  // pre-existing install lacks it and would fail cryptically at payment time, so
+  // detect the version and offer to update rather than press on into a broken checkout.
+  const ver = cadetVersion(bin);
+  if (ver === null || cmpVersion(ver, MIN_CRYPTOCADET) < 0) {
+    note(`Your CryptoCadet CLI (${ver ?? 'older than ' + MIN_CRYPTOCADET}) is too old to pay quotes — rdk needs ≥ ${MIN_CRYPTOCADET}.`);
+    const ok = await confirm({ message: 'Update @cryptocadet/cli now (npm i -g @latest)?', default: true });
+    if (!ok) {
+      note('Update it with: npm i -g @cryptocadet/cli@latest');
+      return null;
+    }
+    if (!npmInstallCadet('@cryptocadet/cli@latest')) {
+      warning('npm update failed. Update manually: npm i -g @cryptocadet/cli@latest');
+      return null;
+    }
+    const after = cadetVersion(bin);
+    if (after === null || cmpVersion(after, MIN_CRYPTOCADET) < 0) {
+      warning('CryptoCadet still reports an old version after updating — open a new terminal and re-run.');
+      return null;
+    }
+    success(`CryptoCadet CLI updated (${after})`);
+  }
+
   return bin;
 }
 
@@ -110,7 +191,7 @@ async function ensureInitialized(bin: string): Promise<boolean> {
   console.log('');
   // Interactive: the user chooses network/role and sees their new wallet address. Its own
   // banner + prompts run on the inherited terminal.
-  const r = spawnSync(bin, ['init'], { stdio: 'inherit' });
+  const r = runSync(bin, ['init'], { stdio: 'inherit' });
   if (r.status !== 0 || !isInitialized()) {
     warning('CryptoCadet setup did not complete. Run `cryptocadet init` then retry.');
     return false;
@@ -155,7 +236,7 @@ async function ensureFunded(
     note('Send USDC from your main wallet to your agent address:');
     console.log(`  ${t.body(w.agentAddress)}`);
     // topup:request prints the exact per-token shortfall + agent address (no auto-drain).
-    spawnSync(bin, ['topup:request', `${(usdc?.token ?? '').toLowerCase()}=${amountBaseUnits}`], { stdio: 'inherit' });
+    runSync(bin, ['topup:request', `${(usdc?.token ?? '').toLowerCase()}=${amountBaseUnits}`], { stdio: 'inherit' });
     console.log('');
     const again = await confirm({ message: 'Sent it? Check the balance again', default: true });
     if (!again) {
