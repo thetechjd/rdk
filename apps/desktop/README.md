@@ -18,7 +18,8 @@ Download-and-run guides, separate from the developer notes below:
 
 - **macOS** — [`docs/getting-started-mac.md`](docs/getting-started-mac.md)
 - **Linux** — [`docs/getting-started-linux.md`](docs/getting-started-linux.md)
-- **Signing/notarization (macOS distribution)** — [`docs/signing.md`](docs/signing.md)
+- **Windows** — [`docs/getting-started-windows.md`](docs/getting-started-windows.md)
+- **Signing/notarization (macOS + Windows distribution)** — [`docs/signing.md`](docs/signing.md)
 
 ## Architecture
 
