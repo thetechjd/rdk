@@ -1,35 +1,28 @@
+# Homebrew formula for the RDK CLI — NODE-ENVIRONMENT build (no compiled binary).
+#
+# rdk is JavaScript, published to npm as @retrodeck/rdk. This formula depends on Node and
+# installs the published npm package (+ production deps, incl. the prebuilt better-sqlite3)
+# into libexec, then symlinks the `rdk` launcher — the SAME artifact `npm i -g @retrodeck/rdk`
+# uses, so behavior is identical across macOS and Linux. This replaces the old per-arch
+# pkg-compiled binary approach (GitHub-release tarballs, V8-bytecode-fragile).
+#
+# On each release bump the url's version segment and `sha256` — the SHA-256 of the tarball
+# (NOT npm's `dist.shasum`, which is SHA-1):
+#   curl -fsSL https://registry.npmjs.org/@retrodeck/rdk/-/rdk-<version>.tgz | shasum -a 256
 class Rdk < Formula
   desc "Retrieval Development Kit — distributed knowledge infrastructure"
   homepage "https://rdk.network"
-  version "1.0.0"
+  url "https://registry.npmjs.org/@retrodeck/rdk/-/rdk-1.2.5.tgz"
+  sha256 "cb30f369d3a640e94c80937c586903b206b0a890183a3a550fa8286f8a124e34"
   license "MIT"
 
-  on_macos do
-    on_arm do
-      url "https://github.com/thetechjd/rdk/releases/download/v1.0.0/rdk-macos-arm64.tar.gz"
-      sha256 "PLACEHOLDER_MAC_ARM64_SHA256"
-    end
-    on_intel do
-      url "https://github.com/thetechjd/rdk/releases/download/v1.0.0/rdk-macos-x64.tar.gz"
-      sha256 "PLACEHOLDER_MAC_X64_SHA256"
-    end
-  end
-
-  on_linux do
-    on_arm do
-      url "https://github.com/thetechjd/rdk/releases/download/v1.0.0/rdk-linux-arm64.tar.gz"
-      sha256 "PLACEHOLDER_LINUX_ARM64_SHA256"
-    end
-    on_intel do
-      url "https://github.com/thetechjd/rdk/releases/download/v1.0.0/rdk-linux-x64.tar.gz"
-      sha256 "PLACEHOLDER_LINUX_X64_SHA256"
-    end
-  end
+  depends_on "node"
 
   def install
-    binary = "rdk-#{OS.mac? ? 'macos' : 'linux'}-#{Hardware::CPU.arm? ? 'arm64' : 'x64'}"
-    bin.install binary => "rdk"
-    bin.install "better_sqlite3.node"
+    # Installs the package + production deps (including the prebuilt native better-sqlite3)
+    # into libexec, then links the bin. No build step — the published tarball ships dist/.
+    system "npm", "install", *std_npm_args
+    bin.install_symlink Dir["#{libexec}/bin/*"]
   end
 
   test do
