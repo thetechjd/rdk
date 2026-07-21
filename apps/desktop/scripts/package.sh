@@ -28,6 +28,12 @@ DEPLOY="${RDK_DEPLOY_DIR:-${RUNNER_TEMP:-/tmp}/rdk-desktop-deploy}"
 
 cd "$REPO_ROOT"
 
+# Bundle the embedding model into build/models BEFORE the deploy copies the app dir,
+# so the packaged app ships it and embeds offline on first use (no HuggingFace fetch
+# on the user's machine — the #1 "works on mine, not theirs" failure). Idempotent.
+echo "→ bundling embedding model (build/models)"
+bash "$APP_DIR/scripts/bundle-model.sh"
+
 # Build with in-directory `npm run` rather than `pnpm --filter … build`: the latter
 # runs pnpm's deps-status check which, in some environments, fires a production
 # `pnpm install` that prunes devDependencies mid-build. In-dir npm run just executes
@@ -45,6 +51,14 @@ rm -rf "$DEPLOY"
 # writes to <deploy>/release; a stale apps/desktop/release would recurse into it).
 rm -rf "$APP_DIR/release"
 CI=true pnpm --filter rdk-desktop deploy --prod --legacy "$DEPLOY"
+
+# pnpm deploy honors .gitignore, and build/models is gitignored (kept out of git,
+# fetched at build time above). Copy it into the staged dir explicitly so
+# electron-builder's `extraResources: from build/models` finds it. Without this the
+# model is silently dropped and the packaged app falls back to a network download —
+# the exact failure this bundling fixes.
+mkdir -p "$DEPLOY/build"
+cp -r "$APP_DIR/build/models" "$DEPLOY/build/"
 
 cd "$APP_DIR"
 ELECTRON_VER="$(node -p "require('electron/package.json').version")"

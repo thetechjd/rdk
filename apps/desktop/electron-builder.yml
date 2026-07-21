@@ -24,6 +24,14 @@ directories:
   buildResources: build
   output: release
 
+# Ship the embedding model INSIDE the app so a freshly-downloaded build embeds
+# offline on first use — no ~23MB HuggingFace fetch on the user's machine. Populated
+# at package time by scripts/bundle-model.sh; lands in <app>/resources/models. The
+# main process points RDK_MODELS_DIR here and @rdk/core loads it with remote disabled.
+extraResources:
+  - from: build/models
+    to: models
+
 # ── macOS — SHIPS. Signing + notarization are wired in the Desktop Release workflow
 #    and turn on automatically when these repo secrets exist (see docs/signing.md):
 #      CSC_LINK, CSC_KEY_PASSWORD           → Developer ID Application cert (signing)

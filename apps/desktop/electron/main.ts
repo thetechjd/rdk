@@ -25,6 +25,18 @@ const ICON_CANDIDATE = app.isPackaged
   : path.join(__dirname, '../../build/icon.png'); // dev
 const APP_ICON = fs.existsSync(ICON_CANDIDATE) ? ICON_CANDIDATE : undefined;
 
+// Bundled embedding model (Xenova/all-MiniLM-L6-v2, ~23MB). Shipped in the build via
+// electron-builder `extraResources` so a fresh download embeds offline on first use —
+// no HuggingFace fetch. Packaged: <app>/resources/models. Dev: apps/desktop/build/models
+// (populate with scripts/bundle-model.sh). When present, @rdk/core loads it locally and
+// never hits the network; when absent (e.g. the plain CLI), it falls back to downloading.
+const MODELS_DIR = app.isPackaged
+  ? path.join(process.resourcesPath, 'models')   // resources/models (outside asar)
+  : path.join(__dirname, '../../build/models');  // dev
+if (fs.existsSync(path.join(MODELS_DIR, 'Xenova'))) {
+  process.env.RDK_MODELS_DIR = MODELS_DIR;
+}
+
 const service = new NodeService();
 let mainWindow: BrowserWindow | null = null;
 let vaultWatcher: fs.FSWatcher | null = null;

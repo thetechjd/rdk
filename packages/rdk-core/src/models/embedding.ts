@@ -22,20 +22,36 @@ async function getPipeline() {
   let transformers: typeof import('@xenova/transformers');
   try {
     transformers = await import('@xenova/transformers');
-  } catch {
+  } catch (err) {
+    // Surface the REAL cause. This catch fires on a native/module load failure
+    // (e.g. onnxruntime-node binary, ABI, a not-yet-resolved dev module graph),
+    // which is usually NOT "not installed". Log the full error; keep the install
+    // hint for the genuinely-missing case.
+    console.error('[rdk] embedding runtime failed to load (@xenova/transformers):', err);
     throw new Error(
-      '\n  Embedding model not installed.\n' +
-      '  Run: npm install -g @xenova/transformers\n' +
-      '  Or:  rdk install:model\n'
+      '\n  Embedding model runtime failed to load.\n' +
+      `  Underlying error: ${(err as Error)?.message ?? String(err)}\n` +
+      '  If it is not installed:  rdk install:model  (or: npm install -g @xenova/transformers)\n'
     );
   }
 
   const { pipeline, env } = transformers;
-  env.cacheDir = path.join(os.homedir(), '.rdk', 'models'); // shared across instances — models are 23MB, no reason to duplicate
-  // Disable the remote model check for faster cold start after first download
   env.allowLocalModels = true;
   // Suppress download progress output — MCP protocol requires clean stdout
   process.env.TRANSFORMERS_VERBOSITY = 'error';
+
+  const bundled = process.env.RDK_MODELS_DIR;
+  if (bundled) {
+    // A build shipped the model on disk (the desktop app sets RDK_MODELS_DIR to its
+    // bundled resources/models). Load it locally and NEVER reach for HuggingFace, so
+    // a fresh install embeds offline with no ~23MB download. transformers resolves
+    // `${localModelPath}/Xenova/all-MiniLM-L6-v2`.
+    env.localModelPath = bundled;
+    env.allowRemoteModels = false;
+  } else {
+    // No bundled model (e.g. the plain CLI): download once to the shared cache.
+    env.cacheDir = path.join(os.homedir(), '.rdk', 'models'); // shared across instances — models are 23MB, no reason to duplicate
+  }
 
   _pipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
     quantized: true,
@@ -69,12 +85,16 @@ export class LocalEmbeddingModel implements EmbeddingModel {
     return results;
   }
 
-  /** Check if transformers is installed without throwing */
+  /** Check if the embedding runtime can be loaded, without throwing. */
   static async isAvailable(): Promise<boolean> {
     try {
       await import('@xenova/transformers');
       return true;
-    } catch {
+    } catch (err) {
+      // Never swallow this silently: it's the sole signal behind the app's
+      // "Embedding model unavailable" gate. Without the log, the true cause
+      // (native binary / ABI / a cold dev module graph) is invisible.
+      console.error('[rdk] isAvailable(): embedding runtime failed to load:', err);
       return false;
     }
   }

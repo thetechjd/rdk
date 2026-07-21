@@ -78,8 +78,13 @@ export class NodeService {
   }
 
   private async embedderAvailable(): Promise<boolean> {
-    if (this.embedderReady === null) this.embedderReady = await LocalEmbeddingModel.isAvailable();
-    return this.embedderReady ?? false;
+    // Only ever CACHE a positive result. A transient false — e.g. the graph view
+    // probes this on a cold `pnpm dev` start before the @xenova module graph is
+    // resolved — must not stick for the whole process lifetime, or indexing stays
+    // dead-gated until a manual restart. Re-check on every miss instead.
+    if (this.embedderReady === true) return true;
+    this.embedderReady = await LocalEmbeddingModel.isAvailable();
+    return this.embedderReady;
   }
 
   private getRouter(): RDKRouter {
@@ -207,7 +212,7 @@ export class NodeService {
 
   async indexPaths(paths: string[], visibility: VisibilityChoice): Promise<{ indexed: number; error?: string }> {
     if (!(await this.embedderAvailable())) {
-      return { indexed: 0, error: 'Embedding model unavailable. It downloads (~23MB) on first use — check your network connection and try again.' };
+      return { indexed: 0, error: 'Embedding model unavailable — the embedding runtime failed to load. This is usually a module/native-load error, not a network problem; check the terminal running the app for the underlying cause, then try again.' };
     }
     const indexer = this.getIndexer(visibility);
     const files = this.expandToFiles(paths);
