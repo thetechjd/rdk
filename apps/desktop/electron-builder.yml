@@ -25,9 +25,9 @@ directories:
   output: release
 
 # Ship the embedding model INSIDE the app so a freshly-downloaded build embeds
-# offline on first use — no ~23MB HuggingFace fetch on the user's machine. Populated
-# at package time by scripts/bundle-model.sh; lands in <app>/resources/models. The
-# main process points RDK_MODELS_DIR here and @rdk/core loads it with remote disabled.
+# offline on first use — no HuggingFace fetch on the user's machine, ever. The model is
+# a vendored repo asset (apps/desktop/build/models); this lands it at <app>/resources/models.
+# The main process points RDK_MODELS_DIR here and @rdk/core loads it with remote disabled.
 extraResources:
   - from: build/models
     to: models

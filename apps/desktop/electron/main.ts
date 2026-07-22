@@ -25,11 +25,11 @@ const ICON_CANDIDATE = app.isPackaged
   : path.join(__dirname, '../../build/icon.png'); // dev
 const APP_ICON = fs.existsSync(ICON_CANDIDATE) ? ICON_CANDIDATE : undefined;
 
-// Bundled embedding model (Xenova/all-MiniLM-L6-v2, ~23MB). Shipped in the build via
-// electron-builder `extraResources` so a fresh download embeds offline on first use —
-// no HuggingFace fetch. Packaged: <app>/resources/models. Dev: apps/desktop/build/models
-// (populate with scripts/bundle-model.sh). When present, @rdk/core loads it locally and
-// never hits the network; when absent (e.g. the plain CLI), it falls back to downloading.
+// Bundled embedding model (Xenova/all-MiniLM-L6-v2, ~23MB). A VENDORED repo asset at
+// apps/desktop/build/models — no build-time or runtime fetch. Packaged builds ship it via
+// electron-builder `extraResources` (<app>/resources/models); dev loads it straight from
+// the source tree. When present, @rdk/core loads it locally and never hits the network;
+// when absent (e.g. the plain CLI), it falls back to downloading.
 const MODELS_DIR = app.isPackaged
   ? path.join(process.resourcesPath, 'models')   // resources/models (outside asar)
   : path.join(__dirname, '../../build/models');  // dev
