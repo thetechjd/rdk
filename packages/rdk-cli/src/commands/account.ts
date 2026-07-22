@@ -3,6 +3,7 @@ import { loadConfig, updateConfig } from '../config.js';
 import { retrodeckFetch, RetrodeckAuthError } from '../retrodeck-api.js';
 import { LocalStore } from '@rdk/core';
 import { t, mark, divider } from '../theme.js';
+import { grantCryptocadetSubscription, type CryptoCadetPlanOffer } from './cryptocadet.js';
 
 export async function showAccount(): Promise<void> {
   const config = loadConfig();
@@ -243,8 +244,7 @@ export async function upgradeAccount(): Promise<void> {
     return;
   }
 
-  // Paid — hand off to a browser checkout (card or crypto); never collect
-  // payment credentials in the CLI.
+  // Paid — choose billing interval, then a payment method.
   const interval = await select<'monthly' | 'yearly'>({
     message: 'Billing interval:',
     choices: [
@@ -253,6 +253,23 @@ export async function upgradeAccount(): Promise<void> {
     ],
     default: 'monthly',
   });
+
+  // Payment method. This mirrors the onboarding flow (init.ts) — crypto was missing here,
+  // so upgrades silently defaulted to Stripe. Card hands off to a browser checkout; crypto
+  // sets up a recurring USDC pull via CryptoCadet, entirely in the CLI.
+  const method = await select<'stripe' | 'cryptocadet'>({
+    message: `Pay for ${selected.name} (${interval}) via:`,
+    choices: [
+      { name: 'Credit card', value: 'stripe',      hint: 'Stripe' },
+      { name: 'Crypto',      value: 'cryptocadet', hint: 'CryptoCadet — recurring USDC on Base' },
+    ],
+    default: 'stripe',
+  });
+
+  if (method === 'cryptocadet') {
+    await upgradeWithCrypto(planId, interval, selected.name);
+    return;
+  }
 
   const s = ora('Creating checkout...').start();
   try {
@@ -268,7 +285,7 @@ export async function upgradeAccount(): Promise<void> {
 
     const { openUrl } = await import('../open-url.js');
     console.log('');
-    console.log(`  Complete your ${selected.name} subscription (card or crypto):`);
+    console.log(`  Complete your ${selected.name} subscription (card):`);
     console.log(`  ${t.body(checkoutUrl)}`);
     openUrl(checkoutUrl);
     console.log('');
@@ -298,6 +315,71 @@ export async function upgradeAccount(): Promise<void> {
     }
   } catch (e) {
     s.fail((e as Error).message);
+  }
+}
+
+// Crypto upgrade path — the recurring-USDC counterpart to the Stripe browser checkout.
+// Mirrors the onboarding flow in init.ts: POST plans/select with method 'cryptocadet' to get
+// the on-chain offer, grant the capped pull approval via the CryptoCadet CLI, register it with
+// POST plans/activate-crypto, then poll until the first charge settles.
+async function upgradeWithCrypto(planId: string, interval: 'monthly' | 'yearly', planName: string): Promise<void> {
+  const ora = (await import('ora')).default;
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+  const s = ora('Preparing crypto subscription...').start();
+  try {
+    const selRes = await retrodeckFetch('/api/v1/plans/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planId, interval, method: 'cryptocadet', source: 'cli' }),
+    });
+    if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
+    const selData = await selRes.json() as { cryptocadet?: CryptoCadetPlanOffer };
+    s.stop();
+    if (!selData.cryptocadet) {
+      console.log(t.warn('  Server did not return a crypto offer — no change to your plan.'));
+      return;
+    }
+
+    // Fund + grant the on-chain approval via the CryptoCadet CLI.
+    const outcome = await grantCryptocadetSubscription(selData.cryptocadet);
+    if (outcome.status !== 'granted') {
+      console.log(t.warn(`  Crypto subscription ${outcome.status}: ${outcome.detail}.`));
+      console.log(t.dim('  No change to your plan.'));
+      return;
+    }
+
+    const actRes = await retrodeckFetch('/api/v1/plans/activate-crypto', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ planId, buyerWallet: outcome.buyerWallet }),
+    });
+    if (!actRes.ok) throw new Error(`activate HTTP ${actRes.status}`);
+
+    const verify = ora('Waiting for the first charge to settle...').start();
+    let activated = false;
+    for (let i = 0; i < 30 && !activated; i++) {
+      try {
+        const vr = await retrodeckFetch('/api/v1/plans/verify-payment');
+        if (vr.ok) {
+          const v = await vr.json() as { paid?: boolean; plan?: { id?: string; name?: string } };
+          if (v.paid) {
+            activated = true;
+            updateConfig({ plan: v.plan?.id ?? planId });
+            verify.succeed(`${v.plan?.name ?? planName} plan activated`);
+            break;
+          }
+        }
+      } catch { /* keep polling */ }
+      await sleep(3000);
+    }
+    if (!activated) {
+      verify.stop();
+      console.log(t.dim('  Subscription registered — the first charge is settling on-chain.'));
+      console.log(t.dim('  Your plan activates once it confirms. Run `rdk account` later to check.'));
+    }
+  } catch (e) {
+    s.fail(`Crypto subscription failed: ${(e as Error).message}`);
   }
 }
 
