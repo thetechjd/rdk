@@ -162,6 +162,7 @@ export class NodeService {
     const cfg = this.getConfig();
     const root = cfg?.vaultPath ?? '';
     const chunksByPath = this.chunksBySourcePath();
+    const orphansByName = this.orphanChunksByDocName();
     const publicFolders = cfg?.publicFolders ?? [];
     const counts = { local: 0, private: 0, public: 0 };
 
@@ -181,7 +182,12 @@ export class NodeService {
           const children = walk(abs);
           if (children.length > 0) out.push({ name: e.name, path: abs, relPath, type: 'folder', children });
         } else if (TEXT_EXTS.has(path.extname(e.name).toLowerCase())) {
-          const chunks = chunksByPath.get(abs) ?? chunksByPath.get(relPath) ?? [];
+          // Prefer a sourcePath match; fall back to a name match for chunks indexed
+          // WITHOUT a sourcePath (older adapters dropped it), so their private content
+          // still links to the file and opens decrypted instead of showing as "local".
+          const baseName = path.basename(e.name, path.extname(e.name)).toLowerCase();
+          const chunks =
+            chunksByPath.get(abs) ?? chunksByPath.get(relPath) ?? orphansByName.get(baseName) ?? [];
           const state = fileState(chunks, relPath, publicFolders);
           counts[state]++;
           out.push({
@@ -206,6 +212,26 @@ export class NodeService {
       const arr = map.get(c.sourcePath) ?? [];
       arr.push(c);
       map.set(c.sourcePath, arr);
+    }
+    return map;
+  }
+
+  /**
+   * Fallback index for chunks stored WITHOUT a sourcePath (an older adapter bug orphaned
+   * them from their files). Keyed by the document name — the chunk title up to the first
+   * " — " section separator, lowercased — which equals the source note's base file name.
+   * Lets getVaultTree still link these to their on-disk file so private content displays
+   * decrypted instead of the file falling back to a raw, "local" read.
+   */
+  private orphanChunksByDocName(): Map<string, StoredChunk[]> {
+    const map = new Map<string, StoredChunk[]>();
+    for (const c of this.getStore().getAllChunks()) {
+      if (c.sourcePath) continue;
+      const docName = c.title.split(' — ')[0].trim().toLowerCase();
+      if (!docName) continue;
+      const arr = map.get(docName) ?? [];
+      arr.push(c);
+      map.set(docName, arr);
     }
     return map;
   }
