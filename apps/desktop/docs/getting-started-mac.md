@@ -112,10 +112,14 @@ whole UI is built around the distinction:
 |---|---|---|
 | ◯ grey | **local** | A file on your machine. Not indexed, not on the network. |
 | ● dim | **private** | Indexed and **encrypted** (AES-256-GCM) on the network. Only you and team members holding your vault key can read it. RetroDeck can't. |
-| ● bright | **public** | Indexed as **plaintext** on the network. Anyone can read it; earns USDC tips when retrieved. **Immutable.** |
+| ● bright | **public** | Indexed as **plaintext** on the network. Anyone can read it; earns USDC tips when retrieved by **others** (never by you — your own content is always free to you). **Versioned:** editing publishes a new version; old versions freeze with their earnings history intact. |
 
-Indexing always asks which you want, and **cancel keeps it local**. Public is one-way:
-no unpublish, no public → private. That's by design, not a missing feature.
+A file whose chunks span states shows a half-and-half **mixed** dot.
+
+Indexing always asks which you want, and **cancel keeps it local**. Publishing is
+versioned, not permanent: **unpublish retires** a chunk — it stops being served and
+stops earning, with its history preserved. But copies other nodes already saved can't
+be recalled, so still treat publishing as public-forever for anything secret.
 
 ---
 
@@ -178,8 +182,8 @@ becomes double-clickable with no warning.
 
 ## 7. Known gaps — please don't file these
 
-- **unpublish** and **pin** appear but are disabled — public chunks are immutable by
-  design; pinning has no backend.
+- **pin** appears but is disabled — pinning has no backend yet. (**unpublish** works
+  now: it retires the chunk — stops serving and earning; history is preserved.)
 - **Crypto top-up is CLI-only.** It drives an interactive `cryptocadet` binary a
   packaged app can't host. In-app top-up opens a web checkout that takes **card or
   crypto**, so nothing is actually blocked.
@@ -198,10 +202,10 @@ becomes double-clickable with no warning.
 unsigned. `xattr -dr com.apple.quarantine /Applications/RDK.app` for testing (§5); the
 real fix is notarization ([signing.md](signing.md)).
 
-**"Embedding model unavailable"** → the first index/query downloads a ~23 MB model to
-`~/.rdk/models`; that needs network access. Otherwise make sure you're on a build from
-commit `12d7d24` or later — earlier builds had a packaging bug that stripped the model
-runtime out.
+**"Embedding model unavailable"** → desktop builds BUNDLE the embedding model, so
+there is no first-run download. If you see this, the embedding runtime failed to
+load — launch from a terminal and look for the `[rdk] embedding runtime failed to
+load` line for the real cause.
 
 **`NODE_MODULE_VERSION` mismatch** → `pnpm run rebuild` in `apps/desktop`. If it fails,
 you're probably missing the Xcode CLT — `xcode-select --install`.
