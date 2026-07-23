@@ -49,6 +49,10 @@ jobs:
         run: |
           ( cd packages/rdk-core && npm run build )
           ( cd packages/rdk-node && npm run build )
+          # Build the CLI bundle NOW so dist/cli.js exists when npm publish first
+          # parses the manifest — npm 11 validates bin targets at parse time (before
+          # prepublishOnly runs) and silently STRIPS missing bins from the publish.
+          ( cd packages/rdk-cli && npm run build )
 
       # Granular steps below: run-step conclusions are visible via the public jobs
       # API, so a failure names its stage even without log access.
