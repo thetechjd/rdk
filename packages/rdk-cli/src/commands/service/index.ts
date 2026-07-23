@@ -115,13 +115,15 @@ export async function serviceInstall(): Promise<void> {
   }
 }
 
-export async function serviceUninstall(): Promise<void> {
-  const { confirm } = await import('../../prompts.js');
-  const confirmed = await confirm({
-    message: 'Stop RDK and remove auto-start?',
-    default: false,
-  });
-  if (!confirmed) return;
+export async function serviceUninstall(opts: { yes?: boolean } = {}): Promise<void> {
+  if (!opts.yes) {
+    const { confirm } = await import('../../prompts.js');
+    const confirmed = await confirm({
+      message: 'Stop RDK and remove auto-start?',
+      default: false,
+    });
+    if (!confirmed) return;
+  }
 
   try {
     const adapter = await getAdapter();

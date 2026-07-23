@@ -179,7 +179,7 @@ function AccountSection() {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) { app.toast('Enter a valid amount', true); return; }
     setBusy('topup');
-    const r = await window.rdk.createTopup(amt);
+    const r = await window.rdk.createTopup(amt); // card/Stripe; crypto top-up is CLI-only (needs the wallet binary)
     setBusy(null);
     if (!r.ok) { app.toast(r.error ?? 'Could not start top-up', true); return; }
     app.toast('Finish payment in your browser…');
@@ -285,7 +285,7 @@ function AccountSection() {
           </button>
           <button className="ghost" onClick={() => window.rdk.openTopUp()}>dashboard →</button>
         </div>
-        <div className="hint">Top-up opens a browser checkout; your balance is credited once it's confirmed.</div>
+        <div className="hint">Card top-up opens a browser checkout; your balance is credited once confirmed. For crypto (USDC on Base), use the CLI: <code>rdk topup --crypto</code>.</div>
       </div>
     </>
   );

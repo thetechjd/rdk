@@ -46,7 +46,7 @@ const CRYPTOCADET_HOME =
 /** First CryptoCadet CLI version with the `checkout` verb rdk pays quotes through.
  *  An older global install (e.g. one the user set up earlier) lacks it — and rdk
  *  auto-installs ONLY when nothing is found — so we gate on this explicitly. */
-const MIN_CRYPTOCADET = '0.1.4';
+const MIN_CRYPTOCADET = '0.2.1';
 
 /** Compare dotted numeric versions. <0 if a<b, 0 if equal, >0 if a>b. */
 function cmpVersion(a: string, b: string): number {
@@ -145,7 +145,7 @@ async function ensureInstalled(): Promise<string | null> {
       note('Skipped. Install it with: npm i -g @cryptocadet/cli   (or https://cryptocadet.app/install.sh)');
       return null;
     }
-    if (!npmInstallCadet('@cryptocadet/cli')) {
+    if (!npmInstallCadet('@cryptocadet/cli@latest')) {
       warning('npm install failed. On a locked-down machine try the standalone installer:');
       note('  curl -fsSL https://cryptocadet.app/install.sh | sh');
       return null;

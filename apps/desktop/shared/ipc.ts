@@ -279,7 +279,7 @@ export interface RdkApi {
   startNode(): Promise<{ ok: boolean; error?: string }>;
   stopNode(): Promise<{ ok: boolean; error?: string }>;
   forceSync(): Promise<{ ok: boolean; error?: string }>;
-  installService(): Promise<{ ok: boolean; error?: string }>;
+  installService(): Promise<{ ok: boolean; error?: string }>;   // installs an OS auto-start service (runs `rdk mcp:serve`)
   uninstallService(): Promise<{ ok: boolean; error?: string }>;
   setAutoStart(enabled: boolean): Promise<{ ok: boolean; error?: string }>;
 
@@ -312,7 +312,7 @@ export interface RdkApi {
 
   // ── Balance top-up (RetroDeck API) ────────────────────────────────────────
   /** Creates a checkout and opens it in the browser. Poll verifyTopup() after. */
-  createTopup(amountUsd: number): Promise<{ ok: boolean; paymentId?: string; error?: string }>;
+  createTopup(amountUsd: number, method?: 'stripe' | 'cryptocadet'): Promise<{ ok: boolean; paymentId?: string; error?: string }>;
   /** Verifying is what CREDITS the balance (no async webhook). Safe to re-run. */
   verifyTopup(paymentRef?: string): Promise<{ completed: boolean; balanceUsdc?: number }>;
   getMcpInfo(): Promise<McpInfo>;

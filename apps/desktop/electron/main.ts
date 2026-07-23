@@ -136,8 +136,8 @@ function registerHandlers(): void {
       push({ type: 'status', status: service.getStatus() });
       return r;
     },
-    installService: () => ({ ok: false, error: 'Use auto-start (Preferences) or the CLI `rdk service:install` for now.' }),
-    uninstallService: () => ({ ok: true }),
+    installService: () => service.installService(),
+    uninstallService: () => service.uninstallService(),
     setAutoStart: (enabled: never) => {
       if (!autoStartSupported()) return { ok: false, error: autoStartLabel() };
       try { setAutoStart(enabled); return { ok: true }; }
@@ -159,7 +159,7 @@ function registerHandlers(): void {
     getPlans: () => service.getPlans(),
     selectPlan: (planId: never, interval: never) => service.selectPlan(planId, interval),
     verifySubscription: () => service.verifySubscription(),
-    createTopup: (amountUsd: never) => service.createTopup(amountUsd),
+    createTopup: (amountUsd: never, method: never) => service.createTopup(amountUsd, method),
     verifyTopup: (paymentRef: never) => service.verifyTopup(paymentRef),
     getMcpInfo: () => service.getMcpInfo(),
     getPreferences: () => service.getPreferences(),

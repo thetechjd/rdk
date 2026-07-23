@@ -233,15 +233,20 @@ export async function verifySubscription(): Promise<{ paid: boolean; planId?: st
 // ── Balance top-up ───────────────────────────────────────────────────────────
 
 /**
- * Create a Stripe top-up checkout. (The CLI's `--crypto` path drives the external
- * interactive `cryptocadet` binary, which a packaged desktop app can't host — the
- * browser checkout covers card and crypto instead.)
+ * Create a top-up checkout. Both methods return a browser `checkoutUrl`:
+ *  - `stripe`      → Stripe card checkout session;
+ *  - `cryptocadet` → a hosted crypto checkout page (renders the signed quote:
+ *                    amount, payout address, deadline) the user completes in the
+ *                    browser — no local wallet binary needed on the desktop.
  */
-export async function createTopup(amountUsd: number): Promise<{ checkoutUrl: string | null; paymentId?: string }> {
+export async function createTopup(
+  amountUsd: number,
+  method: 'stripe' | 'cryptocadet' = 'stripe',
+): Promise<{ checkoutUrl: string | null; paymentId?: string }> {
   const res = await retrodeckFetch('/api/v1/balances/topup', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ amountUsd, method: 'stripe', source: 'desktop', returnUrl: dashboardUrl() }),
+    body: JSON.stringify({ amountUsd, method, source: 'desktop', returnUrl: dashboardUrl() }),
   });
   if (!res.ok) throw new Error(`Could not create checkout (HTTP ${res.status})`);
   const d = (await res.json()) as { checkoutUrl?: string | null; paymentId?: string };

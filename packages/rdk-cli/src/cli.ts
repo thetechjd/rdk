@@ -324,9 +324,10 @@ program.command('service:status')
 
 program.command('service:uninstall')
   .description('Remove RDK auto-start')
-  .action(async () => {
+  .option('-y, --yes', 'Skip confirmation (used by the desktop app)')
+  .action(async (o) => {
     const { serviceUninstall } = await import('./commands/service/index.js');
-    await serviceUninstall();
+    await serviceUninstall({ yes: !!o.yes });
   });
 
 // ── Dev / Testing ─────────────────────────────────────────────────────────────

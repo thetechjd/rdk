@@ -8,6 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { spawnSync } from 'child_process';
 import {
   LocalStore,
   RDKRouter,
@@ -858,11 +859,14 @@ export class NodeService {
 
   // ── Balance top-up ────────────────────────────────────────────────────────
 
-  async createTopup(amountUsd: number): Promise<{ ok: boolean; paymentId?: string; error?: string }> {
+  async createTopup(
+    amountUsd: number,
+    method: 'stripe' | 'cryptocadet' = 'stripe',
+  ): Promise<{ ok: boolean; paymentId?: string; error?: string }> {
     try {
-      const { checkoutUrl, paymentId } = await retrodeck.createTopup(amountUsd);
+      const { checkoutUrl, paymentId } = await retrodeck.createTopup(amountUsd, method);
       if (!checkoutUrl) return { ok: false, error: 'No checkout URL returned.' };
-      await shell.openExternal(checkoutUrl);
+      await shell.openExternal(checkoutUrl); // stripe card page, or the hosted crypto checkout
       return { ok: true, paymentId };
     } catch (e) {
       return { ok: false, error: this.authMessage(e) };
@@ -875,6 +879,46 @@ export class NodeService {
     } catch {
       return { completed: false };
     }
+  }
+
+  // ── Install as a background service (all OSes) ────────────────────────────
+  // The desktop app can't itself run headless on boot (Electron GUI process), so
+  // "install as service" installs an OS auto-start unit that runs `rdk mcp:serve`
+  // — the same launchd/systemd/Task-Scheduler adapters the CLI ships, which are
+  // implemented for macOS, Linux, and Windows. We drive them by invoking the
+  // installed `rdk` CLI; if it isn't on PATH we say exactly how to get it.
+
+  /** Resolve the `rdk` CLI on PATH, or null. */
+  private findRdkBin(): string | null {
+    const probe = process.platform === 'win32'
+      ? spawnSync('where', ['rdk'], { stdio: 'ignore', shell: true }).status === 0
+      : !spawnSync('rdk', ['--version'], { stdio: 'ignore' }).error;
+    return probe ? 'rdk' : null;
+  }
+
+  /** Windows-safe spawn of the rdk CLI (npm shim is rdk.cmd). */
+  private runRdk(args: string[]): { ok: boolean; error?: string } {
+    const bin = this.findRdkBin();
+    if (!bin) {
+      return {
+        ok: false,
+        error: 'The rdk command-line tool is required to run RDK as a background service. Install it with: npm i -g @retrodeck/rdk (or: brew install thetechjd/rdk/rdk), then try again.',
+      };
+    }
+    const r = process.platform === 'win32'
+      ? spawnSync(bin, args.map(a => `"${a}"`), { stdio: 'pipe', shell: true, encoding: 'utf8', timeout: 120_000 })
+      : spawnSync(bin, args, { stdio: 'pipe', encoding: 'utf8', timeout: 120_000 });
+    if (r.status === 0) return { ok: true };
+    const msg = (r.stderr || r.stdout || r.error?.message || 'unknown error').toString().trim().split('\n').slice(-3).join(' ');
+    return { ok: false, error: `rdk ${args.join(' ')} failed: ${msg}` };
+  }
+
+  installService(): { ok: boolean; error?: string } {
+    return this.runRdk(['service:install']);
+  }
+
+  uninstallService(): { ok: boolean; error?: string } {
+    return this.runRdk(['service:uninstall', '--yes']);
   }
 
   private authMessage(e: unknown): string {
