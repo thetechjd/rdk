@@ -116,11 +116,27 @@ vault
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
 program.command('vault:index').option('--force').option('--public').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !!o.public }); });
 program.command('vault:sync').option('--force', 'Re-sync all chunks, ignoring synced status').action(async (opts) => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
-program.command('vault:publish').action(async () => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish(); });
+program.command('vault:publish [path]').description('Publish private chunks to the network (whole vault, or one file). Asks first.').option('-y, --yes', 'Skip confirmation').action(async (p, o) => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish({ path: p, yes: !!o.yes }); });
+program.command('delete <pathOrChunkId>').description('Delete a file’s chunks (or one chunk) from the index — locally and on the network. Public rows retire (history kept); the file on disk is untouched.').option('-y, --yes', 'Skip confirmation').action(async (tgt, o) => { const { vaultDelete } = await import('./commands/vault.js'); await vaultDelete(tgt, { yes: !!o.yes }); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
 program.command('vault:search <query>').action(async (q) => { const { vaultSearch } = await import('./commands/vault.js'); await vaultSearch(q, {}); });
 program.command('vault:set-public [folders...]').action(async (f: string[]) => { const { vaultSetPublic } = await import('./commands/vault.js'); await vaultSetPublic(f ?? []); });
 program.command('vault:list-public').action(async () => { const { vaultListPublic } = await import('./commands/vault.js'); await vaultListPublic(); });
+program.command('vault:versions <path>').description('Version history of an indexed file (live + superseded versions)').action(async (p) => { const { vaultVersions } = await import('./commands/vault.js'); await vaultVersions(p); });
+
+// ── Query (canonical) ────────────────────────────────────────────────────────
+// Same routing as the desktop app: local vault first (yours, free) → network
+// (tips) → LLM fallback. network:query / vault:search remain as scoped tools.
+
+program
+  .command('query <query>')
+  .description('Query your knowledge — local vault first (free), then the network. Same routing as the desktop app.')
+  .option('-d, --domain <domain>')
+  .option('-k, --top-k <n>', 'Results', '5')
+  .action(async (query, opts) => {
+    const { unifiedQuery } = await import('./commands/query.js');
+    await unifiedQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10) });
+  });
 
 // ── Network ──────────────────────────────────────────────────────────────────
 

@@ -80,6 +80,30 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
   }
 }
 
+/** Version history for a vault file's document series (live + superseded). */
+export async function vaultVersions(filePath: string): Promise<void> {
+  const path = await import('path');
+  const { LocalStore } = await import('@rdk/core');
+  const store = new LocalStore();
+  const abs = path.resolve(filePath);
+  const versions = store.getVersions(abs);
+  store.close();
+
+  if (!versions.length) {
+    console.log(t.warn(`No indexed versions found for ${filePath}`));
+    console.log(t.dim('  (history is tracked per source file — index it first)'));
+    return;
+  }
+
+  console.log(t.heading(`\nVersions of ${path.basename(abs)}\n`));
+  for (const v of versions) {
+    const state = v.isPublic ? 'public' : v.isLocalOnly ? 'local' : 'private';
+    const status = v.supersededAt ? t.dim('superseded') : t.body('live');
+    console.log(`  v${v.version ?? 1}  ${state.padEnd(7)}  ${status}  ${t.dim(v.createdAt.toISOString().slice(0, 10))}  ${t.dim(v.id.slice(0, 12))}`);
+  }
+  console.log('');
+}
+
 export async function vaultStatus(): Promise<void> {
   const config = loadConfig();
   const { LocalStore } = await import('@rdk/core');
@@ -192,9 +216,46 @@ export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
   }
 }
 
-export async function vaultPublish(): Promise<void> {
+export async function vaultPublish(opts: { path?: string; yes?: boolean } = {}): Promise<void> {
   const { LocalStore } = await import('@rdk/core');
   const store = new LocalStore();
+
+  // Per-path scope: publish just one file's chunks instead of the whole vault.
+  if (opts.path) {
+    const path = await import('path');
+    const abs = path.resolve(opts.path);
+    const chunks = store.getVersions(abs).filter(c => !c.supersededAt && !c.isPublic && !c.isLocalOnly);
+    if (!chunks.length) {
+      console.log(t.dim(`No private chunks found for ${opts.path}.`));
+      store.close();
+      return;
+    }
+    console.log(t.warn(`Publishing ${chunks.length} chunk(s) of ${path.basename(abs)} — public content is versioned; unpublish stops serving but copies already saved elsewhere cannot be recalled.`));
+    if (!opts.yes) {
+      const { confirm } = await import('../prompts.js');
+      if (!(await confirm({ message: 'Publish now?', default: false }))) { store.close(); return; }
+    }
+    // markAllPublic is vault-wide; per-path goes chunk-by-chunk.
+    for (const c of chunks) {
+      const embedding = store.getEmbedding(c.id);
+      if (embedding) store.saveChunk({ ...c, isPublic: true, isEncrypted: false, syncedAt: undefined }, embedding);
+    }
+    store.close();
+    console.log(t.body(`Published ${chunks.length} chunk(s).`));
+    await vaultSync();
+    return;
+  }
+
+  // Whole-vault publish is a big, one-way action — confirm it (was silent).
+  const stats = store.getStats();
+  if (!opts.yes && stats.privateChunks > 0) {
+    console.log(t.warn(`This publishes ALL ${stats.privateChunks} private chunk(s) to the public network.`));
+    console.log(t.dim('  Public content earns tips and is versioned; unpublish stops serving a chunk,'));
+    console.log(t.dim('  but copies other nodes already saved cannot be recalled.'));
+    const { confirm } = await import('../prompts.js');
+    if (!(await confirm({ message: 'Publish everything now?', default: false }))) { store.close(); return; }
+  }
+
   const changed = store.markAllPublic();
   store.close();
 
@@ -205,6 +266,54 @@ export async function vaultPublish(): Promise<void> {
   }
 
   await vaultSync();
+}
+
+/**
+ * Delete a file's chunks (or one chunk by id) from the index — locally AND on
+ * central. Public rows RETIRE on central (stop serving; earnings history kept).
+ * The vault file on disk is never touched.
+ */
+export async function vaultDelete(target: string, opts: { yes?: boolean } = {}): Promise<void> {
+  const path = await import('path');
+  const { LocalStore } = await import('@rdk/core');
+  const config = loadConfig();
+  const store = new LocalStore();
+
+  const isChunkId = /^[0-9a-f]{64}$/i.test(target);
+  const chunks = isChunkId
+    ? [store.getChunk(target)].filter((c): c is NonNullable<typeof c> => !!c)
+    : store.getVersions(path.resolve(target)).filter(c => !c.supersededAt);
+
+  if (!chunks.length) {
+    console.log(t.warn('Nothing indexed matches that path/chunk id.'));
+    store.close();
+    return;
+  }
+
+  if (!opts.yes) {
+    const { confirm } = await import('../prompts.js');
+    if (!(await confirm({ message: `Delete ${chunks.length} chunk(s) from the index (file on disk untouched)?`, default: false }))) {
+      store.close();
+      return;
+    }
+  }
+
+  // Central cleanup first (needs the rows' ids), then local.
+  let centralOk = 0;
+  if (config.centralApiUrl && config.apiKey) {
+    const { SyncService } = await import('@rdk/node/sync-service');
+    const sync = new SyncService(
+      { enabled: false, intervalMinutes: 0, centralApiUrl: config.centralApiUrl, centralApiKey: config.apiKey, log: () => {} },
+      store,
+    );
+    for (const c of chunks) {
+      if (!c.isLocalOnly && (await sync.deleteOnCentral(c.id))) centralOk++;
+    }
+  }
+  for (const c of chunks) store.deleteChunk(c.id);
+  store.close();
+
+  console.log(t.body(`Deleted ${chunks.length} chunk(s) locally` + (centralOk ? `; ${centralOk} removed/retired on the network.` : '.')));
 }
 
 export async function vaultSearch(query: string, opts: { topK?: number }): Promise<void> {
@@ -242,7 +351,8 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
           content = t.dim('[encrypted — no vault key configured]');
         }
       }
-      console.log(t.bold(`[${i + 1}] ${r.title}`) + t.dim(` (${score}% match)`));
+      const state = r.isPublic ? 'public' : r.isLocalOnly ? 'local' : 'private';
+      console.log(t.bold(`[${i + 1}] ${r.title}`) + t.dim(` (${score}% match · yours · ${state})`));
       if (r.sourcePath) console.log(t.dim(`    ${r.sourcePath}`));
       console.log(t.body(content.slice(0, 200) + (content.length > 200 ? '...' : '')));
       console.log('');

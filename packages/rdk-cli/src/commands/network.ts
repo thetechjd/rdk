@@ -278,6 +278,8 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
         tipAmountUsdc?: number;
         nodeId?: string;
         isEncrypted?: boolean;
+        /** Central marks results that belong to the querying user's own account. */
+        isOwn?: boolean;
         // Live-fetched content from the owning node: plaintext for public
         // chunks, ciphertext for private/team chunks. null if unavailable.
         contentEncrypted?: string | null;
@@ -293,11 +295,16 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     const sharedKeys = config.sharedVaultKeys ?? {};
 
     console.log(t.heading(`\nNetwork results for: "${query}"\n`));
+    console.log(t.dim('  note: network-only search — `rdk query` answers from your vault first (free), same as the desktop app\n'));
     // Readable results (content resolved/decrypted) collected for save/--save.
     const savable: SavableResult[] = [];
     data.results.forEach((r, i) => {
       const score = ((r.score ?? 0) * 100).toFixed(1);
-      const tip = r.tipAmountUsdc ? t.dim(`  ·  tip $${r.tipAmountUsdc.toFixed(4)} USDC`) : '';
+      // Own content is never tipped — label it instead of showing a bogus cost.
+      const own = r.isOwn === true || (r.nodeId != null && r.nodeId === config.nodeId);
+      const tip = own
+        ? t.dim('  ·  yours — free')
+        : r.tipAmountUsdc ? t.dim(`  ·  tip $${r.tipAmountUsdc.toFixed(4)} USDC`) : '';
       console.log(t.bold(`[${i + 1}] ${r.title ?? 'Untitled'}`) + t.dim(` (${score}% match)`) + tip);
 
       let content = r.contentEncrypted ?? '';
