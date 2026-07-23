@@ -78,10 +78,48 @@ jobs:
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Job logs are admin-only via the API, so classify the publish error into
+      # conditionally-failing named steps — the failing step's NAME is readable
+      # through the public jobs API and identifies the cause.
       - name: Publish @retrodeck/rdk (trusted publishing — OIDC, no token)
         if: steps.check.outputs.published == 'false'
+        id: pub
         working-directory: packages/rdk-cli
-        run: npm publish --access public
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          npm publish --access public 2>&1 | tee /tmp/publish.log
+          code=${PIPESTATUS[0]}
+          C=unknown
+          grep -q "E404" /tmp/publish.log && C=e404
+          grep -q "E403" /tmp/publish.log && C=e403
+          grep -qE "E401|ENEEDAUTH" /tmp/publish.log && C=auth
+          grep -qiE "EOTP|one-time password" /tmp/publish.log && C=otp
+          grep -qiE "oidc|trusted publish" /tmp/publish.log && C="oidc-$C"
+          echo "class=$C" >> "$GITHUB_OUTPUT"
+          # surface the tail in the run summary too (visible on the run page)
+          { echo '### npm publish output (tail)'; echo '```'; tail -30 /tmp/publish.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          exit $code
+
+      - name: "PUBLISH ERROR CLASS: E404 — npm hides unauthorized publishes as 404; trusted-publisher registration mismatch (check repo=thetechjd/rdk, workflow=release.yml, environment blank on npmjs.com)"
+        if: steps.pub.outcome == 'failure' && contains(steps.pub.outputs.class, 'e404')
+        run: exit 1
+      - name: "PUBLISH ERROR CLASS: E403 forbidden — publishing-access setting on the package may disallow non-interactive publishes"
+        if: steps.pub.outcome == 'failure' && contains(steps.pub.outputs.class, 'e403')
+        run: exit 1
+      - name: "PUBLISH ERROR CLASS: E401/ENEEDAUTH — npm did not attempt/complete the OIDC exchange"
+        if: steps.pub.outcome == 'failure' && contains(steps.pub.outputs.class, 'auth')
+        run: exit 1
+      - name: "PUBLISH ERROR CLASS: EOTP — package requires interactive 2FA for publishes"
+        if: steps.pub.outcome == 'failure' && contains(steps.pub.outputs.class, 'otp')
+        run: exit 1
+      - name: "PUBLISH ERROR CLASS: unknown — see run summary for the npm output tail"
+        if: steps.pub.outcome == 'failure' && steps.pub.outputs.class == 'unknown'
+        run: exit 1
+      - name: Fail the job if publish failed
+        if: steps.pub.outcome == 'failure'
+        run: exit 1
 
   release:
     needs: publish-npm
