@@ -118,6 +118,9 @@ export function VaultTree() {
         <span className="c"><span className="dot private" /> private {tree?.counts.private ?? 0}</span>
         <span className="c"><span className="dot public" /> public {tree?.counts.public ?? 0}</span>
         <span className="c"><span className="dot local" /> local {tree?.counts.local ?? 0}</span>
+        {(tree?.counts.mixed ?? 0) > 0 && (
+          <span className="c"><span className="dot mixed" /> mixed {tree?.counts.mixed}</span>
+        )}
       </div>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} app={app} newNote={newNote} />}
@@ -247,19 +250,36 @@ function ContextMenu({ x, y, node, onClose, app, newNote }: {
 
   const indexed = !!node.chunkIds?.length;
   const isPublic = node.state === 'public';
-  const firstChunk = node.chunkIds?.[0];
+  const chunkIds = node.chunkIds ?? [];
+
+  // File-level actions act on ALL of the file's chunks (previously only chunkIds[0],
+  // which silently left a multi-chunk file half-published / half-deleted).
+  const publishAll = async () => {
+    for (const id of chunkIds) {
+      const r = await window.rdk.publishChunk(id);
+      if (!r.ok) return r;
+    }
+    return { ok: true };
+  };
+  const deleteAll = async () => {
+    for (const id of chunkIds) {
+      const r = await window.rdk.deleteChunk(id);
+      if (!r.ok) return r;
+    }
+    return { ok: true };
+  };
 
   return (
     <div className="ctx-menu" ref={ref} style={{ left: x, top: y }}>
       <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'private'), 'Indexed — private')}>index as <span className="state-private">private</span></div>
       <div className="ctx-item" onClick={() => run(() => window.rdk.indexPaths([node.path], 'public'), 'Indexed — public')}>index as <span className="state-public">public</span></div>
-      {indexed && !isPublic && firstChunk && (
-        <div className="ctx-item" onClick={() => run(() => window.rdk.publishChunk(firstChunk), 'Published')}>publish this chunk</div>
+      {indexed && !isPublic && chunkIds.length > 0 && (
+        <div className="ctx-item" onClick={() => run(publishAll, `Published (${chunkIds.length} chunk${chunkIds.length > 1 ? 's' : ''})`)}>publish</div>
       )}
       <div className="ctx-sep" />
       <div className="ctx-item" onClick={() => { onClose(); window.rdk.revealInFileManager(node.path); }}>reveal in file manager</div>
-      {indexed && firstChunk && (
-        <div className="ctx-item danger" onClick={() => run(async () => window.rdk.deleteChunk(firstChunk), 'Deleted from index')}>delete from index</div>
+      {indexed && chunkIds.length > 0 && (
+        <div className="ctx-item danger" onClick={() => run(deleteAll, 'Deleted from index')}>delete from index</div>
       )}
     </div>
   );

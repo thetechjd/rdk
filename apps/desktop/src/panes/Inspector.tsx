@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { ChunkView, RetrievedFor } from '../../shared/ipc';
+import type { ChunkView, RetrievedFor, VersionView } from '../../shared/ipc';
 import { useApp } from '../store';
 
 export function Inspector() {
@@ -7,12 +7,18 @@ export function Inspector() {
   const id = app.selectedChunkId;
   const [chunk, setChunk] = useState<ChunkView | null>(null);
   const [retrieved, setRetrieved] = useState<RetrievedFor[]>([]);
+  const [versions, setVersions] = useState<VersionView[]>([]);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!id) { setChunk(null); setRetrieved([]); return; }
+    if (!id) { setChunk(null); setRetrieved([]); setVersions([]); return; }
     let alive = true;
-    window.rdk.getChunk(id).then(c => alive && setChunk(c));
+    window.rdk.getChunk(id).then(c => {
+      if (!alive) return;
+      setChunk(c);
+      if (c?.sourcePath) window.rdk.getVersions(c.sourcePath).then(v => alive && setVersions(v));
+      else setVersions([]);
+    });
     window.rdk.getRetrievedFor(id).then(r => alive && setRetrieved(r));
     return () => { alive = false; };
   }, [id, app.dataVersion]);
@@ -63,15 +69,33 @@ export function Inspector() {
               )}
             </div>
 
+            {versions.length > 1 && (
+              <div>
+                <div className="section-label" style={{ marginBottom: 8 }}>History</div>
+                <div className="retrieved-list">
+                  {versions.map((v) => (
+                    <div key={v.id} className="retrieved-item" style={{ cursor: 'pointer', opacity: v.superseded ? 0.6 : 1 }}
+                      title={v.superseded ? 'Superseded — frozen, viewable read-only' : 'Live version'}
+                      onClick={() => app.openContentForChunk(v.id, `${v.title} (v${v.version})`)}>
+                      <span className="q">v{v.version} · {v.state}{v.superseded ? ' · superseded' : ' · live'}</span>
+                      <span className="n">{new Date(v.createdAt).toLocaleDateString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="inspector-actions">
               {chunk.state === 'private' && (
                 <button className="cassette" disabled={busy}
                   onClick={() => act(() => window.rdk.publishChunk(chunk.id), 'Published')}>publish</button>
               )}
               <button
-                disabled={!caps?.unpublishSupported}
-                title={caps?.unpublishSupported ? '' : 'Public chunks are immutable — they cannot be unpublished'}
-                onClick={() => act(() => window.rdk.unpublishChunk(chunk.id), 'Unpublished')}>unpublish</button>
+                disabled={busy || !caps?.unpublishSupported || chunk.state !== 'public'}
+                title={chunk.state === 'public'
+                  ? 'Retire: stop serving this from the network (earnings history is kept; copies already saved elsewhere cannot be recalled)'
+                  : 'Only public chunks can be unpublished'}
+                onClick={() => act(() => window.rdk.unpublishChunk(chunk.id), 'Unpublished (retired from the network)')}>unpublish</button>
               <button
                 disabled={!caps?.pinSupported}
                 title={caps?.pinSupported ? '' : 'Pinning is not supported yet'}

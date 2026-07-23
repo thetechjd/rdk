@@ -13,7 +13,7 @@ export function StatusBar() {
   return (
     <div className="statusbar">
       <span className="item">
-        <span className={`dot ${status?.serving ? 'public' : 'local'}`} />
+        <span className={`dot ${status?.serving ? 'serving' : 'stopped'}`} />
         {status?.serving ? 'serving' : 'not serving'}
       </span>
       <span className="item">synced {ago(status?.lastSyncAt)}</span>

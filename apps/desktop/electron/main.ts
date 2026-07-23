@@ -117,10 +117,11 @@ function registerHandlers(): void {
     writeFile: (p: never, content: never) => service.writeFile(p, content),
     createFile: (parentRelPath: never, name: never) => service.createFile(parentRelPath, name),
     publishChunk: (id: never) => service.publishChunk(id),
-    unpublishChunk: () => service.unpublishChunk(),
+    unpublishChunk: (id: never) => service.unpublishChunk(id),
     pinChunk: () => service.pinChunk(),
     deleteChunk: (id: never) => service.deleteChunk(id),
     getRetrievedFor: (id: never) => service.getRetrievedFor(id),
+    getVersions: (sourcePath: never) => service.getVersions(sourcePath),
     // graph + query
     getGraphData: () => service.getGraphData(),
     query: (q: never) => service.query(q),

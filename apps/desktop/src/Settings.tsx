@@ -338,7 +338,7 @@ function PrefsSection() {
         <button className={prefs?.defaultVisibility === 'private' ? 'primary' : ''} onClick={() => setVis('private')}>private</button>
         <button className={prefs?.defaultVisibility === 'public' ? 'cassette' : ''} onClick={() => setVis('public')}>public</button>
       </div>
-      <div className="hint">New drag-and-drop indexing defaults to this visibility.</div>
+      <div className="hint">Used by re-index and batch flows. Drag-and-drop always asks explicitly.</div>
     </div>
   );
 }

@@ -146,14 +146,22 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 }
 .pane-body { flex: 1; overflow-y: auto; overflow-x: hidden; }
 
-/* ── State dots (LOCAL / PRIVATE / PUBLIC) ─────────────────────────────────── */
+/* ── State dots (LOCAL / PRIVATE / PUBLIC / MIXED) ─────────────────────────── */
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot.local { background: transparent; border: 1px solid var(--muted); }
 .dot.private { background: var(--phosphor); box-shadow: var(--glow-phosphor); }
 .dot.public { background: var(--cassette); box-shadow: var(--glow-cassette); }
+/* mixed = a file whose chunks span states: half phosphor, half cassette */
+.dot.mixed { background: linear-gradient(90deg, var(--phosphor) 50%, var(--cassette) 50%); }
 .state-local { color: var(--muted); }
 .state-private { color: var(--phosphor); }
 .state-public { color: var(--cassette); }
+.state-mixed { color: var(--cassette); }
+
+/* Node-serving indicator — deliberately NOT the content-state dots ("local"/
+   "public" mean content visibility, not process status). */
+.dot.serving { background: var(--phosphor); box-shadow: var(--glow-phosphor); }
+.dot.stopped { background: transparent; border: 1px solid var(--muted); }
 
 /* ── Tabs (center workspace) ───────────────────────────────────────────────── */
 .tabs { display: flex; background: var(--bg-chrome); border-bottom: 1px solid var(--border); flex-shrink: 0; }

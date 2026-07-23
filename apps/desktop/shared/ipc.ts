@@ -8,8 +8,10 @@
 // Domain types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The three-state color model, applied everywhere a file/chunk appears. */
-export type FileState = 'local' | 'private' | 'public';
+/** The canonical state model (mirrors @rdk/core visibility), applied everywhere
+ *  a file/chunk appears. 'mixed' = a file whose chunks span more than one state
+ *  — shown honestly instead of collapsing to 'public'. */
+export type FileState = 'local' | 'private' | 'public' | 'mixed';
 
 /** A node in the vault file tree. */
 export interface VaultNode {
@@ -30,10 +32,21 @@ export interface VaultTree {
   root: string;
   vaultName: string;
   nodes: VaultNode[];
-  counts: { local: number; private: number; public: number };
+  counts: { local: number; private: number; public: number; mixed: number };
 }
 
 /** A chunk as surfaced to the inspector / content pane. */
+/** One entry in a document's version history (Inspector "History" section). */
+export interface VersionView {
+  id: string;
+  title: string;
+  version: number;
+  state: FileState;
+  /** True when a newer version replaced this chunk (or it was retired). */
+  superseded: boolean;
+  createdAt: string;
+}
+
 export interface ChunkView {
   id: string;
   title: string;
@@ -250,7 +263,9 @@ export interface RdkApi {
   // Create a new note in the vault (parentRelPath is relative to the vault root, '' = root).
   createFile(parentRelPath: string, name: string): Promise<{ ok: boolean; path?: string; error?: string }>;
   publishChunk(id: string): Promise<{ ok: boolean; error?: string }>;
-  unpublishChunk(id: string): Promise<{ ok: boolean; error?: string }>; // may be unsupported
+  unpublishChunk(id: string): Promise<{ ok: boolean; error?: string }>; // retire: stops serving, history kept
+  /** Version history of a document series (live + superseded), newest first. */
+  getVersions(sourcePath: string): Promise<VersionView[]>;
   pinChunk(id: string, pinned: boolean): Promise<{ ok: boolean; error?: string }>; // may be unsupported
   deleteChunk(id: string): Promise<{ ok: boolean; error?: string }>;
   getRetrievedFor(id: string): Promise<RetrievedFor[]>;
@@ -316,7 +331,7 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'isInitialized', 'getCapabilities', 'chooseVaultDirectory', 'initNode',
   'getVaultTree', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
   'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
-  'deleteChunk', 'getRetrievedFor',
+  'deleteChunk', 'getRetrievedFor', 'getVersions',
   'getGraphData', 'query',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
   'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',

@@ -12,9 +12,10 @@ interface SimEdge { source: SimNode; target: SimNode; kind: 'semantic' | 'retrie
 const COLORS = {
   private: '#39FF6A',
   public: '#E8521A',
-  query: '#E8521A',
+  local: '#6E756E',                 // muted — this-machine-only chunks
+  query: '#5AC8FA',                 // distinct from public: queries aren't content
   semantic: 'rgba(57,255,106,0.22)',
-  retrieval: 'rgba(232,82,26,0.55)',
+  retrieval: 'rgba(90,200,250,0.55)',
 };
 
 export function GraphView() {
@@ -119,11 +120,11 @@ export function GraphView() {
       ctx.beginPath();
       ctx.arc(n.x ?? 0, n.y ?? 0, r, 0, Math.PI * 2);
       if (n.kind === 'query') {
-        // ringed / hollow orange
-        ctx.fillStyle = 'rgba(232,82,26,0.12)'; ctx.fill();
+        // ringed / hollow — its own color; queries are not content
+        ctx.fillStyle = 'rgba(90,200,250,0.12)'; ctx.fill();
         ctx.lineWidth = 1.4; ctx.strokeStyle = COLORS.query; ctx.stroke();
       } else {
-        const c = n.state === 'public' ? COLORS.public : COLORS.private;
+        const c = n.state === 'public' ? COLORS.public : n.state === 'local' ? COLORS.local : COLORS.private;
         ctx.fillStyle = c; ctx.fill();
         if (n.id === app.selectedChunkId) { ctx.lineWidth = 2; ctx.strokeStyle = '#C8FFC8'; ctx.stroke(); }
       }
@@ -199,7 +200,8 @@ export function GraphView() {
       <div className="legend">
         <div className="row"><span className="swatch" style={{ borderTopColor: COLORS.private, width: 18 }} /> semantic link</div>
         <div className="row"><span className="swatch" style={{ borderTopColor: COLORS.query, borderTopStyle: 'dashed', width: 18 }} /> retrieved by query</div>
-        <div className="row"><span className="dot private" /> private &nbsp; <span className="dot public" /> public</div>
+        <div className="row"><span className="dot private" /> private &nbsp; <span className="dot public" /> public &nbsp; <span className="dot local" /> local</div>
+        <div className="row"><span className="dot" style={{ background: 'transparent', border: `1px solid ${COLORS.query}` }} /> query</div>
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import {
   cosineSimilarity,
   keyFromHex,
   decrypt,
+  fileState as computeFileState,
   type VaultKey,
   type StoredChunk,
   type EmbeddingModel,
@@ -90,13 +91,20 @@ export class NodeService {
   private getRouter(): RDKRouter {
     if (!this.router) {
       const cfg = this.getConfig();
+      // sharedVaultKeys: team-encrypted network content decrypts with the owning
+      // node's shared key (parity with the CLI/node-controller construction).
+      const sharedVaultKeys = Object.fromEntries(
+        Object.entries(cfg?.sharedVaultKeys ?? {}).map(([nodeId, hex]) => [nodeId, keyFromHex(hex)]),
+      );
       this.router = new RDKRouter({
         localStore: this.getStore(),
         embeddingModel: this.embedder,
         centralApiUrl: cfg?.centralApiUrl,
         centralApiKey: cfg?.apiKey,
+        nodeId: cfg?.nodeId, // lets the router skip tipping the user's own chunks
         domain: cfg?.domain,
         vaultKey: this.vaultKey(),
+        sharedVaultKeys,
       });
     }
     return this.router;
@@ -128,7 +136,7 @@ export class NodeService {
       serviceInstall: serviceInstallSupported(),
       autoStart: autoStartSupported(),
       network: !!cfg?.centralApiUrl && !!cfg?.apiKey,
-      unpublishSupported: false, // public chunks are immutable by design (see report §7)
+      unpublishSupported: true, // unpublish = retire: stop serving from now on (versioned model)
       pinSupported: false,       // no pin concept exists in core/central yet
     };
   }
@@ -164,7 +172,7 @@ export class NodeService {
     const chunksByPath = this.chunksBySourcePath();
     const orphansByName = this.orphanChunksByDocName();
     const publicFolders = cfg?.publicFolders ?? [];
-    const counts = { local: 0, private: 0, public: 0 };
+    const counts = { local: 0, private: 0, public: 0, mixed: 0 };
 
     const walk = (dir: string): VaultNode[] => {
       let entries: fs.Dirent[] = [];
@@ -209,6 +217,7 @@ export class NodeService {
     const map = new Map<string, StoredChunk[]>();
     for (const c of this.getStore().getAllChunks()) {
       if (!c.sourcePath) continue;
+      if (c.supersededAt) continue; // old versions never drive the tree
       const arr = map.get(c.sourcePath) ?? [];
       arr.push(c);
       map.set(c.sourcePath, arr);
@@ -227,6 +236,7 @@ export class NodeService {
     const map = new Map<string, StoredChunk[]>();
     for (const c of this.getStore().getAllChunks()) {
       if (c.sourcePath) continue;
+      if (c.supersededAt) continue; // old versions never drive the tree
       const docName = c.title.split(' — ')[0].trim().toLowerCase();
       if (!docName) continue;
       const arr = map.get(docName) ?? [];
@@ -236,7 +246,11 @@ export class NodeService {
     return map;
   }
 
-  async indexPaths(paths: string[], visibility: VisibilityChoice): Promise<{ indexed: number; error?: string }> {
+  async indexPaths(
+    paths: string[],
+    visibility: VisibilityChoice,
+    versionCtx?: { supersedes?: string; version?: number },
+  ): Promise<{ indexed: number; error?: string }> {
     if (!(await this.embedderAvailable())) {
       return { indexed: 0, error: 'Embedding model unavailable — the embedding runtime failed to load. This is usually a module/native-load error, not a network problem; check the terminal running the app for the underlying cause, then try again.' };
     }
@@ -253,6 +267,8 @@ export class NodeService {
           sourcePath: file,
           sourceAdapter: 'desktop',
           isPublic: visibility === 'public',
+          supersedes: versionCtx?.supersedes,
+          version: versionCtx?.version,
         });
         indexed += res.chunksIndexed;
         errors.push(...res.errors);
@@ -261,6 +277,24 @@ export class NodeService {
       }
     }
     return { indexed, error: errors.length ? errors.slice(0, 3).join('; ') : undefined };
+  }
+
+  /** On-demand central client for delete/retire/supersede calls outside the
+   *  serving sync loop (SyncService without a timer). Null when unlinked. */
+  private centralClient(): SyncService | null {
+    const cfg = this.getConfig();
+    if (!cfg?.centralApiUrl || !cfg?.apiKey) return null;
+    if (this.syncService) return this.syncService;
+    return new SyncService(
+      {
+        enabled: false,
+        intervalMinutes: 0,
+        centralApiUrl: cfg.centralApiUrl,
+        centralApiKey: cfg.apiKey,
+        log: (m) => console.error(m),
+      },
+      this.getStore(),
+    );
   }
 
   private expandToFiles(paths: string[]): string[] {
@@ -303,7 +337,7 @@ export class NodeService {
     return {
       id: c.id,
       title: c.title,
-      state: c.isPublic ? 'public' : 'private',
+      state: c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private',
       domain: c.domain,
       categories: c.categories,
       sourcePath: c.sourcePath,
@@ -371,16 +405,34 @@ export class NodeService {
       return { ok: false, error: (e as Error).message };
     }
 
+    // Versioned re-index: an edit mints NEW chunks (ids are content hashes).
+    //  - old PRIVATE chunks: deleted locally AND on central (fixes the orphaned
+    //    central rows the old flow left behind);
+    //  - old PUBLIC chunks: superseded locally + RETIRED on central (frozen,
+    //    excluded from queries, earnings history intact), and the new version
+    //    re-publishes automatically — the user already expressed publish intent
+    //    for this document.
     const store = this.getStore();
-    const existing = store.getAllChunks().filter(c => c.sourcePath === abs);
+    const existing = store.getAllChunks().filter(c => c.sourcePath === abs && !c.supersededAt);
     const stalePrivate = existing.filter(c => !c.isPublic);
+    const stalePublic = existing.filter(c => c.isPublic);
     let reindexed = 0;
-    if (stalePrivate.length > 0) {
-      // content changed → chunk ids (content hashes) change; drop the old ones first
-      for (const c of stalePrivate) store.deleteChunk(c.id);
-      if (await this.embedderAvailable()) {
-        reindexed = (await this.indexPaths([abs], 'private')).indexed;
+    if (existing.length > 0 && (await this.embedderAvailable())) {
+      const central = this.centralClient();
+      for (const c of stalePrivate) {
+        store.deleteChunk(c.id);
+        if (!c.isLocalOnly) void central?.deleteOnCentral(c.id); // best-effort cleanup
       }
+      for (const c of stalePublic) {
+        store.markSuperseded(c.id);
+        void central?.deleteOnCentral(c.id); // public rows retire server-side
+      }
+      const nextVersion = Math.max(...existing.map(c => c.version ?? 1)) + 1;
+      const visibility: VisibilityChoice = stalePublic.length > 0 ? 'public' : 'private';
+      reindexed = (await this.indexPaths([abs], visibility, {
+        supersedes: (stalePublic[0] ?? stalePrivate[0])?.id,
+        version: nextVersion,
+      })).indexed;
     }
     return { ok: true, reindexed };
   }
@@ -440,9 +492,33 @@ export class NodeService {
     return this.forceSync();
   }
 
-  // Public chunks are immutable by design; no unpublish path exists (report §7).
-  unpublishChunk(): { ok: boolean; error?: string } {
-    return { ok: false, error: 'Public chunks are immutable and cannot be unpublished.' };
+  /**
+   * Unpublish = RETIRE: the chunk stops being served in queries from now on.
+   * Locally it's frozen (superseded, out of search); on central the row is
+   * retired (kept for earnings attribution, excluded from results). Honest
+   * caveat: copies other nodes already saved are beyond recall — per-version
+   * immutability is the real network boundary.
+   */
+  unpublishChunk(id: string): { ok: boolean; error?: string } {
+    const store = this.getStore();
+    const c = store.getChunk(id);
+    if (!c) return { ok: false, error: 'Chunk not found.' };
+    if (!c.isPublic) return { ok: true };
+    store.markSuperseded(id);
+    void this.centralClient()?.deleteOnCentral(id); // retires server-side (best-effort)
+    return { ok: true };
+  }
+
+  /** Version history of a document series (live + superseded), newest first. */
+  getVersions(sourcePath: string): import('../shared/ipc').VersionView[] {
+    return this.getStore().getVersions(sourcePath).map((c) => ({
+      id: c.id,
+      title: c.title,
+      version: c.version ?? 1,
+      state: c.isPublic ? 'public' as const : 'private' as const,
+      superseded: !!c.supersededAt,
+      createdAt: c.createdAt.toISOString(),
+    }));
   }
 
   // No pin concept exists in core/central yet (report §7).
@@ -453,7 +529,9 @@ export class NodeService {
   async reindex(): Promise<{ ok: boolean; error?: string }> {
     const cfg = this.getConfig();
     if (!cfg?.vaultPath) return { ok: false, error: 'No vault configured.' };
-    const res = await this.indexPaths([cfg.vaultPath], 'private');
+    // Honors the persisted default-visibility preference (was hard-coded private).
+    const visibility: VisibilityChoice = cfg.defaultVisibility === 'public' ? 'public' : 'private';
+    const res = await this.indexPaths([cfg.vaultPath], visibility);
     return { ok: !res.error, error: res.error };
   }
 
@@ -467,11 +545,12 @@ export class NodeService {
     const edges: GraphEdge[] = [];
 
     for (const c of chunks) {
+      if (c.supersededAt) continue; // old versions stay out of the live graph
       nodes.push({
         id: c.id,
         kind: 'file',
         label: c.title,
-        state: c.isPublic ? 'public' : 'private',
+        state: c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private',
         retrievals: retrievalCounts[c.id] ?? 0,
         sourcePath: c.sourcePath,
       });
@@ -524,14 +603,20 @@ export class NodeService {
       const chunkId = isNetwork ? (c as { chunkId: string }).chunkId : (c as { id: string }).id;
       const providerNode = isNetwork ? (c as { nodeId: string }).nodeId : (nodeId ?? 'you');
       const content = (c as { content?: string }).content ?? (c as { summary?: string }).summary ?? '';
+      // Own content is never charged/tipped: prefer central's account-level
+      // isOwn flag (covers the user's OTHER linked nodes too), fall back to a
+      // node-id comparison for older centrals.
+      const isOwn = !isNetwork
+        || (c as { isOwn?: boolean }).isOwn === true
+        || providerNode === nodeId;
       return {
         chunkId,
         title: (c as { title: string }).title,
         snippet: content.slice(0, 240),
         score: (c as { score: number }).score,
         sourceNode: isNetwork ? providerNode : 'you',
-        isOwn: !isNetwork || providerNode === nodeId,
-        tipUsdc: isNetwork ? (c as { tipAmountUsdc?: number }).tipAmountUsdc ?? 0 : 0,
+        isOwn,
+        tipUsdc: isOwn ? 0 : isNetwork ? (c as { tipAmountUsdc?: number }).tipAmountUsdc ?? 0 : 0,
       };
     });
     return {
@@ -696,10 +781,38 @@ export class NodeService {
     const cfg = this.getConfig();
     const empty: EarningsSummary = { totalUsdc: 0, byDocument: [], overTime: [] };
     if (!cfg?.centralApiUrl || !cfg.apiKey) return empty;
-    const data = await this.fetchJson<EarningsSummary>(
+    const raw = await this.fetchJson<Record<string, unknown>>(
       `${cfg.centralApiUrl}/api/v1/tips/earnings`, cfg.apiKey,
     ).catch(() => null);
-    return data ?? empty;
+    if (!raw) return empty;
+
+    const totalUsdc = Number(raw.totalUsdc ?? 0) || 0;
+    // Shape tolerance: central actually returns { totalUsdc, pendingUsdc,
+    // settledUsdc, tipHistory[] } — the pane's byDocument/overTime previously
+    // came back undefined and crashed the renderer. Accept a native shape if a
+    // future central sends it; otherwise derive both views from tipHistory.
+    if (Array.isArray(raw.byDocument) && Array.isArray(raw.overTime)) {
+      return { totalUsdc, byDocument: raw.byDocument, overTime: raw.overTime } as EarningsSummary;
+    }
+    const history = Array.isArray(raw.tipHistory) ? (raw.tipHistory as Array<Record<string, unknown>>) : [];
+    const byChunk = new Map<string, EarningsSummary['byDocument'][number]>();
+    const byDate = new Map<string, number>();
+    for (const tip of history) {
+      const chunkId = String(tip.chunk_id ?? tip.chunkId ?? 'unknown');
+      const amount = Number(tip.amount_usdc ?? tip.amountUsdc ?? 0) || 0;
+      const date = String(tip.created_at ?? tip.createdAt ?? '').slice(0, 10);
+      const doc = byChunk.get(chunkId)
+        ?? { title: `chunk ${chunkId.slice(0, 8)}…`, chunkId, earnedUsdc: 0, retrievals: 0 };
+      doc.earnedUsdc += amount;
+      doc.retrievals += 1;
+      byChunk.set(chunkId, doc);
+      if (date) byDate.set(date, (byDate.get(date) ?? 0) + amount);
+    }
+    return {
+      totalUsdc,
+      byDocument: [...byChunk.values()].sort((a, b) => b.earnedUsdc - a.earnedUsdc),
+      overTime: [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, usdc]) => ({ date, usdc })),
+    };
   }
 
   // ── Subscription ──────────────────────────────────────────────────────────
@@ -786,14 +899,22 @@ export class NodeService {
   getPreferences(): Preferences {
     const cfg = this.getConfig();
     return {
-      defaultVisibility: (cfg?.publicFolders?.length ? 'public' : 'private') as VisibilityChoice,
+      // A REAL persisted preference now (was faked off publicFolders and never saved).
+      defaultVisibility: (cfg?.defaultVisibility ?? 'private') as VisibilityChoice,
       autoStartOnBoot: false,
       vaultPath: cfg?.vaultPath,
     };
   }
 
   setPreferences(prefs: Partial<Preferences>): Preferences {
-    if (prefs.vaultPath && configExists()) updateConfig({ vaultPath: prefs.vaultPath });
+    if (configExists()) {
+      const patch: Partial<RDKConfig> = {};
+      if (prefs.vaultPath) patch.vaultPath = prefs.vaultPath;
+      if (prefs.defaultVisibility === 'private' || prefs.defaultVisibility === 'public') {
+        patch.defaultVisibility = prefs.defaultVisibility;
+      }
+      if (Object.keys(patch).length) updateConfig(patch);
+    }
     this.config = loadConfigOrNull();
     return this.getPreferences();
   }
@@ -817,12 +938,12 @@ function toPosix(p: string): string {
   return p.split(path.sep).join('/');
 }
 
+// Canonical aggregation (@rdk/core visibility): uniform → that state; a file
+// whose chunks span states shows 'mixed' instead of collapsing to 'public';
+// all-local_only chunks show 'local'.
 function fileState(chunks: StoredChunk[], relPath: string, publicFolders: string[]): FileState {
-  if (chunks.length === 0) return 'local';
-  if (chunks.some(c => c.isPublic)) return 'public';
-  // designated-public folder but not yet published → still private once indexed
-  void relPath; void publicFolders;
-  return 'private';
+  void relPath; void publicFolders; // folder defaults affect index-time choice, not display
+  return computeFileState(chunks);
 }
 
 function hashString(s: string): number {
