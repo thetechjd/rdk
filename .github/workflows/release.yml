@@ -49,6 +49,10 @@ jobs:
         run: |
           ( cd packages/rdk-core && npm run build )
           ( cd packages/rdk-node && npm run build )
+          # rdk-mcp is INLINED into the CLI bundle (mcp:serve does import('@retrodeck/mcp')).
+          # It's a workspace dep, so its dist must exist for esbuild to resolve+bundle it —
+          # otherwise the CLI ships without the MCP server (the 1.4.0 regression).
+          ( cd packages/rdk-mcp && npm run build )
           # Build the CLI bundle NOW so dist/cli.js exists when npm publish first
           # parses the manifest — npm 11 validates bin targets at parse time (before
           # prepublishOnly runs) and silently STRIPS missing bins from the publish.
