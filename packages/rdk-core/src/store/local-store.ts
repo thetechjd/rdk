@@ -25,6 +25,16 @@ export interface StoredChunk {
   qualityScore: number;
   sourcePath?: string;
   sourceAdapter?: string;
+  // ── Versioning (metadata lineage) ────────────────────────────────────────
+  // Chunk ids are content hashes, so an edit mints a NEW chunk; these link the
+  // versions. Superseded chunks stay stored (frozen, history intact) but are
+  // excluded from search.
+  /** Chunk id (content hash) of the prior version this chunk replaced. */
+  supersedes?: string;
+  /** Set when a newer version replaced this chunk (or it was retired). */
+  supersededAt?: Date;
+  /** 1-based version number within the document series. */
+  version?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +91,9 @@ export class LocalStore {
         quality_score REAL DEFAULT 0.0,
         source_path   TEXT,
         source_adapter TEXT,
+        supersedes    TEXT,
+        superseded_at DATETIME,
+        version       INTEGER DEFAULT 1,
         created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -107,6 +120,15 @@ export class LocalStore {
       this.db.exec(`ALTER TABLE chunks ADD COLUMN local_only INTEGER DEFAULT 0`);
     } catch {
       // Column already exists — safe to ignore
+    }
+
+    // Migration: versioning columns (supersedes lineage) for existing databases
+    for (const ddl of [
+      `ALTER TABLE chunks ADD COLUMN supersedes TEXT`,
+      `ALTER TABLE chunks ADD COLUMN superseded_at DATETIME`,
+      `ALTER TABLE chunks ADD COLUMN version INTEGER DEFAULT 1`,
+    ]) {
+      try { this.db.exec(ddl); } catch { /* column already exists */ }
     }
 
     this.db.exec(`
@@ -164,24 +186,26 @@ export class LocalStore {
         UPDATE chunks SET
           title = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
-          source_adapter = ?, updated_at = ?
+          source_adapter = ?, supersedes = ?, version = ?, updated_at = ?
         WHERE id = ?
       `).run(
         chunk.title, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
-        chunk.sourceAdapter ?? null, now, id,
+        chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1, now, id,
       );
     } else {
       this.db.prepare(`
         INSERT INTO chunks (id, title, content, summary, domain, categories,
-          is_public, is_encrypted, local_only, quality_score, source_path, source_adapter, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          is_public, is_encrypted, local_only, quality_score, source_path, source_adapter,
+          supersedes, version, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories),
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
-        chunk.sourcePath ?? null, chunk.sourceAdapter ?? null, now, now,
+        chunk.sourcePath ?? null, chunk.sourceAdapter ?? null,
+        chunk.supersedes ?? null, chunk.version ?? 1, now, now,
       );
     }
 
@@ -211,6 +235,40 @@ export class LocalStore {
     return result.changes > 0;
   }
 
+  /** Mark a chunk as superseded (replaced by a newer version, or retired).
+   *  The row stays — frozen, excluded from search, history intact. */
+  markSuperseded(id: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE chunks SET superseded_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND superseded_at IS NULL`,
+    ).run(id);
+    return result.changes > 0;
+  }
+
+  /** All versions of a document series (live + superseded), newest first.
+   *  The series key is the source file; falls back to nothing for chunks
+   *  indexed without a sourcePath. */
+  getVersions(sourcePath: string, sourceAdapter?: string): StoredChunk[] {
+    const rows = (sourceAdapter
+      ? this.db.prepare(
+          `SELECT * FROM chunks WHERE source_path = ? AND source_adapter = ?
+           ORDER BY version DESC, created_at DESC`,
+        ).all(sourcePath, sourceAdapter)
+      : this.db.prepare(
+          `SELECT * FROM chunks WHERE source_path = ?
+           ORDER BY version DESC, created_at DESC`,
+        ).all(sourcePath)) as Record<string, unknown>[];
+    return rows.map(r => this.rowToChunk(r));
+  }
+
+  /** Highest version number in a document series (0 when none indexed yet). */
+  getLatestVersion(sourcePath: string): number {
+    const row = this.db.prepare(
+      `SELECT MAX(version) AS v FROM chunks WHERE source_path = ?`,
+    ).get(sourcePath) as { v: number | null } | undefined;
+    return row?.v ?? 0;
+  }
+
   markSynced(id: string): void {
     this.db.prepare('UPDATE chunks SET synced_at = ? WHERE id = ?')
       .run(new Date().toISOString(), id);
@@ -236,8 +294,12 @@ export class LocalStore {
   // ── Vector Search ──────────────────────────────────────────────
 
   search(queryEmbedding: Float32Array, topK = 5, privateOnly = true): SearchResult[] {
-    // Pure JS cosine similarity — no sqlite-vec dependency needed
-    const filter = privateOnly ? 'WHERE c.is_public = 0' : '';
+    // Pure JS cosine similarity — no sqlite-vec dependency needed.
+    // Superseded chunks (an edit replaced them, or they were retired) never
+    // appear in search — only the live version of a document answers.
+    const filter = privateOnly
+      ? 'WHERE c.is_public = 0 AND c.superseded_at IS NULL'
+      : 'WHERE c.superseded_at IS NULL';
     const rows = this.db.prepare(`
       SELECT c.*, e.embedding
       FROM chunks c
@@ -446,6 +508,9 @@ export class LocalStore {
       qualityScore: row.quality_score as number,
       sourcePath: row.source_path as string | undefined,
       sourceAdapter: row.source_adapter as string | undefined,
+      supersedes: (row.supersedes as string | null) ?? undefined,
+      supersededAt: row.superseded_at ? new Date(row.superseded_at as string) : undefined,
+      version: (row.version as number | null) ?? 1,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };

@@ -36,6 +36,10 @@ export interface RDKConfig {
   syncIntervalMinutes?: number;    // default: 5
   publicFolders?: string[];        // relative paths within vault that are public
 
+  /** Default visibility for new indexing (re-index, batch flows). Explicit
+   *  per-action choices (drag-drop dialog, publish commands) always win. */
+  defaultVisibility?: 'private' | 'public';
+
   // Encryption
   vaultKeyHex?: string;                      // own vault key (encrypted at rest)
   sharedVaultKeys?: Record<string, string>;  // ownerNodeId → hex key (encrypted at rest)

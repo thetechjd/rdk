@@ -79,6 +79,12 @@ export class SyncService {
           isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
           freshnessAt: chunk.updatedAt.toISOString(),
           chunkTokens: Math.ceil(chunk.content.length / 4),
+          // Version-series metadata: source doc key + lineage. Old centrals
+          // ignore unknown fields; new centrals record the series.
+          sourcePath: chunk.sourcePath,
+          sourceAdapter: chunk.sourceAdapter,
+          supersedesHash: chunk.supersedes,
+          version: chunk.version ?? 1,
         });
       }
 
@@ -103,6 +109,14 @@ export class SyncService {
             synced += result.synced;
             errors += result.errors.length;
             for (const chunk of batch) this.store.markSynced(chunk.chunkHash);
+            // Link version lineage: for each chunk that replaced a prior
+            // version, freeze the old row on central (idempotent; ordering is
+            // guaranteed — the new row just synced in this very batch).
+            for (const chunk of batch) {
+              if (chunk.supersedesHash) {
+                await this.supersedeOnCentral(chunk.supersedesHash, chunk.chunkHash, jwt);
+              }
+            }
             this.log(`[sync] batch synced: ${result.synced} chunk(s)`);
           } else {
             const errorText = await res.text();
@@ -127,6 +141,40 @@ export class SyncService {
       intervalMinutes: this.config.intervalMinutes,
       running: this.timer !== null,
     };
+  }
+
+  /** Link old→new version on central (idempotent; no-op on old centrals). */
+  private async supersedeOnCentral(oldHash: string, newHash: string, jwt: string): Promise<void> {
+    try {
+      await fetch(`${this.config.centralApiUrl}/api/v1/chunks/${oldHash}/supersede`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newChunkHash: newHash }),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (e) {
+      this.log(`[sync] supersede link failed for ${oldHash.slice(0, 8)}…: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Delete a chunk on central (public rows retire server-side, keeping earnings
+   * history). Used when an edit replaces private chunks, so their central rows
+   * don't orphan. Best-effort: returns false on failure.
+   */
+  async deleteOnCentral(chunkHash: string): Promise<boolean> {
+    try {
+      const jwt = await this.getJwt();
+      const res = await fetch(`${this.config.centralApiUrl}/api/v1/chunks/${chunkHash}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${jwt}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return res.ok;
+    } catch (e) {
+      this.log(`[sync] central delete failed for ${chunkHash.slice(0, 8)}…: ${(e as Error).message}`);
+      return false;
+    }
   }
 
   private async getJwt(): Promise<string> {

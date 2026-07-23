@@ -1,5 +1,6 @@
 // packages/rdk-core/src/index.ts
 export * from './adapters/interface.js';
+export * from './types/visibility.js';
 export * from './cleaner.js';
 export * from './chunker.js';
 export * from './crypto.js';

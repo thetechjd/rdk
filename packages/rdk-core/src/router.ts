@@ -1,7 +1,7 @@
 // packages/rdk-core/src/router.ts
-// Query routing: checks private chunks → public network → falls back to LLM.
-// "Private chunks" = encrypted on RDK Central, decrypted locally at query time.
-// This is the piece that collapses token spend 80-90%.
+// Query routing: checks the LOCAL vault (private + your own public chunks) →
+// public network → falls back to LLM. Your own content always answers first
+// and free. This is the piece that collapses token spend 80-90%.
 
 import { decrypt, type VaultKey } from './crypto.js';
 import { type EmbeddingModel } from './models/embedding.js';
@@ -13,6 +13,9 @@ export interface RouterConfig {
   embeddingModel: EmbeddingModel;
   centralApiUrl?: string;
   centralApiKey?: string;
+  /** This node's id — used to recognize the caller's own chunks in network
+   *  results so they are never tipped locally. */
+  nodeId?: string;
   topK?: number;
   minSimilarity?: number;
   maxPrivateChunks?: number;
@@ -32,6 +35,9 @@ export interface NetworkChunk {
   isEncrypted?: boolean;
   score: number;
   tipAmountUsdc: number;
+  /** Set by central when the chunk belongs to the querying user's own account
+   *  (any of their linked nodes). Own content is free — no charge, no tip. */
+  isOwn?: boolean;
   domain?: string;
   categories: string[];
 }
@@ -68,8 +74,12 @@ export class RDKRouter {
     // Step 1: Embed query locally
     const embedding = await cfg.embeddingModel.embed(userQuery);
 
-    // Step 2: Private vault
-    const rawPrivateResults = cfg.localStore.search(embedding, topK, true);
+    // Step 2: The local vault — private AND the user's own public chunks. The
+    // local store only ever holds this user's own content, so everything found
+    // here is theirs: answered locally, free, no network round-trip. (Previously
+    // privateOnly=true hid own public chunks, forcing a charged network fetch
+    // for content the user had sitting on disk.)
+    const rawPrivateResults = cfg.localStore.search(embedding, topK, false);
     const privateResults = rawPrivateResults.map(chunk => {
       if (!chunk.isEncrypted || !cfg.vaultKey) return chunk;
       try {
@@ -101,7 +111,7 @@ export class RDKRouter {
     // Step 3: Network query
     if (cfg.centralApiUrl && cfg.centralApiKey) {
       try {
-        const rawNetworkResults = await this.queryNetwork(embedding, cfg);
+        const { results: rawNetworkResults, settledByCentral } = await this.queryNetwork(embedding, cfg);
         const networkResults = rawNetworkResults.map(chunk => {
           if (!chunk.isEncrypted) return chunk;
           const key = cfg.sharedVaultKeys?.[chunk.nodeId];
@@ -123,17 +133,25 @@ export class RDKRouter {
             matchedChunks: matchedNetwork.map(r => ({ id: r.chunkId, score: r.score })), latencyMs,
           });
 
-          // Enqueue tips for matched network chunks
+          // Tips for matched network chunks. NEVER for the user's own content
+          // (server isOwn flag, or provider node == this node) — own content is
+          // free. tipsPaid REPORTS the query's real cost; the local enqueue
+          // (on-chain x402 rail) only happens when central did NOT already
+          // settle the tips server-side via RetroDeck credits — enqueueing
+          // those too would double-pay.
           const tipsPaid: TipRecord[] = [];
           for (const chunk of matchedNetwork) {
-            if (chunk.tipAmountUsdc > 0) {
-              cfg.localStore.enqueueTip({
-                chunkId: chunk.chunkId,
-                providerNodeId: chunk.nodeId,
-                amountUsdc: chunk.tipAmountUsdc,
-                chain: 'base',
-              });
+            const isOwn = chunk.isOwn === true || (cfg.nodeId != null && chunk.nodeId === cfg.nodeId);
+            if (chunk.tipAmountUsdc > 0 && !isOwn) {
               tipsPaid.push({ chunkId: chunk.chunkId, providerNodeId: chunk.nodeId, amountUsdc: chunk.tipAmountUsdc });
+              if (settledByCentral !== true) {
+                cfg.localStore.enqueueTip({
+                  chunkId: chunk.chunkId,
+                  providerNodeId: chunk.nodeId,
+                  amountUsdc: chunk.tipAmountUsdc,
+                  chain: 'base',
+                });
+              }
             }
           }
 
@@ -180,7 +198,10 @@ export class RDKRouter {
     return jwtToken;
   }
 
-  private async queryNetwork(embedding: Float32Array, cfg: RouterConfig): Promise<NetworkChunk[]> {
+  private async queryNetwork(
+    embedding: Float32Array,
+    cfg: RouterConfig,
+  ): Promise<{ results: NetworkChunk[]; settledByCentral?: boolean }> {
     const jwt = await this.getJwt(cfg);
     const response = await fetch(`${cfg.centralApiUrl}/api/v1/query`, {
       method: 'POST',
@@ -197,16 +218,21 @@ export class RDKRouter {
 
     if (!response.ok) throw new Error(`Network query failed: ${response.status}`);
 
-    const { results } = (await response.json()) as { results: NetworkChunk[]; queryId: string };
+    // settledByCentral: newer centrals settle tips server-side via RetroDeck
+    // credits and say so; absent (older central) → the local x402 queue pays.
+    const { results, settledByCentral } = (await response.json()) as {
+      results: NetworkChunk[]; queryId: string; settledByCentral?: boolean;
+    };
 
     // Fetch chunk content from provider MCP endpoints where available
     const enriched = await Promise.allSettled(
       results.map(r => this.fetchChunkContent(r)),
     );
 
-    return enriched
+    const enrichedResults = enriched
       .map((r, i) => r.status === 'fulfilled' ? r.value : results[i])
       .filter(Boolean) as NetworkChunk[];
+    return { results: enrichedResults, settledByCentral };
   }
 
   private async fetchChunkContent(chunk: NetworkChunk): Promise<NetworkChunk> {

@@ -22,6 +22,11 @@ export interface Document {
   // Index for local search only — never sync to RDK Central. Used to save
   // knowledge retrieved from the network without re-uploading a duplicate.
   localOnly?: boolean;
+  // ── Version context (edit → re-index) ────────────────────────────────────
+  /** Chunk id (content hash) of a prior version this document replaces. */
+  supersedes?: string;
+  /** 1-based version number for the new chunks (series counter). */
+  version?: number;
 }
 
 export interface IndexerConfig {
@@ -125,6 +130,8 @@ export class RDKIndexer {
             qualityScore: density * 100,
             sourcePath: doc.sourcePath,
             sourceAdapter: doc.sourceAdapter,
+            supersedes: doc.supersedes,
+            version: doc.version ?? 1,
           }, embedding);
 
           this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });
@@ -193,6 +200,11 @@ export class RDKIndexer {
         isPublic: chunk.isPublic,
         isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
         freshnessAt: new Date().toISOString(),
+        // Version-series metadata (old centrals ignore unknown fields).
+        sourcePath: chunk.sourcePath,
+        sourceAdapter: chunk.sourceAdapter,
+        supersedesHash: chunk.supersedes,
+        version: chunk.version ?? 1,
         // NO content field — content is served on demand, never synced.
       };
     }).filter(c => c.embedding.length > 0);
