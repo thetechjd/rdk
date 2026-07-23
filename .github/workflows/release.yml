@@ -4,12 +4,15 @@ name: Release
 #   - npm:  npm install -g @retrodeck/rdk
 #   - brew: formula installs @retrodeck/rdk from the npm registry (node@22)
 #   - curl: install.sh installs @retrodeck/rdk@latest under a bundled Node
-# So a release only needs to: publish to npm (done manually before tagging),
-# then point the Homebrew formula at the new version. No standalone binaries.
+# So a release is fully tag-driven — npm publish happens IN CI via npm trusted
+# publishing (OIDC): no npm token exists anywhere. One-time setup on npmjs.com:
+# package @retrodeck/rdk → Settings → Trusted Publisher → GitHub Actions →
+# repository thetechjd/rdk, workflow release.yml. (2FA-bypass automation tokens
+# lose direct-publish rights ~Jan 2027 — this is the successor path.)
 #
-# Release flow:
-#   1. pnpm --filter @retrodeck/rdk publish   (manual, OTP-gated)
-#   2. git tag vX.Y.Z && git push origin vX.Y.Z   → this workflow runs
+# Release flow (end to end):
+#   git tag vX.Y.Z && git push origin vX.Y.Z
+#   → publish-npm (OIDC) → GitHub release → Homebrew formula update
 
 on:
   push:
@@ -20,7 +23,43 @@ permissions:
   contents: write
 
 jobs:
+  publish-npm:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write   # npm trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4  # reads packageManager from package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the libs the CLI bundles
+        run: |
+          ( cd packages/rdk-core && npm run build )
+          ( cd packages/rdk-node && npm run build )
+
+      - name: Publish @retrodeck/rdk (trusted publishing — OIDC, no token)
+        run: |
+          npm install -g npm@latest   # OIDC trusted publishing needs npm >= 11.5.1
+          cd packages/rdk-cli
+          # Skip cleanly if this version is already on the registry (tag re-push).
+          if [ "$(npm view "@retrodeck/rdk@$(node -p 'require("./package.json").version')" version 2>/dev/null)" ]; then
+            echo "Version already published — skipping."
+            exit 0
+          fi
+          npm publish --access public
+
   release:
+    needs: publish-npm
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
