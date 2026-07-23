@@ -198,6 +198,12 @@ app.whenReady().then(() => {
   createWindow();
   if (service.isInitialized()) startWatchers();
 
+  // Update check (throttled to once/day): prompt → confirm → download → installer
+  // hand-off. Delayed so it never competes with startup; packaged builds only.
+  setTimeout(() => {
+    void import('./updater').then(({ checkForUpdates }) => checkForUpdates(mainWindow)).catch(() => void 0);
+  }, 8_000);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

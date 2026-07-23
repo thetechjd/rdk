@@ -444,6 +444,19 @@ async function checkImport(pkg: string): Promise<boolean> {
 
 // ── Parse ─────────────────────────────────────────────────────────────────────
 
+// ── Self-update ──────────────────────────────────────────────────────────────
+program
+  .command('update')
+  .description('Update rdk to the latest version (detects npm vs Homebrew install)')
+  .option('-y, --yes', 'Skip confirmation')
+  .action(async (o) => {
+    const { runUpdate } = await import('./update.js');
+    await runUpdate(version, { yes: !!o.yes });
+  });
+
+// Cached update notice (stderr, TTY-only, zero latency) + background cache refresh.
+void import('./update.js').then((m) => m.maybeNotifyUpdate(version)).catch(() => void 0);
+
 program.parse(process.argv);
 
 if (!process.argv.slice(2).length) {
