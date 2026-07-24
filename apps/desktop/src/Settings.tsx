@@ -121,6 +121,7 @@ function AccountSection() {
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [picking, setPicking] = useState(false);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
+  const [planMethod, setPlanMethod] = useState<'stripe' | 'cryptocadet'>('stripe');
   const [amount, setAmount] = useState('10');
   const [topupMethod, setTopupMethod] = useState<'stripe' | 'cryptocadet'>('stripe');
   const [busy, setBusy] = useState<string | null>(null);
@@ -168,7 +169,11 @@ function AccountSection() {
 
   const changePlan = async (plan: Plan) => {
     setBusy('plan');
-    const r = await window.rdk.selectPlan(plan.id, plan.priceMonthly > 0 ? billingInterval : undefined);
+    const r = await window.rdk.selectPlan(
+      plan.id,
+      plan.priceMonthly > 0 ? billingInterval : undefined,
+      plan.priceMonthly > 0 ? planMethod : undefined,
+    );
     setBusy(null);
     if (!r.ok) { app.toast(r.error ?? 'Plan change failed', true); return; }
     setPicking(false);
@@ -242,6 +247,11 @@ function AccountSection() {
                   <button className={billingInterval === 'monthly' ? 'primary' : ''} onClick={() => setBillingInterval('monthly')}>monthly</button>
                   <button className={billingInterval === 'yearly' ? 'primary' : ''} onClick={() => setBillingInterval('yearly')}>yearly</button>
                   <span className="hint">save ~17%</span>
+                </div>
+                <div className="row" style={{ gap: 6, marginBottom: 8 }}>
+                  <span className="hint">pay with:</span>
+                  <button className={planMethod === 'stripe' ? 'primary' : ''} onClick={() => setPlanMethod('stripe')}>card</button>
+                  <button className={planMethod === 'cryptocadet' ? 'cassette' : ''} onClick={() => setPlanMethod('cryptocadet')}>crypto</button>
                 </div>
                 {plans.map(p => (
                   <button

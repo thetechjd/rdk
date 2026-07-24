@@ -209,8 +209,14 @@ export async function getPlans(): Promise<ApiPlan[]> {
  * `checkoutUrl` to open in the browser — the web checkout handles BOTH card and
  * crypto, so no payment credentials are ever collected in-app.
  */
-export async function selectPlan(planId: string, interval?: 'monthly' | 'yearly'): Promise<{ checkoutUrl: string | null }> {
-  const body: Record<string, unknown> = interval ? { planId, interval, source: 'desktop' } : { planId };
+export async function selectPlan(
+  planId: string,
+  interval?: 'monthly' | 'yearly',
+  method: 'stripe' | 'cryptocadet' = 'stripe',
+): Promise<{ checkoutUrl: string | null }> {
+  // Free is applied immediately (no interval, no method). Paid plans get a browser
+  // checkoutUrl: Stripe card session, or the hosted crypto subscription page.
+  const body: Record<string, unknown> = interval ? { planId, interval, method, source: 'desktop' } : { planId };
   const res = await retrodeckFetch('/api/v1/plans/select', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

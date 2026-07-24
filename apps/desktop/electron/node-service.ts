@@ -836,10 +836,14 @@ export class NodeService {
     }
   }
 
-  async selectPlan(planId: string, interval?: BillingInterval): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }> {
+  async selectPlan(
+    planId: string,
+    interval?: BillingInterval,
+    method: 'stripe' | 'cryptocadet' = 'stripe',
+  ): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }> {
     try {
-      const { checkoutUrl } = await retrodeck.selectPlan(planId, interval);
-      if (checkoutUrl) await shell.openExternal(checkoutUrl); // paid → web checkout (card or crypto)
+      const { checkoutUrl } = await retrodeck.selectPlan(planId, interval, method);
+      if (checkoutUrl) await shell.openExternal(checkoutUrl); // card → Stripe; crypto → hosted subscribe page
       else this.config = loadConfigOrNull();                  // free → applied immediately
       return { ok: true, checkoutUrl };
     } catch (e) {

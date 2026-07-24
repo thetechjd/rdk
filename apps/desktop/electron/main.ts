@@ -157,7 +157,7 @@ function registerHandlers(): void {
     // Billing (RetroDeck API). selectPlan/createTopup open the web checkout
     // themselves; the renderer then polls verifySubscription/verifyTopup.
     getPlans: () => service.getPlans(),
-    selectPlan: (planId: never, interval: never) => service.selectPlan(planId, interval),
+    selectPlan: (planId: never, interval: never, method: never) => service.selectPlan(planId, interval, method),
     verifySubscription: () => service.verifySubscription(),
     createTopup: (amountUsd: never, method: never) => service.createTopup(amountUsd, method),
     verifyTopup: (paymentRef: never) => service.verifyTopup(paymentRef),

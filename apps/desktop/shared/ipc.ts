@@ -307,7 +307,7 @@ export interface RdkApi {
    * opens in the browser (the web checkout takes card OR crypto). Poll
    * verifySubscription() afterwards.
    */
-  selectPlan(planId: string, interval?: BillingInterval): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }>;
+  selectPlan(planId: string, interval?: BillingInterval, method?: 'stripe' | 'cryptocadet'): Promise<{ ok: boolean; checkoutUrl?: string | null; error?: string }>;
   verifySubscription(): Promise<{ paid: boolean; planId?: string; planName?: string }>;
 
   // ── Balance top-up (RetroDeck API) ────────────────────────────────────────
