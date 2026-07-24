@@ -122,6 +122,7 @@ function AccountSection() {
   const [picking, setPicking] = useState(false);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('monthly');
   const [amount, setAmount] = useState('10');
+  const [topupMethod, setTopupMethod] = useState<'stripe' | 'cryptocadet'>('stripe');
   const [busy, setBusy] = useState<string | null>(null);
   // Set after a browser checkout handoff; drives the verify poll (verifying is
   // what actually credits a top-up — there's no async webhook).
@@ -179,7 +180,9 @@ function AccountSection() {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) { app.toast('Enter a valid amount', true); return; }
     setBusy('topup');
-    const r = await window.rdk.createTopup(amt); // card/Stripe; crypto top-up is CLI-only (needs the wallet binary)
+    // Card → Stripe checkout; crypto → the hosted checkout page (pay USDC from a
+    // browser wallet). Both open in the browser; the app polls verify-topup.
+    const r = await window.rdk.createTopup(amt, topupMethod);
     setBusy(null);
     if (!r.ok) { app.toast(r.error ?? 'Could not start top-up', true); return; }
     app.toast('Finish payment in your browser…');
@@ -271,6 +274,11 @@ function AccountSection() {
             <span className="hint">${withdrawable.toFixed(2)} withdrawable</span>
           )}
         </div>
+        <div className="row" style={{ marginTop: 8, gap: 6 }}>
+          <span className="hint">pay with:</span>
+          <button className={topupMethod === 'stripe' ? 'primary' : ''} disabled={!acct?.signedIn} onClick={() => setTopupMethod('stripe')}>card</button>
+          <button className={topupMethod === 'cryptocadet' ? 'cassette' : ''} disabled={!acct?.signedIn} onClick={() => setTopupMethod('cryptocadet')}>crypto</button>
+        </div>
         <div className="row" style={{ marginTop: 8 }}>
           <span className="hint">$</span>
           <input
@@ -285,7 +293,7 @@ function AccountSection() {
           </button>
           <button className="ghost" onClick={() => window.rdk.openTopUp()}>dashboard →</button>
         </div>
-        <div className="hint">Card top-up opens a browser checkout; your balance is credited once confirmed. For crypto (USDC on Base), use the CLI: <code>rdk topup --crypto</code>.</div>
+        <div className="hint">Opens a browser checkout ({topupMethod === 'stripe' ? 'card' : 'pay USDC on Base from your wallet'}); your balance is credited once confirmed.</div>
       </div>
     </>
   );
