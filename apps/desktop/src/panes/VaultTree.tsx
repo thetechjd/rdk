@@ -29,6 +29,21 @@ export function VaultTree() {
     app.openContentForChunk(doc.chunkIds[0], doc.title);
   }, [app]);
 
+  // Footer counter = every document by state, matching what's actually listed:
+  // on-disk vault files (tree.counts) PLUS the indexed docs that aren't files in
+  // the folder (networkDocs). Without the latter, private/public content indexed
+  // from a URL or a former vault path was invisible to the count even though it's
+  // shown above. networkDocs are exactly the docs NOT in the tree, so adding them
+  // to tree.counts can't double-count.
+  const counts = (() => {
+    const c = { local: 0, private: 0, public: 0, mixed: 0, ...(tree?.counts ?? {}) };
+    for (const d of networkDocs) {
+      if (d.state === 'private' || d.state === 'public' || d.state === 'mixed') c[d.state]++;
+      else c.local++; // local-only indexed doc
+    }
+    return c;
+  })();
+
   // Indexing always asks for the visibility explicitly — LOCAL (cancel), PRIVATE, or PUBLIC.
   const askIndex = useCallback((paths: string[]) => {
     const clean = paths.filter(Boolean);
@@ -148,18 +163,17 @@ export function VaultTree() {
         </div>
       </div>
 
-      {/* These are per-FILE states in your vault folder — NOT chunk counts.
-          A file with no indexed chunks counts as 'local' (unindexed). The
-          chunk totals (matching `rdk status`) are in the status bar. Labeling
-          the unit here stops the two being read as the same number. */}
-      <div className="tree-counts" title="Files in your vault by state. Chunk totals are shown in the status bar (rdk status).">
-        <span className="c"><span className="dot private" /> private {tree?.counts.private ?? 0}</span>
-        <span className="c"><span className="dot public" /> public {tree?.counts.public ?? 0}</span>
-        <span className="c"><span className="dot local" /> local {tree?.counts.local ?? 0}</span>
-        {(tree?.counts.mixed ?? 0) > 0 && (
-          <span className="c"><span className="dot mixed" /> mixed {tree?.counts.mixed}</span>
+      {/* Counts DOCUMENTS by state — vault files plus indexed network content,
+          matching the lists above. This is a per-document tally, not chunk
+          totals; the chunk count (matching `rdk status`) is in the status bar. */}
+      <div className="tree-counts" title="Documents by state — vault files plus indexed network content. The chunk total (matching rdk status) is in the status bar.">
+        <span className="c"><span className="dot private" /> private {counts.private}</span>
+        <span className="c"><span className="dot public" /> public {counts.public}</span>
+        <span className="c"><span className="dot local" /> local {counts.local}</span>
+        {counts.mixed > 0 && (
+          <span className="c"><span className="dot mixed" /> mixed {counts.mixed}</span>
         )}
-        <span className="c muted">files</span>
+        <span className="c muted">docs</span>
       </div>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} app={app} newNote={newNote} />}
