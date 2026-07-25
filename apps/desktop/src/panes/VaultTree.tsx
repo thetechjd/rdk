@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
+import type { IndexedDoc, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
 import { useApp } from '../store';
 
 export function VaultTree() {
   const app = useApp();
   const [tree, setTree] = useState<VaultTreeData | null>(null);
+  const [indexedDocs, setIndexedDocs] = useState<IndexedDoc[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dragOver, setDragOver] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; node: VaultNode } | null>(null);
@@ -12,8 +13,21 @@ export function VaultTree() {
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(null);
   const [indexing, setIndexing] = useState<{ paths: string[] } | null>(null);
 
-  const load = useCallback(() => { window.rdk.getVaultTree().then(setTree); }, []);
+  const load = useCallback(() => {
+    window.rdk.getVaultTree().then(setTree);
+    window.rdk.getIndexedDocuments().then(setIndexedDocs).catch(() => setIndexedDocs([]));
+  }, []);
   useEffect(() => { load(); }, [load, app.dataVersion]);
+
+  // Documents the node has indexed that AREN'T files in the vault folder — the
+  // private/public network content the on-disk tree can't show (a page indexed
+  // from a URL, docs synced before the vault path changed, saved results).
+  const networkDocs = indexedDocs.filter(d => !d.inVault && d.chunkIds.length > 0);
+
+  const openDoc = useCallback((doc: IndexedDoc) => {
+    app.selectChunk(doc.chunkIds[0]);
+    app.openContentForChunk(doc.chunkIds[0], doc.title);
+  }, [app]);
 
   // Indexing always asks for the visibility explicitly — LOCAL (cancel), PRIVATE, or PUBLIC.
   const askIndex = useCallback((paths: string[]) => {
@@ -108,6 +122,26 @@ export function VaultTree() {
             <div className="empty">Vault is empty or not set.<br />Drop files below to index.</div>
           )}
         </div>
+
+        {networkDocs.length > 0 && (
+          <div className="indexed-section">
+            <div className="indexed-head" title="Indexed content that isn't a file in this vault folder — private is encrypted on the network, public earns tips. Click to open.">
+              indexed on network · {networkDocs.length}
+            </div>
+            {networkDocs.map(doc => (
+              <div
+                key={doc.key}
+                className={`indexed-row${doc.chunkIds[0] === app.selectedChunkId ? ' selected' : ''}`}
+                onClick={() => openDoc(doc)}
+                title={`${doc.title} — ${doc.chunkCount} chunk${doc.chunkCount === 1 ? '' : 's'} (${doc.state})`}
+              >
+                <span className={`dot ${doc.state}`} />
+                <span className="name">{doc.title}</span>
+                <span className="ct">{doc.chunkCount}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className={`dropzone${dragOver ? ' over' : ''}`}>
           {dragOver ? 'drop to index (choose private/public)' : 'drag files here to index — or drop from your file manager'}

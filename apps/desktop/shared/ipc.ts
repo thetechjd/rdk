@@ -35,6 +35,25 @@ export interface VaultTree {
   counts: { local: number; private: number; public: number; mixed: number };
 }
 
+/**
+ * A document indexed into this node's store, grouped from its live chunks —
+ * INCLUDING content that isn't a file in the current vault folder (pages indexed
+ * from a URL, notes from another vault/machine, saved network results). The
+ * vault tree only shows on-disk files; this surfaces everything else the node
+ * actually holds, so private/public network content is visible in the desktop.
+ */
+export interface IndexedDoc {
+  /** Stable key: source path if present, else the document title. */
+  key: string;
+  title: string;
+  sourcePath?: string;
+  state: FileState;
+  chunkCount: number;
+  chunkIds: string[];
+  /** True when the source file lives under the current vault root (already in the tree). */
+  inVault: boolean;
+}
+
 /** A chunk as surfaced to the inspector / content pane. */
 /** One entry in a document's version history (Inspector "History" section). */
 export interface VersionView {
@@ -248,6 +267,9 @@ export interface RdkApi {
 
   // Vault
   getVaultTree(): Promise<VaultTree>;
+  /** All documents this node has indexed (grouped from live chunks), including
+   *  ones with no file in the vault folder — the network content the tree omits. */
+  getIndexedDocuments(): Promise<IndexedDoc[]>;
   indexPaths(paths: string[], visibility: VisibilityChoice): Promise<{ indexed: number; error?: string }>;
   reindex(): Promise<{ ok: boolean; error?: string }>;
   setFolderPublic(relPath: string, isPublic: boolean): Promise<{ ok: boolean }>;
@@ -329,7 +351,7 @@ export type RdkChannel = Exclude<keyof RdkApi, 'onPush'>;
 
 export const RDK_CHANNELS: RdkChannel[] = [
   'isInitialized', 'getCapabilities', 'chooseVaultDirectory', 'initNode',
-  'getVaultTree', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
+  'getVaultTree', 'getIndexedDocuments', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
   'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
   'deleteChunk', 'getRetrievedFor', 'getVersions',
   'getGraphData', 'query',

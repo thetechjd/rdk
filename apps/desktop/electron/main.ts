@@ -103,6 +103,7 @@ function registerHandlers(): void {
     },
     // vault
     getVaultTree: () => service.getVaultTree(),
+    getIndexedDocuments: () => service.getIndexedDocuments(),
     indexPaths: (paths: never, visibility: never) => service.indexPaths(paths, visibility),
     reindex: () => service.reindex(),
     setFolderPublic: (relPath: never, isPublic: never) => {

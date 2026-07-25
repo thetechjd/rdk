@@ -197,6 +197,21 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 /* Unit hint ("files") — these are per-file states, not chunk counts. */
 .tree-counts .c.muted { color: var(--muted); margin-left: auto; text-transform: uppercase; letter-spacing: 0.08em; }
 
+/* Indexed-on-network section: content in the store that isn't an on-disk file. */
+.indexed-section { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+.indexed-head {
+  padding: 6px 12px; font-size: var(--fs-xs); color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.indexed-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 12px;
+  cursor: pointer; font-size: var(--fs-sm);
+}
+.indexed-row:hover { background: var(--hover, rgba(255,255,255,0.05)); }
+.indexed-row.selected { background: var(--selected, rgba(255,255,255,0.08)); }
+.indexed-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.indexed-row .ct { color: var(--muted); font-size: var(--fs-xs); }
+
 .dropzone {
   margin: 8px 12px; padding: 14px; text-align: center;
   border: 1px dashed var(--border-bright); color: var(--muted);

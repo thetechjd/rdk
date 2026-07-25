@@ -42,7 +42,7 @@ import {
 } from './platform';
 import type {
   Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
-  GraphEdge, GraphNode, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
+  GraphEdge, GraphNode, IndexedDoc, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
   Preferences, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
 } from '../shared/ipc';
 
@@ -117,7 +117,9 @@ export class NodeService {
       embeddingModel: this.embedder,
       localStore: this.getStore(),
       domain: cfg?.domain ?? 'general',
-      syncToNetwork: !!cfg?.centralApiUrl && !!cfg?.apiKey && visibility === 'public',
+      // Private chunks sync encrypted metadata/embeddings just like the CLI.
+      // Only an explicit local-only choice must stay off Central.
+      syncToNetwork: !!cfg?.centralApiUrl && !!cfg?.apiKey && visibility !== 'local',
       centralApiUrl: cfg?.centralApiUrl,
       centralApiKey: cfg?.apiKey,
       vaultKey: this.vaultKey(),
@@ -222,6 +224,48 @@ export class NodeService {
 
     const nodes = root && fs.existsSync(root) ? walk(root) : [];
     return { root, vaultName: root ? path.basename(root) : 'No vault', nodes, counts };
+  }
+
+  /**
+   * Every document this node has indexed, grouped from its LIVE chunks — private
+   * (encrypted on the network), public (plaintext, earning), and local-only
+   * alike. Unlike getVaultTree (which walks on-disk files), this reads the store
+   * directly, so content indexed from a URL or another machine (e.g. a Wikipedia
+   * page, or docs synced before the vault folder changed) is visible in the
+   * desktop instead of being hidden because there's no matching file on disk.
+   */
+  getIndexedDocuments(): IndexedDoc[] {
+    const cfg = this.getConfig();
+    const root = cfg?.vaultPath ? toPosix(cfg.vaultPath).replace(/\/+$/, '') : '';
+
+    const byDoc = new Map<string, StoredChunk[]>();
+    for (const c of this.getStore().getAllChunks()) {
+      if (c.supersededAt) continue; // live versions only — matches the counts
+      const key = (c.sourcePath && c.sourcePath.trim())
+        || c.title.split(' — ')[0].trim()
+        || c.id;
+      const arr = byDoc.get(key) ?? [];
+      arr.push(c);
+      byDoc.set(key, arr);
+    }
+
+    const docs: IndexedDoc[] = [];
+    for (const [key, chunks] of byDoc) {
+      const sourcePath = chunks.find(c => c.sourcePath)?.sourcePath;
+      const inVault = !!sourcePath && !!root && toPosix(sourcePath).startsWith(root + '/');
+      docs.push({
+        key,
+        title: chunks[0].title.split(' — ')[0].trim() || key,
+        sourcePath,
+        state: computeFileState(chunks),
+        chunkCount: chunks.length,
+        chunkIds: chunks.map(c => c.id),
+        inVault,
+      });
+    }
+    // Network/indexed-only docs first (the ones the tree can't show), then A–Z.
+    return docs.sort((a, b) =>
+      (Number(a.inVault) - Number(b.inVault)) || a.title.localeCompare(b.title));
   }
 
   private chunksBySourcePath(): Map<string, StoredChunk[]> {
