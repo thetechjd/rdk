@@ -171,6 +171,7 @@ export class NodeService {
     const cfg = this.getConfig();
     const root = cfg?.vaultPath ?? '';
     const chunksByPath = this.chunksBySourcePath();
+    const chunksBySourceBase = this.chunksBySourceBaseName();
     const orphansByName = this.orphanChunksByDocName();
     const publicFolders = cfg?.publicFolders ?? [];
     const counts = { local: 0, private: 0, public: 0, mixed: 0 };
@@ -191,12 +192,21 @@ export class NodeService {
           const children = walk(abs);
           if (children.length > 0) out.push({ name: e.name, path: abs, relPath, type: 'folder', children });
         } else if (TEXT_EXTS.has(path.extname(e.name).toLowerCase())) {
-          // Prefer a sourcePath match; fall back to a name match for chunks indexed
-          // WITHOUT a sourcePath (older adapters dropped it), so their private content
-          // still links to the file and opens decrypted instead of showing as "local".
-          const baseName = path.basename(e.name, path.extname(e.name)).toLowerCase();
+          // Resolve this file's chunks, most-specific match first:
+          //  1. exact sourcePath (absolute, then vault-relative)
+          //  2. sourcePath BASENAME — catches chunks whose stored sourcePath is a
+          //     different-but-equivalent path (indexed from another machine/vault
+          //     root, or a normalization mismatch). Without this, an indexed file
+          //     like "Welcome to RDK.md" falls through and is mislabeled unindexed.
+          //  3. doc-name of chunks stored WITHOUT any sourcePath (older adapters).
+          const fileBaseFull = e.name.toLowerCase();                                   // "welcome to rdk.md"
+          const baseName = path.basename(e.name, path.extname(e.name)).toLowerCase();  // "welcome to rdk"
           const chunks =
-            chunksByPath.get(abs) ?? chunksByPath.get(relPath) ?? orphansByName.get(baseName) ?? [];
+            chunksByPath.get(abs)
+            ?? chunksByPath.get(relPath)
+            ?? chunksBySourceBase.get(fileBaseFull)
+            ?? orphansByName.get(baseName)
+            ?? [];
           const state = fileState(chunks, relPath, publicFolders);
           counts[state]++;
           out.push({
@@ -224,6 +234,33 @@ export class NodeService {
       map.set(c.sourcePath, arr);
     }
     return map;
+  }
+
+  /**
+   * Fallback index keyed by the BASENAME of a chunk's sourcePath (lowercased,
+   * with extension). Links a file to its chunks when the stored sourcePath is a
+   * valid-but-non-matching path (indexed from a different machine or vault root,
+   * or a path-normalization mismatch) so it isn't mislabeled unindexed. Only
+   * unambiguous basenames are kept — if two indexed files share a basename the
+   * key is dropped, falling back to the exact-path match.
+   */
+  private chunksBySourceBaseName(): Map<string, StoredChunk[]> {
+    const bySource = new Map<string, StoredChunk[]>(); // sourcePath → chunks
+    for (const c of this.getStore().getAllChunks()) {
+      if (!c.sourcePath || c.supersededAt) continue;
+      const arr = bySource.get(c.sourcePath) ?? [];
+      arr.push(c);
+      bySource.set(c.sourcePath, arr);
+    }
+    const byBase = new Map<string, StoredChunk[]>();
+    const ambiguous = new Set<string>();
+    for (const [sourcePath, chunks] of bySource) {
+      const base = path.basename(sourcePath).toLowerCase();
+      if (byBase.has(base)) { ambiguous.add(base); continue; }
+      byBase.set(base, chunks);
+    }
+    for (const base of ambiguous) byBase.delete(base);
+    return byBase;
   }
 
   /**

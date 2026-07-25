@@ -16,6 +16,30 @@ export interface SyncConfig {
   log?: (message: string) => void;
 }
 
+/** Response shape of POST /api/v1/chunks/sync (fields optional for old centrals). */
+interface SyncResponse {
+  synced: number;
+  skipped?: number;
+  errors?: string[];
+  acceptedHashes?: string[];
+  limitReached?: boolean;
+}
+
+/**
+ * The chunk_hashes central actually persisted for a batch. Prefers the explicit
+ * `acceptedHashes` list; falls back (old central) to "everything not named in an
+ * errors[] entry", whose format is "<hash>: <reason>".
+ */
+function acceptedFrom(result: SyncResponse, batchHashes: string[]): Set<string> {
+  if (Array.isArray(result.acceptedHashes)) return new Set(result.acceptedHashes);
+  const failed = new Set(
+    (result.errors ?? [])
+      .map((e) => e.split(':')[0]?.trim())
+      .filter((h): h is string => !!h),
+  );
+  return new Set(batchHashes.filter((h) => !failed.has(h)));
+}
+
 export class SyncService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private syncing = false;
@@ -105,19 +129,25 @@ export class SyncService {
           });
 
           if (res.ok) {
-            const result = await res.json() as { synced: number; errors: string[] };
+            const result = await res.json() as SyncResponse;
             synced += result.synced;
-            errors += result.errors.length;
-            for (const chunk of batch) this.store.markSynced(chunk.chunkHash);
-            // Link version lineage: for each chunk that replaced a prior
-            // version, freeze the old row on central (idempotent; ordering is
-            // guaranteed — the new row just synced in this very batch).
+            errors += (result.errors?.length ?? 0);
+            // Mark synced ONLY the chunks central actually persisted. Skipped
+            // chunks (plan limit, bad embedding, DB error) stay pending so they
+            // re-push next cycle — never falsely flagged synced on a 200.
+            const accepted = acceptedFrom(result, batch.map(c => c.chunkHash));
             for (const chunk of batch) {
-              if (chunk.supersedesHash) {
+              if (accepted.has(chunk.chunkHash)) this.store.markSynced(chunk.chunkHash);
+            }
+            // Link version lineage only for chunks that actually synced. Freeze
+            // the old row on central (idempotent; the new row just synced here).
+            for (const chunk of batch) {
+              if (chunk.supersedesHash && accepted.has(chunk.chunkHash)) {
                 await this.supersedeOnCentral(chunk.supersedesHash, chunk.chunkHash, jwt);
               }
             }
-            this.log(`[sync] batch synced: ${result.synced} chunk(s)`);
+            this.log(`[sync] batch synced: ${accepted.size} chunk(s)` +
+              (accepted.size < batch.length ? ` (${batch.length - accepted.size} left pending)` : ''));
           } else {
             const errorText = await res.text();
             this.log(`[sync] batch failed: HTTP ${res.status} — ${errorText}`);
@@ -133,6 +163,45 @@ export class SyncService {
     }
 
     return { synced, errors };
+  }
+
+  /**
+   * Reconcile local sync state against central: ask which locally-"synced"
+   * chunks central still actually stores, and clear `synced_at` on the ones it
+   * doesn't (hard-deleted on re-index, lost, or owned by a since-orphaned node).
+   * Cleared chunks re-push on the next sync. Returns how many were re-queued.
+   *
+   * This is the repair path for `rdk vault:sync --verify`; it fixes the "status
+   * says N synced but central only has M" drift at its source.
+   */
+  async verify(): Promise<{ checked: number; missing: number }> {
+    const hashes = this.store.getSyncedChunkIds();
+    if (hashes.length === 0) return { checked: 0, missing: 0 };
+
+    const jwt = await this.getJwt();
+    const existing = new Set<string>();
+    const batchSize = 200;
+    for (let i = 0; i < hashes.length; i += batchSize) {
+      const batch = hashes.slice(i, i + batchSize);
+      const res = await fetch(`${this.config.centralApiUrl}/api/v1/chunks/exists`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hashes: batch }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) {
+        // Old central without the /exists endpoint → cannot verify; do NOT
+        // re-queue everything (that would be a needless full re-sync).
+        throw new Error(`verify unsupported by central (HTTP ${res.status})`);
+      }
+      const { existing: present } = await res.json() as { existing: string[] };
+      for (const h of present) existing.add(h);
+    }
+
+    const missing = hashes.filter((h) => !existing.has(h));
+    if (missing.length) this.store.markUnsynced(missing);
+    this.log(`[sync] verify: ${hashes.length} checked, ${missing.length} missing → re-queued`);
+    return { checked: hashes.length, missing: missing.length };
   }
 
   getStatus(): { enabled: boolean; intervalMinutes: number; running: boolean } {

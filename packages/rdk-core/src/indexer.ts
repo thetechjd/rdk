@@ -221,8 +221,20 @@ export class RDKIndexer {
     });
 
     if (response.ok) {
+      // Mark synced ONLY the chunks central actually persisted. A 200 can still
+      // skip chunks (plan limit, bad embedding); the rest stay pending and
+      // re-push on the next sync instead of being falsely flagged synced.
+      const result = await response.json().catch(() => ({})) as
+        { acceptedHashes?: string[]; errors?: string[] };
+      const accepted = Array.isArray(result.acceptedHashes)
+        ? new Set(result.acceptedHashes)
+        : new Set(
+            unsynced
+              .map(c => c.id)
+              .filter(id => !(result.errors ?? []).some(e => e.split(':')[0]?.trim() === id)),
+          );
       for (const chunk of unsynced) {
-        this.config.localStore.markSynced(chunk.id);
+        if (accepted.has(chunk.id)) this.config.localStore.markSynced(chunk.id);
       }
     }
   }

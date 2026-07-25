@@ -345,13 +345,20 @@ export class LocalStore {
   // ── Stats ──────────────────────────────────────────────────────
 
   getStats(): { totalChunks: number; publicChunks: number; privateChunks: number; localChunks: number; unsyncedChunks: number; pendingChunks: number; syncedChunks: number } {
-    const total = (this.db.prepare('SELECT COUNT(*) as n FROM chunks').get() as { n: number }).n;
-    const pub = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND local_only = 0').get() as { n: number }).n;
-    const local = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE local_only = 1').get() as { n: number }).n;
-    const unsynced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND synced_at IS NULL AND local_only = 0').get() as { n: number }).n;
+    // Counts reflect LIVE chunks only. Superseded rows (an edit replaced them, or
+    // they were retired/unpublished) are kept for version history (getVersions)
+    // but never counted as active — otherwise every edit inflates the totals and
+    // the local count drifts above what the network actually stores (central
+    // hard-deletes replaced private chunks, leaving no ghost). `superseded_at`
+    // is the same live/dead boundary that `search()` already applies.
+    const live = 'superseded_at IS NULL';
+    const total = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE ${live}`).get() as { n: number }).n;
+    const pub = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND local_only = 0 AND ${live}`).get() as { n: number }).n;
+    const local = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE local_only = 1 AND ${live}`).get() as { n: number }).n;
+    const unsynced = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE is_public = 1 AND synced_at IS NULL AND local_only = 0 AND ${live}`).get() as { n: number }).n;
     // Any non-local chunk (private or public) not yet pushed to RDK Central.
-    const pending = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NULL AND local_only = 0').get() as { n: number }).n;
-    const synced = (this.db.prepare('SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0').get() as { n: number }).n;
+    const pending = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NULL AND local_only = 0 AND ${live}`).get() as { n: number }).n;
+    const synced = (this.db.prepare(`SELECT COUNT(*) as n FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND ${live}`).get() as { n: number }).n;
     // private = on-network private chunks (exclude local-only, counted separately)
     return { totalChunks: total, publicChunks: pub, privateChunks: total - pub - local, localChunks: local, unsyncedChunks: unsynced, pendingChunks: pending, syncedChunks: synced };
   }
@@ -580,6 +587,34 @@ export class LocalStore {
   resetSyncState(): number {
     // Local-only chunks are never synced — leave them out of the re-sync.
     return this.db.prepare('UPDATE chunks SET synced_at = NULL WHERE local_only = 0').run().changes;
+  }
+
+  /**
+   * chunk ids (= content hashes) of LIVE synced chunks (excludes local-only and
+   * superseded). The reconcile path checks these against central; superseded
+   * rows are intentionally left out so a replaced version is never resurrected.
+   */
+  getSyncedChunkIds(): string[] {
+    const rows = this.db.prepare(
+      'SELECT id FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND superseded_at IS NULL',
+    ).all() as { id: string }[];
+    return rows.map(r => r.id);
+  }
+
+  /**
+   * Clear synced_at on specific chunks so the next sync re-pushes them. Used by
+   * the reconcile/repair path (rdk vault:sync --verify) when central no longer
+   * has a chunk the local index believed was synced.
+   */
+  markUnsynced(ids: string[]): number {
+    if (!ids.length) return 0;
+    const stmt = this.db.prepare('UPDATE chunks SET synced_at = NULL WHERE id = ?');
+    const tx = this.db.transaction((batch: string[]) => {
+      let n = 0;
+      for (const id of batch) n += stmt.run(id).changes;
+      return n;
+    });
+    return tx(ids);
   }
 
   close() {

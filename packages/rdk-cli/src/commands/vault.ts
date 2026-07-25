@@ -122,7 +122,7 @@ export async function vaultStatus(): Promise<void> {
   console.log(`${t.dim('unsynced:')}        ${t.body(stats.unsyncedChunks.toLocaleString())}`);
 }
 
-export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
+export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}): Promise<void> {
   const ora = (await import('ora')).default;
   const config = loadConfig();
 
@@ -149,6 +149,23 @@ export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
 
     const { LocalStore } = await import('@rdk/core');
     const store = new LocalStore();
+
+    // Reconcile first: re-queue any locally-"synced" chunks the network no
+    // longer stores (hard-deleted on re-index, or owned by an orphaned node).
+    if (opts.verify) {
+      spinner.text = 'Reconciling with the network...';
+      try {
+        const { SyncService } = await import('@rdk/node/sync-service');
+        const sync = new SyncService(
+          { enabled: false, intervalMinutes: 0, centralApiUrl: config.centralApiUrl, centralApiKey: config.apiKey, log: () => {} },
+          store,
+        );
+        const { checked, missing } = await sync.verify();
+        spinner.text = `Reconciled ${checked} chunk(s) — ${missing} re-queued for sync...`;
+      } catch (e) {
+        spinner.text = `Reconcile skipped (${(e as Error).message}) — syncing...`;
+      }
+    }
 
     if (opts.force) {
       const reset = store.resetSyncState();
@@ -198,8 +215,19 @@ export async function vaultSync(opts: { force?: boolean } = {}): Promise<void> {
         });
 
         if (res.ok) {
-          store.markSynced(chunk.id);
-          synced++;
+          // A 200 can still skip this chunk (plan limit, bad embedding). Trust
+          // the body: only mark synced if central actually persisted it.
+          const result = await res.json().catch(() => null) as
+            | { synced?: number; acceptedHashes?: string[] } | null;
+          const accepted = Array.isArray(result?.acceptedHashes)
+            ? result!.acceptedHashes.includes(chunk.id)
+            : (result?.synced ?? 1) > 0; // old central: infer from synced count
+          if (accepted) {
+            store.markSynced(chunk.id);
+            synced++;
+          } else {
+            failed++;
+          }
         } else {
           failed++;
         }

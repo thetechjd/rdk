@@ -194,6 +194,8 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
   border-top: 1px solid var(--border); font-size: var(--fs-xs);
 }
 .tree-counts .c { display: flex; align-items: center; gap: 5px; }
+/* Unit hint ("files") — these are per-file states, not chunk counts. */
+.tree-counts .c.muted { color: var(--muted); margin-left: auto; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .dropzone {
   margin: 8px 12px; padding: 14px; text-align: center;

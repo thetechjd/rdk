@@ -114,13 +114,18 @@ export function VaultTree() {
         </div>
       </div>
 
-      <div className="tree-counts">
+      {/* These are per-FILE states in your vault folder — NOT chunk counts.
+          A file with no indexed chunks counts as 'local' (unindexed). The
+          chunk totals (matching `rdk status`) are in the status bar. Labeling
+          the unit here stops the two being read as the same number. */}
+      <div className="tree-counts" title="Files in your vault by state. Chunk totals are shown in the status bar (rdk status).">
         <span className="c"><span className="dot private" /> private {tree?.counts.private ?? 0}</span>
         <span className="c"><span className="dot public" /> public {tree?.counts.public ?? 0}</span>
         <span className="c"><span className="dot local" /> local {tree?.counts.local ?? 0}</span>
         {(tree?.counts.mixed ?? 0) > 0 && (
           <span className="c"><span className="dot mixed" /> mixed {tree?.counts.mixed}</span>
         )}
+        <span className="c muted">files</span>
       </div>
 
       {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} app={app} newNote={newNote} />}

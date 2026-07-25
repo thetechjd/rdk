@@ -66,9 +66,10 @@ vault
   .command('sync')
   .description('Sync unsynced chunks (private + public) to the network')
   .option('--force', 'Re-sync all chunks, ignoring synced status')
+  .option('--verify', 'Reconcile with the network first: re-queue chunks the network no longer has')
   .action(async (opts) => {
     const { vaultSync } = await import('./commands/vault.js');
-    await vaultSync({ force: !!opts.force });
+    await vaultSync({ force: !!opts.force, verify: !!opts.verify });
   });
 
 vault
@@ -115,7 +116,7 @@ vault
 // Colon shorthands
 program.command('vault:connect <adapter>').option('-p, --path <path>').action(async (a, o) => { const { vaultConnect } = await import('./commands/vault.js'); await vaultConnect(a, o.path); });
 program.command('vault:index').option('--force').option('--public').action(async (o) => { const { vaultIndex } = await import('./commands/vault.js'); await vaultIndex({ force: o.force, isPublic: !!o.public }); });
-program.command('vault:sync').option('--force', 'Re-sync all chunks, ignoring synced status').action(async (opts) => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
+program.command('vault:sync').option('--force', 'Re-sync all chunks, ignoring synced status').option('--verify', 'Reconcile with the network first: re-queue chunks the network no longer has').action(async (opts) => { const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force, verify: !!opts.verify }); });
 program.command('vault:publish [path]').description('Publish private chunks to the network (whole vault, or one file). Asks first.').option('-y, --yes', 'Skip confirmation').action(async (p, o) => { const { vaultPublish } = await import('./commands/vault.js'); await vaultPublish({ path: p, yes: !!o.yes }); });
 program.command('delete <pathOrChunkId>').description('Delete a file’s chunks (or one chunk) from the index — locally and on the network. Public rows retire (history kept); the file on disk is untouched.').option('-y, --yes', 'Skip confirmation').action(async (tgt, o) => { const { vaultDelete } = await import('./commands/vault.js'); await vaultDelete(tgt, { yes: !!o.yes }); });
 program.command('vault:status').action(async () => { const { vaultStatus } = await import('./commands/vault.js'); await vaultStatus(); });
