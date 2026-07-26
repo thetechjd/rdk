@@ -1,6 +1,6 @@
 {
   "name": "rdk-monorepo",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
   "description": "Retrieval Development Kit — monorepo root (not published; the CLI is @retrodeck/rdk in packages/rdk-cli)",
   "workspaces": [
