@@ -1,7 +1,7 @@
 {
   "name": "@rdk/core",
   "version": "1.0.0",
-  "description": "RDK core \u2014 query router, indexer, local vector store",
+  "description": "RDK core — query router, indexer, local vector store",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,7 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --experimental-vm-modules $(pnpm bin)/jest",
+    "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -24,7 +24,8 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.10",
+    "@types/node": "^22.15.21",
     "typescript": "^5.8.3",
-    "@types/node": "^22.15.21"
+    "vitest": "^3.2.7"
   }
 }

@@ -33,9 +33,22 @@ export interface ApiPlan {
   max_chunks: number;
 }
 
+export interface BalanceStatus {
+  level: 'ok' | 'low' | 'critical' | 'empty';
+  balance: number;
+  threshold: number;
+  thresholdIsDefault: boolean;
+  muted: boolean;
+  spendable: number;
+  message: string;
+  action: 'none' | 'topup';
+}
+
 export interface BalanceInfo {
   balanceUsdc: number;
   creditLimitUsd: number;
+  /** Absent when talking to an API older than this field. */
+  balanceStatus?: BalanceStatus;
 }
 
 async function refreshAccessToken(apiBase: string, refreshToken: string): Promise<string> {
@@ -192,8 +205,16 @@ export async function getMe(): Promise<{ id?: string; email?: string; emailVerif
 export async function getBalance(): Promise<BalanceInfo | null> {
   const res = await retrodeckFetch('/api/v1/balances/me');
   if (!res.ok) return null;
-  const d = (await res.json()) as { balanceUsdc?: number; creditLimitUsd?: number };
-  return { balanceUsdc: Number(d.balanceUsdc ?? 0), creditLimitUsd: Number(d.creditLimitUsd ?? 0) };
+  const d = (await res.json()) as {
+    balanceUsdc?: number;
+    creditLimitUsd?: number;
+    balanceStatus?: BalanceStatus;
+  };
+  return {
+    balanceUsdc: Number(d.balanceUsdc ?? 0),
+    creditLimitUsd: Number(d.creditLimitUsd ?? 0),
+    balanceStatus: d.balanceStatus,
+  };
 }
 
 // ── Plans / subscription ─────────────────────────────────────────────────────

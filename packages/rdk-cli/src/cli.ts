@@ -281,7 +281,13 @@ program.command('account').description('Show plan, node ID, stats').action(async
 program.command('account:login').description('Log in to RetroDeck account').action(async () => { const { accountLogin } = await import('./commands/account.js'); await accountLogin(); });
 program.command('account:upgrade').description('Change your plan (interactive — upgrade or downgrade)').action(async () => { const { upgradeAccount } = await import('./commands/account.js'); await upgradeAccount(); });
 program.command('account:relink').description('Link this node to your RetroDeck account (fixes empty dashboard)').action(async () => { const { accountRelink } = await import('./commands/account.js'); await accountRelink(); });
-program.command('balance').description('Show your current USDC balance').action(async () => { const { showBalance } = await import('./commands/balance.js'); await showBalance(); });
+program.command('balance').description('Show your current USDC balance').option('--json', 'Machine-readable output').action(async (opts) => { const { showBalance } = await import('./commands/balance.js'); await showBalance({ json: !!opts.json }); });
+// set-limit / set-alert were previously reachable ONLY during `rdk init`, so a
+// user could never change them afterwards — and the alert threshold defaults to
+// 0, which silently disables low-balance warnings entirely.
+program.command('subscription:status').description('Why your crypto subscription is or is not collecting').option('--json', 'Machine-readable output').action(async (opts) => { const { showSubscriptionStatus } = await import('./commands/balance.js'); await showSubscriptionStatus({ json: !!opts.json }); });
+program.command('balance:limit <usd>').description('Set the credit limit — earnings below it fund queries, above it are withdrawable').action(async (usd) => { const { setLimitCommand } = await import('./commands/balance.js'); await setLimitCommand(usd); });
+program.command('balance:alert [usd]').description('Email me when my balance drops below this amount').option('--off', 'Disable low-balance alerts').action(async (usd, opts) => { const { setAlertCommand } = await import('./commands/balance.js'); await setAlertCommand(usd, { off: !!opts.off }); });
 program.command('topup [amount]').description('Add USDC credit — card (Stripe) or crypto (CryptoCadet); default $10').option('--crypto', 'Pay with crypto (USDC on Base) via CryptoCadet').option('--stripe', 'Pay with a credit card via Stripe').action(async (amount, opts) => { const { topup } = await import('./commands/balance.js'); await topup(amount, { method: opts.crypto ? 'cryptocadet' : opts.stripe ? 'stripe' : undefined }); });
 program.command('account:apikey:rotate').description('Rotate API key').action(async () => { const { rotateApiKey } = await import('./commands/account.js'); await rotateApiKey(); });
 

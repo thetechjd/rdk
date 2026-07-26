@@ -188,6 +188,17 @@ export interface Account {
   centralApiUrl?: string;
   /** True when the RetroDeck session expired and the user must sign in again. */
   sessionExpired?: boolean;
+  /** Server-computed low-balance status; `message` is rendered verbatim. */
+  balanceStatus?: {
+    level: 'ok' | 'low' | 'critical' | 'empty';
+    balance: number;
+    threshold: number;
+    thresholdIsDefault: boolean;
+    muted: boolean;
+    spendable: number;
+    message: string;
+    action: 'none' | 'topup';
+  };
 }
 
 /** A subscription plan as served by the RetroDeck API (never hardcoded). */

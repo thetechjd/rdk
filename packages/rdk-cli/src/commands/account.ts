@@ -1,9 +1,19 @@
 // packages/rdk-cli/src/commands/account.ts
 import { loadConfig, updateConfig } from '../config.js';
 import { retrodeckFetch, RetrodeckAuthError } from '../retrodeck-api.js';
+import {
+  CRYPTO_POLL,
+  activateCryptoPlan,
+  fetchPlans,
+  pollPlanActivation,
+  selectPlan,
+  fetchBalance,
+  sessionFromConfig,
+} from '../payments.js';
 import { LocalStore } from '@rdk/core';
 import { t, mark, divider } from '../theme.js';
 import { grantCryptocadetSubscription, type CryptoCadetPlanOffer } from './cryptocadet.js';
+import { printBalanceWarning } from './balance.js';
 
 export async function showAccount(): Promise<void> {
   const config = loadConfig();
@@ -48,16 +58,17 @@ export async function showAccount(): Promise<void> {
 
   if (config.retrodeckApiUrl && config.retrodeckAccessToken) {
     try {
-      const res = await retrodeckFetch('/api/v1/balances/me');
-      if (res.ok) {
-        const data = await res.json() as { balanceUsdc: number; creditLimitUsd: number };
-        console.log(`Balance:      ${t.green(`$${Number(data.balanceUsdc).toFixed(4)} USDC`)}`);
-        if (data.creditLimitUsd > 0) {
-          console.log(`Credit limit: ${t.body(`$${Number(data.creditLimitUsd).toFixed(2)}`)}`);
-        }
-      } else {
-        console.log(`Balance:      ${t.dim(`unavailable (HTTP ${res.status})`)}`);
+      const balance = await fetchBalance(sessionFromConfig(config.retrodeckApiUrl));
+      // Colour by the SERVER's assessment, not unconditionally green — an always-
+      // green balance is why "insufficient balance" arrived as a surprise.
+      const level = balance.status?.level ?? 'ok';
+      const paint = level === 'ok' ? t.green : level === 'low' ? t.warn : t.error;
+      console.log(`Balance:      ${paint(`$${balance.balanceUsdc.toFixed(4)} USDC`)}`);
+      if (balance.creditLimitUsd > 0) {
+        console.log(`Credit limit: ${t.body(`$${balance.creditLimitUsd.toFixed(2)}`)}`);
       }
+      console.log('');
+      printBalanceWarning(balance.status);
     } catch (e) {
       if (e instanceof RetrodeckAuthError) {
         console.log(`Balance:      ${t.warn('session expired — run: rdk account:login')}`);
@@ -199,13 +210,13 @@ export async function upgradeAccount(): Promise<void> {
 
   const { select, pressEnter } = await import('../prompts.js');
 
+  const session = sessionFromConfig(config.retrodeckApiUrl);
+
   // Live plans — the same source the dashboard pricing reads (never hardcoded).
   const spinner = ora('Fetching plans...').start();
   let plans: ApiPlan[];
   try {
-    const res = await retrodeckFetch('/api/v1/plans');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    plans = await res.json() as ApiPlan[];
+    plans = await fetchPlans(session);
     spinner.stop();
   } catch (e) {
     spinner.fail(e instanceof RetrodeckAuthError
@@ -228,19 +239,27 @@ export async function upgradeAccount(): Promise<void> {
   if (planId === current) { console.log(t.dim('  No change.')); return; }
   const selected = plans.find(p => p.id === planId)!;
 
-  // Downgrade to Free — immediate, no payment.
+  // Downgrade to Free — applied immediately, and it CANCELS the active
+  // subscription server-side. Confirm first: it is an irreversible billing
+  // change, not a navigation.
   if (selected.price_monthly === 0) {
+    const { confirm } = await import('../prompts.js');
+    const ok = await confirm({
+      message: 'Switching to Free cancels your current subscription. Continue?',
+      default: false,
+    });
+    if (!ok) { console.log(t.dim('  No change.')); return; }
+
     const s = ora('Switching to Free...').start();
     try {
-      const res = await retrodeckFetch('/api/v1/plans/select', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId: 'free' }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await selectPlan(session, { planId: 'free' });
       updateConfig({ plan: 'free' });
-      s.succeed('Switched to Free.');
-    } catch (e) { s.fail((e as Error).message); }
+      s.succeed('Switched to Free — your subscription has been cancelled.');
+    } catch (e) {
+      // The server refuses to downgrade if the cancellation failed, so the user
+      // is still on their paid plan and still being billed. Say so.
+      s.fail(`${(e as Error).message} — you are still on ${current}.`);
+    }
     return;
   }
 
@@ -273,13 +292,7 @@ export async function upgradeAccount(): Promise<void> {
 
   const s = ora('Creating checkout...').start();
   try {
-    const res = await retrodeckFetch('/api/v1/plans/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId, interval, source: 'cli' }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { checkoutUrl } = await res.json() as { checkoutUrl: string | null };
+    const { checkoutUrl } = await selectPlan(session, { planId, interval, method: 'stripe' });
     s.stop();
     if (!checkoutUrl) { console.log(t.warn('No checkout URL returned.')); return; }
 
@@ -292,24 +305,12 @@ export async function upgradeAccount(): Promise<void> {
 
     await pressEnter('Complete the payment in your browser, then press Enter:');
     const verify = ora('Confirming your upgrade...').start();
-    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-    let activated = false;
-    for (let i = 0; i < 12 && !activated; i++) {
-      try {
-        const vr = await retrodeckFetch('/api/v1/plans/verify-payment');
-        if (vr.ok) {
-          const v = await vr.json() as { paid?: boolean; plan?: { id?: string; name?: string } };
-          if (v.paid) {
-            activated = true;
-            updateConfig({ plan: v.plan?.id ?? planId });
-            verify.succeed(`${v.plan?.name ?? selected.name} plan activated`);
-            break;
-          }
-        }
-      } catch { /* keep polling */ }
-      await sleep(2500);
-    }
-    if (!activated) {
+    const result = await pollPlanActivation(session);
+
+    if (result.paid) {
+      updateConfig({ plan: result.planId ?? planId });
+      verify.succeed(`${result.planName ?? selected.name} plan activated`);
+    } else {
       verify.warn('Upgrade not confirmed yet — it can take a moment to settle.');
       console.log(t.dim('  Run `rdk account` once it completes to see your new plan.'));
     }
@@ -324,17 +325,10 @@ export async function upgradeAccount(): Promise<void> {
 // POST plans/activate-crypto, then poll until the first charge settles.
 async function upgradeWithCrypto(planId: string, interval: 'monthly' | 'yearly', planName: string): Promise<void> {
   const ora = (await import('ora')).default;
-  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
+  const session = sessionFromConfig(loadConfig().retrodeckApiUrl);
   const s = ora('Preparing crypto subscription...').start();
   try {
-    const selRes = await retrodeckFetch('/api/v1/plans/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId, interval, method: 'cryptocadet', source: 'cli' }),
-    });
-    if (!selRes.ok) throw new Error(`HTTP ${selRes.status}`);
-    const selData = await selRes.json() as { cryptocadet?: CryptoCadetPlanOffer };
+    const selData = await selectPlan(session, { planId, interval, method: 'cryptocadet' });
     s.stop();
     if (!selData.cryptocadet) {
       console.log(t.warn('  Server did not return a crypto offer — no change to your plan.'));
@@ -349,31 +343,19 @@ async function upgradeWithCrypto(planId: string, interval: 'monthly' | 'yearly',
       return;
     }
 
-    const actRes = await retrodeckFetch('/api/v1/plans/activate-crypto', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ planId, buyerWallet: outcome.buyerWallet }),
-    });
-    if (!actRes.ok) throw new Error(`activate HTTP ${actRes.status}`);
+    // The wallet that granted the allowance IS the one the collector pulls from —
+    // it must come from the binary's own output, never be assumed.
+    await activateCryptoPlan(session, { planId, buyerWallet: outcome.buyerWallet });
 
     const verify = ora('Waiting for the first charge to settle...').start();
-    let activated = false;
-    for (let i = 0; i < 30 && !activated; i++) {
-      try {
-        const vr = await retrodeckFetch('/api/v1/plans/verify-payment');
-        if (vr.ok) {
-          const v = await vr.json() as { paid?: boolean; plan?: { id?: string; name?: string } };
-          if (v.paid) {
-            activated = true;
-            updateConfig({ plan: v.plan?.id ?? planId });
-            verify.succeed(`${v.plan?.name ?? planName} plan activated`);
-            break;
-          }
-        }
-      } catch { /* keep polling */ }
-      await sleep(3000);
-    }
-    if (!activated) {
+    // Longer cadence than the card path: activation waits on a block confirmation
+    // AND a collector tick, not just a browser redirect.
+    const result = await pollPlanActivation(session, { ...CRYPTO_POLL });
+
+    if (result.paid) {
+      updateConfig({ plan: result.planId ?? planId });
+      verify.succeed(`${result.planName ?? planName} plan activated`);
+    } else {
       verify.stop();
       console.log(t.dim('  Subscription registered — the first charge is settling on-chain.'));
       console.log(t.dim('  Your plan activates once it confirms. Run `rdk account` later to check.'));

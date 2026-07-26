@@ -197,7 +197,16 @@ function stopWatchers(): void {
 app.whenReady().then(() => {
   registerHandlers();
   createWindow();
-  if (service.isInitialized()) startWatchers();
+  if (service.isInitialized()) {
+    startWatchers();
+    // Repair pending private/public metadata on every launch. This is a
+    // one-shot sync, independent of whether the user enables continuous
+    // serving, and uses the same acknowledged protocol as the CLI.
+    void service.forceSync().then(() => {
+      push({ type: 'status', status: service.getStatus() });
+      push({ type: 'vault-changed' });
+    });
+  }
 
   // Update check (throttled to once/day): prompt → confirm → download → installer
   // hand-off. Delayed so it never competes with startup; packaged builds only.

@@ -111,15 +111,16 @@ export class NodeService {
     return this.router;
   }
 
-  private getIndexer(visibility: VisibilityChoice): RDKIndexer {
+  private getIndexer(): RDKIndexer {
     const cfg = this.getConfig();
     return new RDKIndexer({
       embeddingModel: this.embedder,
       localStore: this.getStore(),
       domain: cfg?.domain ?? 'general',
       // Private chunks sync encrypted metadata/embeddings just like the CLI.
-      // Only an explicit local-only choice must stay off Central.
-      syncToNetwork: !!cfg?.centralApiUrl && !!cfg?.apiKey && visibility !== 'local',
+      // Desktop visibility choices are both network states; local-only content
+      // is created through the separate local indexing path.
+      syncToNetwork: !!cfg?.centralApiUrl && !!cfg?.apiKey,
       centralApiUrl: cfg?.centralApiUrl,
       centralApiKey: cfg?.apiKey,
       vaultKey: this.vaultKey(),
@@ -336,7 +337,7 @@ export class NodeService {
     if (!(await this.embedderAvailable())) {
       return { indexed: 0, error: 'Embedding model unavailable — the embedding runtime failed to load. This is usually a module/native-load error, not a network problem; check the terminal running the app for the underlying cause, then try again.' };
     }
-    const indexer = this.getIndexer(visibility);
+    const indexer = this.getIndexer();
     const files = this.expandToFiles(paths);
     let indexed = 0;
     const errors: string[] = [];
@@ -764,28 +765,13 @@ export class NodeService {
   }
 
   async forceSync(): Promise<{ ok: boolean; error?: string }> {
-    const cfg = this.getConfig();
-    if (!cfg?.centralApiUrl || !cfg.apiKey) return { ok: false, error: 'Not signed in.' };
+    const client = this.centralClient();
+    if (!client) return { ok: false, error: 'Not signed in.' };
     try {
-      const store = this.getStore();
-      const unsynced = [...store.getUnsyncedPublicChunks(200), ...store.getUnsyncedEncryptedChunks(200)];
-      if (unsynced.length === 0) return { ok: true };
-      const payload = unsynced.map(c => {
-        const embedding = store.getEmbedding(c.id);
-        return {
-          chunkHash: c.id, title: c.title, summary: c.summary, domain: c.domain,
-          categories: c.categories, embedding: embedding ? Array.from(embedding) : [],
-          isPublic: c.isPublic, isEncrypted: c.isEncrypted,
-          content: c.isEncrypted ? c.content : undefined, freshnessAt: new Date().toISOString(),
-        };
-      }).filter(c => c.embedding.length > 0);
-      const res = await fetch(`${cfg.centralApiUrl}/api/v1/chunks/sync`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chunks: payload }),
-      });
-      if (!res.ok) return { ok: false, error: `Sync failed: HTTP ${res.status}` };
-      unsynced.forEach(c => store.markSynced(c.id));
+      const result = await client.syncOnce();
+      if (result.errors > 0) {
+        return { ok: false, error: `Sync completed with ${result.errors} rejected chunk(s).` };
+      }
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
@@ -811,23 +797,41 @@ export class NodeService {
     };
     if (!signedIn) return base;
 
+    // Each call is individually caught so one failing endpoint doesn't blank the
+    // whole Settings screen — but an expired session has to survive that, or the
+    // user sees a signed-in UI with no balance and no way to understand why.
+    // (This previously relied on an outer catch that nothing could ever reach,
+    // which made `sessionExpired` — and the banner in Settings.tsx that renders
+    // it — dead code.)
+    let sessionExpired = false;
+    const tolerate = <T>(fallback: T) => (e: unknown): T => {
+      if (e instanceof retrodeck.RetrodeckAuthError) sessionExpired = true;
+      return fallback;
+    };
+
     try {
       // Self-heal: credit any top-up that completed but was never verified
       // (crediting happens on verification — there's no async Stripe webhook).
-      await retrodeck.verifyTopup().catch(() => undefined);
+      await retrodeck.verifyTopup().catch(tolerate(undefined));
       const [me, bal] = await Promise.all([
-        retrodeck.getMe().catch(() => null),
-        retrodeck.getBalance().catch(() => null),
+        retrodeck.getMe().catch(tolerate(null)),
+        retrodeck.getBalance().catch(tolerate(null)),
       ]);
+
+      // Refresh token rejected → the user genuinely has to sign in again.
+      if (sessionExpired) return { ...base, sessionExpired: true };
+
       return {
         ...base,
         email: me?.email ?? base.email,
         plan: me?.planId ?? base.plan,
         balanceUsdc: bal?.balanceUsdc,
         creditLimitUsd: bal?.creditLimitUsd,
+        // Passed through untouched: the desktop must not decide for itself what
+        // counts as "low", or it will disagree with the dashboard and the CLI.
+        balanceStatus: bal?.balanceStatus,
       };
     } catch (e) {
-      // Refresh token rejected → the user genuinely has to sign in again.
       if (e instanceof retrodeck.RetrodeckAuthError) return { ...base, sessionExpired: true };
       return base;
     }

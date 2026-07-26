@@ -28,3 +28,6 @@ neverBuiltDependencies:
 
 overrides:
   '@modelcontextprotocol/sdk': '1.12.1'
+
+minimumReleaseAgeExclude:
+  - '@retrodeck/payments-contract@0.1.0'

@@ -1,0 +1,42 @@
+name: CI
+
+# Until now nothing validated a commit until someone cut a release tag —
+# `release.yml` and `desktop-release.yml` build but run no tests. A payment
+# regression in the CLI or desktop app shipped straight to users.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: build · test · typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # better-sqlite3 and the Electron toolchain need a native build step.
+      - run: pnpm install --frozen-lockfile
+
+      # `test` dependsOn `^build` in turbo.json — @rdk/node must be built before
+      # rdk-cli and apps/desktop can import it.
+      - name: Build + test (turbo)
+        run: pnpm turbo build test
+
+      # The desktop app is the only package with real static checking, and it has
+      # two tsconfigs (main process vs renderer). Both must pass.
+      - name: Typecheck desktop
+        run: pnpm --filter rdk-desktop typecheck

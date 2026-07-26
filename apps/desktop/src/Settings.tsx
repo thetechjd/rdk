@@ -276,8 +276,31 @@ function AccountSection() {
 
       <div className="field">
         <label>balance</label>
+        {/* Server-computed. The desktop renders the message verbatim so it agrees
+            with the dashboard and the CLI rather than inventing its own idea of
+            "low". */}
+        {acct?.balanceStatus && acct.balanceStatus.level !== 'ok' && (
+          <div
+            role="alert"
+            className="hint"
+            style={{
+              color: acct.balanceStatus.level === 'low' ? 'var(--cassette, #e8b61a)' : 'var(--tape, #E8521A)',
+              marginBottom: 6,
+            }}
+          >
+            {acct.balanceStatus.message}
+          </div>
+        )}
         <div className="row">
-          <span className="balance" style={{ color: 'var(--cassette)' }}>
+          <span
+            className="balance"
+            style={{
+              color:
+                acct?.balanceStatus && acct.balanceStatus.level !== 'ok'
+                  ? 'var(--tape, #E8521A)'
+                  : 'var(--cassette)',
+            }}
+          >
             {balance != null ? `$${balance.toFixed(2)} USDC` : '—'}
           </span>
           {withdrawable != null && withdrawable !== balance && (

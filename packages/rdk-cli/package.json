@@ -10,7 +10,9 @@
     "dev": "tsc -p tsconfig.json --watch",
     "clean": "rm -rf dist",
     "prepare": "chmod +x dist/cli.js 2>/dev/null || true",
-    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js"
+    "prepublishOnly": "./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js=\"#!/usr/bin/env node\" && chmod +x dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "better-sqlite3": "^12.0.0",
@@ -23,9 +25,11 @@
     "@rdk/core": "workspace:*",
     "@rdk/node": "workspace:*",
     "@retrodeck/mcp": "workspace:*",
+    "@retrodeck/payments-contract": "^0.1.0",
     "@types/node": "^22.15.21",
     "@types/ws": "^8.18.1",
-    "esbuild": "^0.28.0"
+    "esbuild": "^0.28.0",
+    "vitest": "^3.2.7"
   },
   "files": [
     "dist/cli.js",
