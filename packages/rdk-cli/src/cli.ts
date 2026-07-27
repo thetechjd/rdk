@@ -123,6 +123,7 @@ program.command('vault:status').action(async () => { const { vaultStatus } = awa
 program.command('vault:search <query>').action(async (q) => { const { vaultSearch } = await import('./commands/vault.js'); await vaultSearch(q, {}); });
 program.command('vault:set-public [folders...]').action(async (f: string[]) => { const { vaultSetPublic } = await import('./commands/vault.js'); await vaultSetPublic(f ?? []); });
 program.command('vault:list-public').action(async () => { const { vaultListPublic } = await import('./commands/vault.js'); await vaultListPublic(); });
+program.command('vault:backfill').description('Fill in summaries and document titles for chunks indexed before RDK recorded them').action(async () => { const { vaultBackfill } = await import('./commands/vault.js'); await vaultBackfill(); });
 program.command('vault:versions <path>').description('Version history of an indexed file (live + superseded versions)').action(async (p) => { const { vaultVersions } = await import('./commands/vault.js'); await vaultVersions(p); });
 
 // ── Query (canonical) ────────────────────────────────────────────────────────
@@ -418,6 +419,17 @@ program.command('status').description('Show full node status').action(async () =
     : mcpRunning ? 'foreground'
     : null;
 
+  // Is anything actually holding the Central WebSocket? This — not the local MCP
+  // HTTP probe above — is what decides whether this node's chunks can be
+  // retrieved: Central fetches content from the owning node at query time and
+  // skips chunks it can't reach. The lock is held by whichever process owns the
+  // socket, so from here "held by another live process" means we're serving.
+  let servingContent = false;
+  try {
+    const { wsHeldByOther } = await import('@rdk/node/ws/ws-lock');
+    servingContent = wsHeldByOther();
+  } catch {}
+
   console.log(t.heading('\nRDK Node Status'));
   console.log(divider(42));
   console.log(`${t.dim('node id:')}   ${t.body(config.nodeId)}`);
@@ -439,6 +451,12 @@ program.command('status').description('Show full node status').action(async () =
   console.log(`  Tip settlement   ${hasEthers ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk tips:enable')}`);
   console.log(`  ${t.dim('live sync:')}      ${mcpRunning ? t.green('● connected') : t.dim('○ offline')}${!mcpRunning ? t.dim('  (start with rdk mcp:serve)') : ''}`);
   console.log(`  ${t.dim('run mode:')}       ${runMode ? t.body(runMode) : t.dim('not running')}${!runMode ? t.dim('  (foreground · --detach · service:install)') : ''}`);
+  console.log(`  ${t.dim('serving content:')} ${servingContent ? t.green('● yes') : t.warn('○ no')}`);
+  if (!servingContent && stats.totalChunks > 0) {
+    console.log(t.dim('    Your indexed content is only retrievable while RDK is running — content'));
+    console.log(t.dim('    stays on this machine and is served on demand. Keep it up with:'));
+    console.log(t.dim('      rdk service:install   (starts automatically on boot)'));
+  }
   if (pendingTips > 0) {
     console.log('');
     console.log(`Pending tips: ${t.green(`$${pendingTips.toFixed(4)} USDC`)}`);

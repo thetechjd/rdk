@@ -32,6 +32,8 @@ import {
   type RDKConfig,
 } from '@rdk/node/config';
 import { SyncService } from '@rdk/node/sync-service';
+import { startWsOwnership, type WsOwnership } from '@rdk/node/ws/ownership';
+import { wsHeldByOther } from '@rdk/node/ws/ws-lock';
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
 // (and token) from RDK Central; see the note above getAccount().
 import * as retrodeck from '@rdk/node/retrodeck-client';
@@ -61,6 +63,11 @@ export class NodeService {
   private serving = false;
   /** Background sync loop (from @rdk/node) — runs while the node is "serving". */
   private syncService: SyncService | null = null;
+  /** The Central WebSocket. Syncing embeddings is not enough to be "serving":
+   *  content stays on this machine, so Central can only answer a query with our
+   *  chunks while this socket is up. Without it our content is silently skipped
+   *  and our own documents come back unfindable. */
+  private wsOwnership: WsOwnership | null = null;
 
   // ── lifecycle / lazy wiring ────────────────────────────────────────────────
 
@@ -243,7 +250,7 @@ export class NodeService {
     for (const c of this.getStore().getAllChunks()) {
       if (c.supersededAt) continue; // live versions only — matches the counts
       const key = (c.sourcePath && c.sourcePath.trim())
-        || c.title.split(' — ')[0].trim()
+        || c.docTitle
         || c.id;
       const arr = byDoc.get(key) ?? [];
       arr.push(c);
@@ -256,7 +263,9 @@ export class NodeService {
       const inVault = !!sourcePath && !!root && toPosix(sourcePath).startsWith(root + '/');
       docs.push({
         key,
-        title: chunks[0].title.split(' — ')[0].trim() || key,
+        // The document's own title (its H1 / frontmatter). rowToChunk falls back
+        // to the legacy ' — ' split for rows indexed before doc_title existed.
+        title: chunks[0].docTitle || key,
         sourcePath,
         state: computeFileState(chunks),
         chunkCount: chunks.length,
@@ -314,6 +323,10 @@ export class NodeService {
    * " — " section separator, lowercased — which equals the source note's base file name.
    * Lets getVaultTree still link these to their on-disk file so private content displays
    * decrypted instead of the file falling back to a raw, "local" read.
+   *
+   * Deliberately still splits the title rather than using `docTitle`: these are
+   * legacy rows whose title prefix IS the file stem, and this map matches against
+   * on-disk file names. A doc title is the H1 — the wrong key for that job.
    */
   private orphanChunksByDocName(): Map<string, StoredChunk[]> {
     const map = new Map<string, StoredChunk[]>();
@@ -415,12 +428,23 @@ export class NodeService {
     return c ? this.toChunkView(c) : null;
   }
 
+  /** Live chunks belonging to the same source document as `c` (including `c`).
+   *  Chunks indexed without a sourcePath can't be grouped, so they count as one. */
+  private liveChunkCountForDocument(c: StoredChunk): number {
+    if (!c.sourcePath) return 1;
+    return this.getStore()
+      .getVersions(c.sourcePath, c.sourceAdapter)
+      .filter(sibling => !sibling.supersededAt).length || 1;
+  }
+
   private toChunkView(c: StoredChunk): ChunkView {
     const retrievals = this.getStore().getRetrievalCounts()[c.id] ?? 0;
     return {
       id: c.id,
       title: c.title,
+      docTitle: c.docTitle,
       state: c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private',
+      docChunkCount: this.liveChunkCountForDocument(c),
       domain: c.domain,
       categories: c.categories,
       sourcePath: c.sourcePath,
@@ -512,8 +536,14 @@ export class NodeService {
       }
       const nextVersion = Math.max(...existing.map(c => c.version ?? 1)) + 1;
       const visibility: VisibilityChoice = stalePublic.length > 0 ? 'public' : 'private';
+      // `supersedes` is a chunk-to-chunk pointer, so it's only meaningful when
+      // the old version was a single chunk: an edit re-splits the document and
+      // there's no honest 1:1 mapping between old and new chunks. Pointing every
+      // new chunk at one arbitrary old chunk recorded a lineage that isn't real —
+      // for multi-chunk documents, `sourcePath` + `version` carry the history.
+      const priorChunk = existing.length === 1 ? existing[0].id : undefined;
       reindexed = (await this.indexPaths([abs], visibility, {
-        supersedes: (stalePublic[0] ?? stalePrivate[0])?.id,
+        supersedes: priorChunk,
         version: nextVersion,
       })).indexed;
     }
@@ -592,15 +622,16 @@ export class NodeService {
     return { ok: true };
   }
 
-  /** Version history of a document series (live + superseded), newest first. */
+  /** Version history of a document series (live + superseded), newest first.
+   *  One row per version — the store rolls the version's chunks up. */
   getVersions(sourcePath: string): import('../shared/ipc').VersionView[] {
-    return this.getStore().getVersions(sourcePath).map((c) => ({
-      id: c.id,
-      title: c.title,
-      version: c.version ?? 1,
-      state: c.isPublic ? 'public' as const : 'private' as const,
-      superseded: !!c.supersededAt,
-      createdAt: c.createdAt.toISOString(),
+    return this.getStore().getDocumentVersions(sourcePath).map((v) => ({
+      version: v.version,
+      chunkCount: v.chunkCount,
+      chunkId: v.chunkIds[0],
+      state: v.state,
+      superseded: v.superseded,
+      createdAt: v.createdAt.toISOString(),
     }));
   }
 
@@ -709,6 +740,9 @@ export class NodeService {
       tokenEstimate: result.tokenEstimate,
       tipsPaidUsdc: result.tipsPaid.reduce((s, t) => s + t.amountUsdc, 0),
       latencyMs: result.latencyMs,
+      lowConfidence: result.lowConfidence,
+      networkError: result.networkError,
+      unavailableCount: result.unavailableChunks?.length,
     };
   }
 
@@ -717,9 +751,18 @@ export class NodeService {
   getStatus(): NodeStatus {
     const stats = this.getStore().getStats();
     const cfg = this.getConfig();
+    // Reachability comes from the socket's real state — never from an intent
+    // flag. A fabricated "connected" is worse than an honest "not serving": it
+    // tells the user their content is retrievable while Central skips every
+    // chunk of it.
+    const wsConnected = this.wsOwnership?.isConnected() ?? false;
+    // An installed always-on service holding the socket counts as serving —
+    // we deliberately don't open a competing one.
+    const heldByService = !wsConnected && wsHeldByOther();
     return {
       serving: this.serving,
-      wsConnected: this.serving && !!cfg?.apiKey,
+      wsConnected,
+      contentServing: wsConnected || heldByService,
       nodeId: cfg?.nodeId,
       lastSyncAt: undefined,
       chunkCount: stats.totalChunks,
@@ -736,9 +779,12 @@ export class NodeService {
       return { ok: false, error: 'Sign in first (Settings → Account) to serve on the network.' };
     }
     try {
-      // Start the shared @rdk/node background sync loop (pushes public + private
-      // chunk embeddings/metadata to Central). Peer chunk-serving over HTTP is a
-      // follow-up; the core "serving" behavior for the desktop is staying synced.
+      // Two halves, both required to actually serve:
+      //  1. the sync loop pushes chunk embeddings + metadata to Central, and
+      //  2. the WebSocket answers Central's content fetches at query time.
+      // Content never leaves this machine until (2) hands it over, so a node with
+      // only (1) running is indexed-but-unretrievable — its chunks show in the
+      // dashboard and match nothing.
       this.syncService = new SyncService(
         {
           enabled: cfg.autoSync ?? true,
@@ -750,6 +796,8 @@ export class NodeService {
         this.getStore(),
       );
       this.syncService.start();
+      // Defers to an installed always-on service when one already holds the lock.
+      this.wsOwnership = startWsOwnership();
       this.serving = true;
       return { ok: true };
     } catch (e) {
@@ -759,7 +807,9 @@ export class NodeService {
 
   async stopNode(): Promise<{ ok: boolean }> {
     try { this.syncService?.stop(); } catch { /* ignore */ }
+    try { this.wsOwnership?.stop(); } catch { /* ignore */ }
     this.syncService = null;
+    this.wsOwnership = null;
     this.serving = false;
     return { ok: true };
   }

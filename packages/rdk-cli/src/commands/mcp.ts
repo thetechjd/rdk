@@ -61,47 +61,17 @@ export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: b
   console.error(t.dim(`  Domain:      ${config.domain}`));
 
   // ── WebSocket connection to RDK Central ─────────────────────────────────
-  // Only ONE process per node may hold the Central WS (Central kicks duplicates
-  // with 4001). When the always-on service AND Claude Desktop both run
-  // mcp:serve, a lock decides who owns the connection; the others serve their
-  // MCP tools without opening a competing socket. The owner heartbeats the
-  // lock; if it dies, another instance takes over on its next tick.
-  const { getWsClient } = await import('../ws/client.js');
-  const { wsHeldByOther, claimWs, releaseWs } = await import('../ws/ws-lock.js');
-  const ws = getWsClient();
-  let wsOwner = false;
-  let wsOwnerTick: ReturnType<typeof setInterval> | undefined;
-
-  if (ws) {
-    ws.on('connected', () => {
-      console.error(t.dim('  ✓ live sync active'));
-    });
-    ws.on('disconnected', ({ code, reason }: { code: number; reason: string }) => {
-      if (code !== 1000) {
-        console.error(t.dim(`  · disconnected from RDK Central (${code})${reason ? ': ' + reason : ''}`));
-      }
-    });
-
-    const ensureOwner = () => {
-      if (wsOwner) { claimWs(); return; }          // refresh our heartbeat
-      if (wsHeldByOther()) return;                  // another instance owns it — tools-only
-      wsOwner = true;
-      claimWs();
-      console.error(t.dim('  ✓ holding the RDK Central connection for this node'));
-      ws.connect();
-    };
-    ensureOwner();
-    if (!wsOwner) {
-      console.error(t.dim('  · another rdk mcp:serve holds the RDK Central connection — serving tools only'));
-    }
-    wsOwnerTick = setInterval(ensureOwner, 30_000);
-    if (typeof wsOwnerTick.unref === 'function') wsOwnerTick.unref();
-  }
+  // Holding this socket is what makes this node's chunks retrievable — Central
+  // fetches content from the owning node at query time and skips it when the
+  // node is offline. Ownership handling (only ONE session per node; Central kicks
+  // duplicates with 4001) lives in @rdk/node so mcp:serve and the desktop app
+  // behave identically.
+  const { startWsOwnership } = await import('@rdk/node/ws/ownership');
+  const ownership = startWsOwnership({ log: msg => console.error(t.dim(`  · ${msg}`)) });
 
   // ── Clean shutdown ───────────────────────────────────────────────────────
   const shutdown = () => {
-    if (wsOwnerTick) clearInterval(wsOwnerTick);
-    if (wsOwner) { ws?.disconnect(); releaseWs(); }
+    ownership?.stop();
     process.exit(0);
   };
   process.on('SIGTERM', shutdown);

@@ -12,9 +12,12 @@ export function StatusBar() {
   const { status, account } = useApp();
   return (
     <div className="statusbar">
-      <span className="item">
-        <span className={`dot ${status?.serving ? 'serving' : 'stopped'}`} />
-        {status?.serving ? 'serving' : 'not serving'}
+      <span className="item"
+        title={status?.contentServing
+          ? 'Connected to the network — your indexed content can be retrieved.'
+          : 'Not connected — nothing you have indexed can be retrieved right now.'}>
+        <span className={`dot ${status?.contentServing ? 'serving' : 'stopped'}`} />
+        {status?.contentServing ? 'serving' : 'not serving'}
       </span>
       <span className="item">synced {ago(status?.lastSyncAt)}</span>
       <span className="item">{status?.chunkCount ?? 0} chunks</span>

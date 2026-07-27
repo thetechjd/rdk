@@ -75,16 +75,21 @@ function Shell() {
 
 function Titlebar() {
   const { status, openGraph } = useApp();
-  const serving = status?.serving;
+  // "live" must mean retrievable, not merely started — a node that's running but
+  // holds no connection to Central serves nothing.
+  const live = status?.contentServing;
   return (
     <div className="titlebar">
       <span className="brand" onClick={openGraph} style={{ cursor: 'pointer' }}>RDK</span>
       <span className="vault-name">{/* filled by StatusBar's vault name via tree */}</span>
       <span className="spacer" />
-      <span className="node-pill item" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span className={`dot ${serving ? 'public' : 'local'}`} />
-        <span style={{ color: serving ? 'var(--cassette)' : 'var(--muted)' }}>
-          {serving ? 'node live' : 'node idle'}
+      <span className="node-pill item" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+        title={live
+          ? 'Connected to the network — your indexed content can be retrieved.'
+          : 'Not connected — your content stays on this machine and cannot be retrieved right now.'}>
+        <span className={`dot ${live ? 'public' : 'local'}`} />
+        <span style={{ color: live ? 'var(--cassette)' : 'var(--muted)' }}>
+          {live ? 'node live' : 'node idle'}
         </span>
       </span>
     </div>

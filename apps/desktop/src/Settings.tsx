@@ -53,10 +53,19 @@ function NodeSection() {
       <div className="field">
         <label>node status</label>
         <div className="row">
-          <span className={`dot ${status?.serving ? 'public' : 'local'}`} />
-          <span>{status?.serving ? 'serving on the network' : 'not serving'}</span>
-          <span style={{ color: 'var(--muted)' }}>· ws {status?.wsConnected ? 'connected' : 'disconnected'}</span>
+          <span className={`dot ${status?.contentServing ? 'public' : 'local'}`} />
+          <span>{status?.contentServing ? 'serving on the network' : 'not serving'}</span>
+          <span style={{ color: 'var(--muted)' }}>
+            · {status?.wsConnected ? 'connected' : status?.contentServing ? 'via background service' : 'disconnected'}
+          </span>
         </div>
+        {!status?.contentServing && (
+          <div className="hint">
+            Your content stays on this machine and is served on demand, so nothing
+            you've indexed can be retrieved while nothing is connected — not even by you.
+            {status?.serving ? ' The node is started but has no connection to the network yet.' : ''}
+          </div>
+        )}
       </div>
       <div className="field">
         <div className="row">
