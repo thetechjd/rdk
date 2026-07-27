@@ -8,6 +8,9 @@ import {
   pollPlanActivation,
   selectPlan,
   fetchBalance,
+  fetchWithdrawalStatus,
+  fetchWithdrawals,
+  requestWithdrawal,
   sessionFromConfig,
 } from '../payments.js';
 import { LocalStore } from '@rdk/core';
@@ -186,8 +189,15 @@ interface ApiPlan {
   max_chunks: number;
 }
 
+/** A plan that costs nothing. Tolerates the price arriving as a string — older
+ *  servers send Postgres decimals unconverted — and falls back to the plan id,
+ *  which is what the server actually branches on. */
+export function isFreePlan(p: { id: string; price_monthly?: number | string | null }): boolean {
+  return p.id === 'free' || Number(p.price_monthly ?? 0) === 0;
+}
+
 function planChoice(p: ApiPlan, current: string) {
-  const price = p.price_monthly === 0 ? 'Free' : `$${p.price_monthly}/mo`;
+  const price = isFreePlan(p) ? 'Free' : `$${Number(p.price_monthly).toFixed(2)}/mo`;
   const q = p.max_queries_day >= 1000 ? `${(p.max_queries_day / 1000).toFixed(0)}K` : String(p.max_queries_day);
   const c = p.max_chunks >= 1_000_000 ? `${(p.max_chunks / 1_000_000).toFixed(0)}M` : `${(p.max_chunks / 1000).toFixed(0)}K`;
   return {
@@ -242,7 +252,14 @@ export async function upgradeAccount(): Promise<void> {
   // Downgrade to Free — applied immediately, and it CANCELS the active
   // subscription server-side. Confirm first: it is an irreversible billing
   // change, not a navigation.
-  if (selected.price_monthly === 0) {
+  //
+  // Keyed on the plan id, not the price. This guard used to read
+  // `selected.price_monthly === 0`, and the API sends that column as the string
+  // "0.00" (Postgres decimal), so it never matched: choosing Free fell through
+  // to the interval and payment prompts and then reported "No checkout URL
+  // returned" for a downgrade the server had already applied. The id is the
+  // thing the server itself branches on, and it cannot be a number in disguise.
+  if (isFreePlan(selected)) {
     const { confirm } = await import('../prompts.js');
     const ok = await confirm({
       message: 'Switching to Free cancels your current subscription. Continue?',
@@ -411,13 +428,108 @@ export async function showEarnings(): Promise<void> {
   } catch {}
 }
 
-export async function withdrawEarnings(): Promise<void> {
+/**
+ * Withdraw your balance to your wallet.
+ *
+ * This used to print three reassuring lines and return, citing a background
+ * settlement process that does not run — so a user would see a "success" and
+ * watch for funds that were never sent. It now performs the actual withdrawal,
+ * and every message it prints reflects something the server confirmed.
+ */
+export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<void> {
+  const ora = (await import('ora')).default;
   const config = loadConfig();
+
+  if (!config.retrodeckAccessToken) {
+    console.log(t.warn('Log in first: rdk account:login'));
+    return;
+  }
   if (!config.walletAddress) {
     console.log(t.error('No wallet configured. Run: rdk account and add a wallet address.'));
     return;
   }
-  console.log(t.warn('Withdrawal triggers settlement of pending on-chain tips to your wallet.'));
-  console.log(t.dim('This is handled by the rdk-x402 background process.'));
-  console.log(`Wallet: ${t.body(`${config.walletAddress} (${config.walletChain})`)}`);
+
+  const session = sessionFromConfig(config.retrodeckApiUrl);
+  const spinner = ora('Checking withdrawal availability...').start();
+
+  try {
+    const [status, balance] = await Promise.all([
+      fetchWithdrawalStatus(session),
+      fetchBalance(session),
+    ]);
+
+    // Say so BEFORE taking the money. Requesting a withdrawal debits the balance
+    // immediately, so offering it when the server can't settle would strand funds.
+    if (!status.enabled) {
+      spinner.fail(status.reason ?? 'Withdrawals are unavailable on this server right now.');
+      console.log(t.dim('  Your balance is unchanged.'));
+      return;
+    }
+    if (balance.withdrawable <= 0) {
+      spinner.stop();
+      console.log(t.warn('Nothing withdrawable.'));
+      console.log(t.dim(
+        `  Balance $${balance.balanceUsdc.toFixed(4)}, of which $${balance.creditLimitUsd.toFixed(2)} ` +
+        'is reserved against your credit limit.',
+      ));
+      return;
+    }
+
+    const amount = opts.amount ?? balance.withdrawable;
+    if (amount > balance.withdrawable) {
+      spinner.fail(`Only $${balance.withdrawable.toFixed(4)} USDC is withdrawable.`);
+      return;
+    }
+    spinner.stop();
+
+    const { confirm } = await import('../prompts.js');
+    const ok = await confirm({
+      message: `Withdraw $${amount.toFixed(4)} USDC to ${config.walletAddress} on ${status.chain}?`,
+      default: false,
+    });
+    if (!ok) { console.log(t.dim('  Cancelled.')); return; }
+
+    const sending = ora('Requesting withdrawal...').start();
+    const result = await requestWithdrawal(session, {
+      amountUsdc: amount,
+      walletAddress: config.walletAddress,
+    });
+    sending.succeed(`Withdrawal requested — $${amount.toFixed(4)} USDC to ${config.walletAddress}`);
+    // Deliberately not "sent": settlement is asynchronous, and claiming
+    // otherwise is the exact thing that made this command lie before.
+    console.log(t.dim(`  ${result.withdrawalId} · ${result.status} on ${result.chain}`));
+    console.log(t.dim('  Track it with: rdk earnings:withdrawals'));
+  } catch (e) {
+    spinner.fail((e as Error).message);
+    process.exitCode = 1;
+  }
+}
+
+/** Withdrawal history, so a user can see what actually settled. */
+export async function listWithdrawals(): Promise<void> {
+  const config = loadConfig();
+  if (!config.retrodeckAccessToken) {
+    console.log(t.warn('Log in first: rdk account:login'));
+    return;
+  }
+  try {
+    const rows = await fetchWithdrawals(sessionFromConfig(config.retrodeckApiUrl));
+    if (!rows.length) { console.log(t.dim('No withdrawals yet.')); return; }
+
+    console.log('');
+    console.log(t.body('Withdrawals:'));
+    for (const w of rows) {
+      const when = w.requestedAt ? new Date(w.requestedAt).toLocaleString() : '';
+      const state = w.status === 'completed' ? t.green(w.status)
+        : w.status === 'failed' ? t.error(w.status)
+        : t.warn(w.status);
+      console.log(`  $${w.amountUsdc.toFixed(4)} USDC  ${state}  ${t.dim(when)}`);
+      console.log(t.dim(`    → ${w.walletAddress} (${w.walletChain})`));
+      if (w.txHash) console.log(t.dim(`    tx ${w.txHash}`));
+      if (w.status === 'failed') console.log(t.dim('    balance was re-credited'));
+    }
+  } catch (e) {
+    console.log(t.error((e as Error).message));
+    process.exitCode = 1;
+  }
 }

@@ -74,6 +74,28 @@ describe('Checkpoint 15 · CLI top-up via crypto', () => {
     await expect(payTopup('confirmed')).resolves.toEqual({ status: 'paid' });
   });
 
+  // A per-transaction cap REFUSES rather than escalating, so the ESCALATE retry
+  // never fires and the payment used to die with a raw policy string the user
+  // could do nothing with.
+  it('offers to raise a per-payment cap, then retries and pays', async () => {
+    await expect(payTopup('cap-refused')).resolves.toEqual({ status: 'paid' });
+
+    const setCalls = cadet!.callsTo('policy:set');
+    expect(setCalls).toHaveLength(1);
+    expect(setCalls[0].argv).toContain('perTx');
+    // Two checkouts: the refused one, then the retry after the cap was raised.
+    expect(cadet!.callsTo('checkout')).toHaveLength(2);
+  });
+
+  it('does not touch the policy for a refusal that is not a cap', async () => {
+    // "recipient not allowlisted" must not be silently papered over by widening
+    // a spending limit — that would be the wrong remedy for the wrong problem.
+    const outcome = await payTopup('refused');
+
+    expect(outcome.status).toBe('failed');
+    expect(cadet!.callsTo('policy:set')).toHaveLength(0);
+  });
+
   it('treats PENDING as paid — the transaction was broadcast', async () => {
     // Broadcast-but-unconfirmed money is spent. Re-paying would double-charge, so
     // PENDING must go to the verify poll, not back to the pay button.
@@ -230,6 +252,28 @@ describe('Checkpoint 12 · CLI subscription upgrade via crypto', () => {
 
     const outcome = await grantCryptocadetSubscription(CRYPTO_PLAN_OFFER as never);
     expect(outcome.status).not.toBe('granted');
+  });
+
+  // The approval runs through the same policy gate as a payment. It previously
+  // had no handling for either outcome, so a policy block surfaced as the
+  // catch-all "approval transaction failed" with the real cause on stderr.
+  it('approves and retries when the grant escalates', async () => {
+    const outcome = await grant('grant-escalate');
+
+    expect(outcome.status).toBe('granted');
+    const calls = cadet!.callsTo('subs:grant');
+    expect(calls).toHaveLength(2);
+    expect(calls[0].argv).not.toContain('--approve');
+    expect(calls[1].argv).toContain('--approve');
+  });
+
+  it('explains a cap refusal instead of reporting a failed transaction', async () => {
+    const outcome = await grant('grant-cap-refused');
+
+    expect(outcome.status).toBe('failed');
+    // The remedy has to be in the message — the user cannot guess it.
+    expect((outcome as { detail: string }).detail).toMatch(/limit/i);
+    expect((outcome as { detail: string }).detail).toMatch(/policy:set/);
   });
 
   it('reports failure when the grant transaction is rejected', async () => {

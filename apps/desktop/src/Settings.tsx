@@ -204,7 +204,9 @@ function AccountSection() {
   };
 
   const balance = acct?.balanceUsdc;
-  const withdrawable = balance != null ? Math.max(0, balance - (acct?.creditLimitUsd ?? 0)) : null;
+  // The server owns this arithmetic — see Account.withdrawable. Re-deriving it
+  // here was a second source of truth for a money figure.
+  const withdrawable = acct?.withdrawable ?? null;
 
   return (
     <>

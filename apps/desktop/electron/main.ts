@@ -162,6 +162,15 @@ function registerHandlers(): void {
     verifySubscription: () => service.verifySubscription(),
     createTopup: (amountUsd: never, method: never) => service.createTopup(amountUsd, method),
     verifyTopup: (paymentRef: never) => service.verifyTopup(paymentRef),
+    getWithdrawalStatus: () => service.getWithdrawalStatus(),
+    requestWithdrawal: async (amountUsdc: never, walletAddress: never) => {
+      const r = await service.requestWithdrawal(amountUsdc, walletAddress);
+      // The balance changed the moment this was accepted — refresh so the UI
+      // never shows a figure the server has already moved on from.
+      push({ type: 'status', status: service.getStatus() });
+      return r;
+    },
+    getWithdrawals: () => service.getWithdrawals(),
     getMcpInfo: () => service.getMcpInfo(),
     getPreferences: () => service.getPreferences(),
     setPreferences: (prefs: never) => service.setPreferences(prefs),

@@ -47,6 +47,8 @@ export interface BalanceStatus {
 export interface BalanceInfo {
   balanceUsdc: number;
   creditLimitUsd: number;
+  /** Server-computed amount available to withdraw. Never re-derive this. */
+  withdrawable: number;
   /** Absent when talking to an API older than this field. */
   balanceStatus?: BalanceStatus;
 }
@@ -208,11 +210,17 @@ export async function getBalance(): Promise<BalanceInfo | null> {
   const d = (await res.json()) as {
     balanceUsdc?: number;
     creditLimitUsd?: number;
+    withdrawable?: number;
     balanceStatus?: BalanceStatus;
   };
+  const balanceUsdc = Number(d.balanceUsdc ?? 0);
+  const creditLimitUsd = Number(d.creditLimitUsd ?? 0);
   return {
-    balanceUsdc: Number(d.balanceUsdc ?? 0),
-    creditLimitUsd: Number(d.creditLimitUsd ?? 0),
+    balanceUsdc,
+    creditLimitUsd,
+    // Prefer the server's figure; the local subtraction is a last resort for an
+    // API older than this field, not a second opinion.
+    withdrawable: Number(d.withdrawable ?? Math.max(0, balanceUsdc - creditLimitUsd)),
     balanceStatus: d.balanceStatus,
   };
 }
@@ -278,6 +286,67 @@ export async function createTopup(
   if (!res.ok) throw new Error(`Could not create checkout (HTTP ${res.status})`);
   const d = (await res.json()) as { checkoutUrl?: string | null; paymentId?: string };
   return { checkoutUrl: d.checkoutUrl ?? null, paymentId: d.paymentId };
+}
+
+// ── Withdrawals ─────────────────────────────────────────────────────────────
+
+export interface WithdrawalStatus {
+  enabled: boolean;
+  chain: string;
+  reason?: string;
+}
+
+export interface WithdrawalRecord {
+  id: string;
+  amountUsdc: number;
+  walletAddress: string;
+  walletChain: string;
+  status: string;
+  txHash: string | null;
+  requestedAt: string;
+  completedAt: string | null;
+}
+
+/** Whether this server can settle a payout right now. Requesting a withdrawal
+ *  debits the balance immediately, so ask before offering the action. */
+export async function getWithdrawalStatus(): Promise<WithdrawalStatus> {
+  const res = await retrodeckFetch('/api/v1/balances/withdrawals/status');
+  if (res.status === 404) return { enabled: true, chain: 'unknown' }; // older API
+  if (!res.ok) throw new Error(`Could not check withdrawals (HTTP ${res.status})`);
+  return (await res.json()) as WithdrawalStatus;
+}
+
+export async function requestWithdrawal(
+  amountUsdc: number,
+  walletAddress: string,
+): Promise<{ withdrawalId: string; status: string; chain: string }> {
+  const res = await retrodeckFetch('/api/v1/balances/withdraw', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // The chain is the server's to decide — it can only pay from the wallet it holds.
+    body: JSON.stringify({ amountUsdc, walletAddress }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null) as { message?: string } | null;
+    throw new Error(detail?.message ?? `Withdrawal failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as { withdrawalId: string; status: string; chain: string };
+}
+
+export async function getWithdrawals(): Promise<WithdrawalRecord[]> {
+  const res = await retrodeckFetch('/api/v1/balances/withdrawals');
+  if (!res.ok) return [];
+  const rows = (await res.json()) as Record<string, unknown>[];
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    id: String(r.id),
+    amountUsdc: Number(r.amount_usdc ?? 0),
+    walletAddress: String(r.wallet_address ?? ''),
+    walletChain: String(r.wallet_chain ?? ''),
+    status: String(r.status ?? 'pending'),
+    txHash: (r.tx_hash as string | null) ?? null,
+    requestedAt: String(r.requested_at ?? ''),
+    completedAt: (r.completed_at as string | null) ?? null,
+  }));
 }
 
 /**

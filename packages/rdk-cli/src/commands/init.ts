@@ -19,6 +19,7 @@ import {
 import { requireDeps } from '../require-dep.js';
 import { loadAdapter } from '../load-adapter.js';
 import { input, password, confirm, select, pressEnter } from '../prompts.js';
+import { isFreePlan } from './account.js';
 import {
   splash, stepHeader, t, divider, importantValue,
   success, note, mark, summary, link,
@@ -420,7 +421,9 @@ export async function runInit(nonInteractive?: {
         plan = await select({
           message: 'Choose a plan:',
           choices: plans.map(p => {
-            const price = p.price_monthly === 0 ? 'Free' : `$${p.price_monthly}/mo`;
+            // Same decimal-as-string trap as account.ts — without this the Free
+            // plan lists as "$0.00/mo".
+            const price = isFreePlan(p) ? 'Free' : `$${Number(p.price_monthly).toFixed(2)}/mo`;
             const q = p.max_queries_day >= 1000 ? `${(p.max_queries_day / 1000).toFixed(0)}K` : String(p.max_queries_day);
             const c = p.max_chunks >= 1_000_000 ? `${(p.max_chunks / 1_000_000).toFixed(0)}M` : `${(p.max_chunks / 1000).toFixed(0)}K`;
             return {

@@ -274,7 +274,8 @@ program.command('publish:file <path>').option('--public').action(async (p, o) =>
 // ── Earnings ──────────────────────────────────────────────────────────────────
 
 program.command('earnings').description('View tip earnings').action(async () => { const { showEarnings } = await import('./commands/account.js'); await showEarnings(); });
-program.command('earnings:withdraw').description('Withdraw to wallet').action(async () => { const { withdrawEarnings } = await import('./commands/account.js'); await withdrawEarnings(); });
+program.command('earnings:withdraw').description('Withdraw your balance to your wallet').option('-a, --amount <usdc>', 'Amount in USDC (default: everything withdrawable)').action(async (o) => { const { withdrawEarnings } = await import('./commands/account.js'); await withdrawEarnings({ amount: o.amount ? Number(o.amount) : undefined }); });
+program.command('earnings:withdrawals').description('Withdrawal history and settlement status').action(async () => { const { listWithdrawals } = await import('./commands/account.js'); await listWithdrawals(); });
 
 // ── Account ───────────────────────────────────────────────────────────────────
 

@@ -79,7 +79,12 @@ function runSync(cmd: string, args: string[], opts: SpawnSyncOptions = {}) {
   return spawnSync(cmd, args, opts);
 }
 
-/** Locate the CryptoCadet binary on PATH (⇒ null if not installed). */
+/** Where the standalone (curl) installer keeps its own copy. Its shim usually
+ *  lands on PATH ahead of the npm global prefix, so `npm i -g` can install a new
+ *  version that PATH never resolves to. */
+const INSTALLER_PREFIX = path.join(os.homedir(), '.cryptocadet-cli');
+
+/** Locate the CryptoCadet binary (⇒ null if not installed). */
 function findBin(): string | null {
   for (const bin of ['cryptocadet', 'ccx']) {
     // Windows: `where` applies PATHEXT (.cmd/.exe) like the shell does, so it sees
@@ -93,6 +98,18 @@ function findBin(): string | null {
     if (found) return bin;
   }
   return null;
+}
+
+/** Where PATH actually resolves `cryptocadet` to. Used only for diagnostics —
+ *  a stale standalone install shadowing a fresh `npm i -g` looks identical to
+ *  "the update didn't work" unless we can name the file being run. */
+function resolvedBinPath(bin: string): string | null {
+  if (bin.includes(path.sep)) return bin; // already absolute
+  const probe = process.platform === 'win32'
+    ? spawnSync('where', [bin], { encoding: 'utf8', shell: true })
+    : spawnSync('command', ['-v', bin], { encoding: 'utf8', shell: true });
+  const out = (probe.stdout ?? '').toString().trim().split(/\r?\n/)[0];
+  return out || null;
 }
 
 /** Run the CLI capturing stdout as JSON; stdin/stderr are inherited so keychain prompts and
@@ -121,9 +138,29 @@ function cadetVersion(bin: string): string | null {
   return runJson<{ version?: string }>(bin, ['--version'])?.version ?? null;
 }
 
-/** `npm i -g @cryptocadet/cli[@spec]`. Returns true on a clean exit. */
-function npmInstallCadet(spec: string): boolean {
-  const r = runSync('npm', ['install', '-g', spec], { stdio: 'inherit', timeout: 5 * 60 * 1000 });
+/**
+ * Install/update the CryptoCadet CLI, into whichever install PATH actually
+ * resolves to.
+ *
+ * `npm i -g` writes to the npm global prefix. When the standalone installer's
+ * shim (`~/.cryptocadet-cli`, usually via `~/.local/bin`) comes first on PATH,
+ * that global install is invisible: rdk updates one copy, keeps running the
+ * other, and reports "still reports an old version after updating" forever —
+ * a PATH-shadowing problem that re-running cannot fix. So: update in place.
+ */
+function npmInstallCadet(spec: string, bin?: string | null): boolean {
+  const resolved = bin ? resolvedBinPath(bin) : null;
+  const inStandalone = !!resolved && resolved.startsWith(INSTALLER_PREFIX);
+  const standaloneApp = path.join(INSTALLER_PREFIX, 'app');
+
+  const args = inStandalone
+    ? ['install', '--prefix', standaloneApp, '--omit=dev', '--no-fund', '--no-audit', spec]
+    : ['install', '-g', spec];
+  if (inStandalone) {
+    note(`  Updating the standalone install at ${standaloneApp} (that's what your PATH uses).`);
+  }
+
+  const r = runSync('npm', args, { stdio: 'inherit', timeout: 5 * 60 * 1000 });
   if (r.status !== 0) {
     // r.error is set when npm itself couldn't be launched (vs. ran and failed) —
     // surface it so the message isn't misleading about what actually went wrong.
@@ -158,24 +195,36 @@ async function ensureInstalled(): Promise<string | null> {
     success('CryptoCadet CLI installed');
   }
 
-  // Capability gate: rdk pays via `cryptocadet checkout` (added in 0.1.4). A stale
-  // pre-existing install lacks it and would fail cryptically at payment time, so
-  // detect the version and offer to update rather than press on into a broken checkout.
+  // Capability gate: rdk pays via `cryptocadet checkout`, which older builds lack
+  // entirely — and pre-0.2.1 builds also send the wrong auth scheme and finalize at
+  // the wrong confirmation depth (USDC moves on-chain, the top-up is never credited).
+  // Detect and offer to update rather than press on into a broken checkout.
   const ver = cadetVersion(bin);
   if (ver === null || cmpVersion(ver, MIN_CRYPTOCADET) < 0) {
     note(`Your CryptoCadet CLI (${ver ?? 'older than ' + MIN_CRYPTOCADET}) is too old to pay quotes — rdk needs ≥ ${MIN_CRYPTOCADET}.`);
-    const ok = await confirm({ message: 'Update @cryptocadet/cli now (npm i -g @latest)?', default: true });
+    const where = resolvedBinPath(bin);
+    if (where) note(`  Using: ${where}`);
+    const ok = await confirm({ message: 'Update @cryptocadet/cli now?', default: true });
     if (!ok) {
       note('Update it with: npm i -g @cryptocadet/cli@latest');
       return null;
     }
-    if (!npmInstallCadet('@cryptocadet/cli@latest')) {
+    if (!npmInstallCadet('@cryptocadet/cli@latest', bin)) {
       warning('npm update failed. Update manually: npm i -g @cryptocadet/cli@latest');
       return null;
     }
     const after = cadetVersion(bin);
     if (after === null || cmpVersion(after, MIN_CRYPTOCADET) < 0) {
-      warning('CryptoCadet still reports an old version after updating — open a new terminal and re-run.');
+      // Name the file being run. "Open a new terminal and re-run" is useless
+      // advice when the cause is one install shadowing another on PATH — the
+      // user needs to know WHICH copy is winning to do anything about it.
+      const where = resolvedBinPath(bin);
+      warning(`CryptoCadet still reports ${after ?? 'an old version'} after updating.`);
+      if (where) {
+        note(`  Your PATH resolves 'cryptocadet' to: ${where}`);
+        note('  A second, older install is shadowing the updated one. Remove it, or put the');
+        note('  updated install earlier on PATH, then re-run.');
+      }
       return null;
     }
     success(`CryptoCadet CLI updated (${after})`);
@@ -203,8 +252,57 @@ function walletShow(bin: string): WalletShow | null {
   return runJson<WalletShow>(bin, ['wallet:show', '--json']);
 }
 
+/** The wallet's USDC entry, or null. Deliberately does NOT fall back to
+ *  `tokens[0]`: quoting in USDC and then funding/paying with whatever token
+ *  happened to be listed first is worse than stopping with a clear message. */
 function usdcEntry(w: WalletShow) {
-  return w.tokens.find((x) => x.symbol.toUpperCase() === 'USDC') ?? w.tokens[0];
+  return w.tokens.find((x) => x.symbol.toUpperCase() === 'USDC') ?? null;
+}
+
+/**
+ * Does the agent wallet hold any native currency to pay gas with?
+ *
+ * `wallet:show` reports ERC-20 balances only, so a wallet can look perfectly
+ * funded while being unable to broadcast anything — USDC is the payment, native
+ * ETH is the postage. That failure otherwise surfaces only as
+ * `broadcast failed: insufficient funds for gas` after the user believes funding
+ * is done.
+ *
+ * Advisory: any problem reading the chain returns true, because a diagnostic
+ * must never be the thing that blocks a payment.
+ */
+async function hasGas(bin: string, w: WalletShow): Promise<boolean> {
+  let rpcUrl: string | undefined;
+  try {
+    const cfg = JSON.parse(
+      fs.readFileSync(path.join(CRYPTOCADET_HOME, 'config.json'), 'utf8'),
+    ) as { rpcUrl?: string };
+    rpcUrl = cfg.rpcUrl;
+  } catch { /* no readable config — skip the check */ }
+  if (!rpcUrl) return true;
+
+  try {
+    const res = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [w.agentAddress, 'latest'],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return true;
+    const { result } = (await res.json()) as { result?: string };
+    if (!result) return true;
+    if (BigInt(result) > 0n) return true;
+  } catch {
+    return true;
+  }
+
+  console.log('');
+  warning('Your agent wallet has USDC but no native balance for gas — the payment would fail.');
+  note(`  Send a small amount of the chain's native currency to ${w.agentAddress} (chain ${w.chainId}).`);
+  note('  USDC pays the merchant; native currency pays the transaction fee.');
+  return false;
 }
 
 /** Poll the agent wallet until its USDC covers `amountBaseUnits`. Funding is a human action
@@ -224,9 +322,19 @@ async function ensureFunded(
       return false;
     }
     const usdc = usdcEntry(w);
-    const have = BigInt((field === 'balance' ? usdc?.balance : usdc?.spendable) ?? '0');
+    if (!usdc) {
+      warning(`Your agent wallet has no USDC token configured on chain ${w.chainId}.`);
+      note('  Add it to the policy allowlist, or re-run `cryptocadet init` for the right network.');
+      return false;
+    }
+    const have = BigInt((field === 'balance' ? usdc.balance : usdc.spendable) ?? '0');
     if (have >= need) {
       success(`Agent wallet funded (${fmtUsdc(have)} USDC)`);
+      // USDC pays the merchant; native ETH pays the gas to move it. Funding one
+      // and not the other is the common mistake, and without this check the
+      // shortfall only surfaces as a cryptic broadcast failure after the user
+      // thinks they're done.
+      if (!(await hasGas(bin, w))) return false;
       return true;
     }
 
@@ -236,7 +344,7 @@ async function ensureFunded(
     note('Send USDC from your main wallet to your agent address:');
     console.log(`  ${t.body(w.agentAddress)}`);
     // topup:request prints the exact per-token shortfall + agent address (no auto-drain).
-    runSync(bin, ['topup:request', `${(usdc?.token ?? '').toLowerCase()}=${amountBaseUnits}`], { stdio: 'inherit' });
+    runSync(bin, ['topup:request', `${usdc.token.toLowerCase()}=${amountBaseUnits}`], { stdio: 'inherit' });
     console.log('');
     const again = await confirm({ message: 'Sent it? Check the balance again', default: true });
     if (!again) {
@@ -246,8 +354,15 @@ async function ensureFunded(
   }
 }
 
+/** Does a REFUSED decision look like a per-transaction / daily cap, as opposed
+ *  to something we must not paper over (unknown token, wrong chain, bad quote)? */
+function isCapRefusal(reason?: string): boolean {
+  return /per[- ]?tx|pertx|daily|cap|limit|exceed/i.test(reason ?? '');
+}
+
 /** Pay the merchant quote via `cryptocadet checkout`. Allowlists the payout recipient first
- *  (the buyer policy ships with none) and re-runs with --approve on an ESCALATE decision. */
+ *  (the buyer policy ships with none), re-runs with --approve on an ESCALATE decision, and
+ *  offers to raise a per-payment cap that would otherwise refuse the payment outright. */
 async function payQuote(bin: string, topup: CryptoCadetTopup): Promise<TopupOutcome> {
   const file = path.join(os.tmpdir(), `rdk-ccx-quote-${process.pid}-${Date.now()}.json`);
   fs.writeFileSync(file, JSON.stringify(topup.quote), { mode: 0o600 });
@@ -262,6 +377,38 @@ async function payQuote(bin: string, topup: CryptoCadetTopup): Promise<TopupOutc
       if (!approve) return { status: 'skipped', detail: 'escalation not approved' };
       res = runJson<{ status: CheckoutStatus; reason?: string }>(bin, [
         'checkout', '--quote-file', file, '--approve', '--json',
+      ]);
+    }
+
+    // A per-transaction cap refuses outright rather than escalating, and the
+    // remedy (raise the cap) is not something a user can guess from the raw
+    // reason string. Offer it — but only ever with explicit consent, because
+    // this is a spending limit on their wallet.
+    if (res?.status === 'REFUSED' && isCapRefusal(res.reason)) {
+      const amountUsdc = fmtUsdc(BigInt(topup.amount));
+      console.log('');
+      note(`Your wallet's per-payment limit is lower than this payment (${amountUsdc} USDC).`);
+      note(`  Reason from CryptoCadet: ${res.reason ?? 'per-transaction cap exceeded'}`);
+      const raise = await confirm({
+        message: `Raise the per-payment limit to ${amountUsdc} USDC and retry?`,
+        default: false,
+      });
+      if (!raise) {
+        return {
+          status: 'skipped',
+          detail: `per-payment limit too low for ${amountUsdc} USDC — raise it with: ` +
+            `cryptocadet policy:set --kind perTx --token ${topup.token} --usdc ${amountUsdc}`,
+        };
+      }
+      const set = runSync(bin, [
+        'policy:set', '--kind', 'perTx', '--token', topup.token, '--usdc', amountUsdc,
+      ], { stdio: 'inherit' });
+      if (set.status !== 0) {
+        return { status: 'failed', detail: 'could not raise the per-payment limit' };
+      }
+      success(`Per-payment limit raised to ${amountUsdc} USDC`);
+      res = runJson<{ status: CheckoutStatus; reason?: string }>(bin, [
+        'checkout', '--quote-file', file, '--allowlist-recipient', '--approve', '--json',
       ]);
     }
 
@@ -347,9 +494,35 @@ export async function grantCryptocadetSubscription(offer: CryptoCadetPlanOffer):
   if (!w?.agentAddress) return { status: 'failed', detail: 'could not read agent wallet address' };
 
   note(`Approving ${fmtUsdc(BigInt(offer.cap))} USDC of pull authority to the collector...`);
-  const grant = runJson<{ txHash?: string }>(bin, [
-    'subs:grant', '--token', offer.token, '--collector', offer.collector, '--cap', offer.cap,
-  ]);
+  const grantArgs = [
+    'subs:grant', '--token', offer.token, '--collector', offer.collector, '--cap', offer.cap, '--json',
+  ];
+  let grant = runJson<{ txHash?: string; status?: CheckoutStatus; reason?: string }>(bin, grantArgs);
+
+  // The approval goes through the same policy engine as a payment, so it can be
+  // escalated or refused for exactly the reasons a checkout can — and until now
+  // this call had no handling for either, so it just reported "approval
+  // transaction failed" with the real cause buried in stderr.
+  if (grant?.status === 'ESCALATE') {
+    note(`This approval is above your auto-approve limit: ${grant.reason ?? ''}`);
+    const ok = await confirm({
+      message: `Approve granting ${fmtUsdc(BigInt(offer.cap))} USDC of pull authority now?`,
+      default: true,
+    });
+    if (!ok) return { status: 'skipped', detail: 'approval not authorized' };
+    grant = runJson<{ txHash?: string; status?: CheckoutStatus; reason?: string }>(bin, [...grantArgs, '--approve']);
+  }
+
+  if (grant?.status === 'REFUSED') {
+    return {
+      status: 'failed',
+      detail: isCapRefusal(grant.reason)
+        ? `your wallet's limit is below the ${fmtUsdc(BigInt(offer.cap))} USDC approval this plan needs — ` +
+          `raise it with: cryptocadet policy:set --kind perTx --token ${offer.token} --usdc ${fmtUsdc(BigInt(offer.cap))}`
+        : (grant.reason ?? 'approval refused by your wallet policy'),
+    };
+  }
+
   if (!grant?.txHash) return { status: 'failed', detail: 'approval transaction failed (see errors above)' };
 
   success(`Approval granted (tx ${grant.txHash})`);
