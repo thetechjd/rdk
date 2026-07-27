@@ -26,6 +26,9 @@ export type CadetScenario =
   | 'duplicate'
   | 'escalate'
   | 'refused'
+  | 'cap-refused'       // per-tx cap: REFUSED, not ESCALATE — clears once raised
+  | 'grant-escalate'    // subs:grant needs human approval
+  | 'grant-cap-refused' // subs:grant blocked by the per-tx cap
   | 'failed'
   | 'missing'; // nothing on PATH at all
 
@@ -137,17 +140,33 @@ if (verb === 'topup:request') {
   process.exit(0);
 }
 
+// A raised per-tx cap persists, like the real policy file — so the retry after
+// policy:set succeeds where the first attempt was refused.
+const capMarker = home ? path.join(home, '.cap-raised') : null;
+const capRaised = () => capMarker && fs.existsSync(capMarker);
+
+if (verb === 'policy:set') {
+  const need = ['--kind', '--token'].filter((f) => !argv.includes(f));
+  if (need.length) { process.stderr.write('error: missing ' + need.join(',') + '\n'); process.exit(1); }
+  if (capMarker) fs.writeFileSync(capMarker, '1');
+  out({ kind: argv[argv.indexOf('--kind') + 1], ok: true });
+  process.exit(0);
+}
+
 if (verb === 'checkout') {
   const approved = argv.includes('--approve') || argv.includes('--yes');
   const quoteId = 'quote_fake_1';
   // ESCALATE flips to CONFIRMED once the human approves — mirroring the real gate.
-  const effective = scenario === 'escalate' && approved ? 'confirmed' : scenario;
+  let effective = scenario === 'escalate' && approved ? 'confirmed' : scenario;
+  // A per-tx cap REFUSES rather than escalating, and clears once raised.
+  if (effective === 'cap-refused' && capRaised()) effective = 'confirmed';
   switch (effective) {
     case 'confirmed': out({ status: 'CONFIRMED', quoteId, txHash: '0x' + 'ab'.repeat(32) }); break;
     case 'pending':   out({ status: 'PENDING',   quoteId, txHash: '0x' + 'cd'.repeat(32) }); break;
     case 'duplicate': out({ status: 'DUPLICATE', quoteId, row: { quote_id: quoteId, status: 'CONFIRMED' } }); break;
     case 'escalate':  out({ status: 'ESCALATE',  quoteId, reason: 'above human-confirm threshold' }); break;
     case 'refused':   out({ status: 'REFUSED',   quoteId, reason: 'recipient not allowlisted 0xdead' }); break;
+    case 'cap-refused': out({ status: 'REFUSED', quoteId, reason: 'perTx cap exceeded: limit 1.000000 USDC' }); break;
     default:          out({ status: 'FAILED',    quoteId, reason: 'broadcast failed: insufficient funds for gas' });
   }
   process.exit(0); // ALWAYS 0 — business outcome is on stdout, not the exit code.
@@ -156,6 +175,17 @@ if (verb === 'checkout') {
 if (verb === 'subs:grant') {
   const need = ['--token', '--collector', '--cap'].filter((f) => !argv.includes(f));
   if (need.length) { process.stderr.write('error: missing ' + need.join(',') + '\n'); process.exit(1); }
+  const approved = argv.includes('--approve') || argv.includes('--yes');
+  // The approval runs through the same policy gate as a payment, so it reports
+  // business outcomes on stdout with exit 0 exactly like checkout does.
+  if (scenario === 'grant-escalate' && !approved) {
+    out({ status: 'ESCALATE', reason: 'above human-confirm threshold' });
+    process.exit(0);
+  }
+  if (scenario === 'grant-cap-refused') {
+    out({ status: 'REFUSED', reason: 'perTx cap exceeded: limit 1.000000 USDC' });
+    process.exit(0);
+  }
   if (scenario === 'failed' || scenario === 'refused') {
     process.stderr.write('error: token not allowlisted\n');
     process.exit(1);

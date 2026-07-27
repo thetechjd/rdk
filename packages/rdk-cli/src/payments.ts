@@ -311,6 +311,71 @@ export async function fetchBalance(session: PaymentsSession): Promise<BalanceInf
   };
 }
 
+// ── Withdrawals ─────────────────────────────────────────────────────────────
+// Money OUT. The server debits the balance the moment a withdrawal is accepted
+// and settles it on-chain asynchronously, so a request is a real commitment —
+// check `fetchWithdrawalStatus()` before offering it, rather than debiting into
+// a queue that may not be drainable.
+
+export interface WithdrawalStatus {
+  /** False when the server cannot settle payouts right now. */
+  enabled: boolean;
+  /** The ONE chain this server pays out on — never chosen by the client. */
+  chain: string;
+  reason?: string;
+}
+
+export interface WithdrawalRecord {
+  id: string;
+  amountUsdc: number;
+  walletAddress: string;
+  walletChain: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | string;
+  txHash: string | null;
+  requestedAt: string;
+  completedAt: string | null;
+}
+
+export async function fetchWithdrawalStatus(session: PaymentsSession): Promise<WithdrawalStatus> {
+  const res = await session.fetch('/api/v1/balances/withdrawals/status');
+  // An older API has no such route — treat that as "unknown, let the request
+  // itself decide" rather than blocking a withdrawal that might work.
+  if (res.status === 404) return { enabled: true, chain: 'unknown' };
+  if (!res.ok) throw await toError(res, 'Could not check withdrawal availability');
+  return (await res.json()) as WithdrawalStatus;
+}
+
+export async function requestWithdrawal(
+  session: PaymentsSession,
+  opts: { amountUsdc: number; walletAddress: string },
+): Promise<{ withdrawalId: string; status: string; chain: string }> {
+  const res = await session.fetch('/api/v1/balances/withdraw', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // No chain: the server pays on the chain it holds a funded wallet for, and
+    // sending one only creates a way to disagree with it.
+    body: JSON.stringify({ amountUsdc: opts.amountUsdc, walletAddress: opts.walletAddress }),
+  });
+  if (!res.ok) throw await toError(res, 'Withdrawal failed');
+  return (await res.json()) as { withdrawalId: string; status: string; chain: string };
+}
+
+export async function fetchWithdrawals(session: PaymentsSession): Promise<WithdrawalRecord[]> {
+  const res = await session.fetch('/api/v1/balances/withdrawals');
+  if (!res.ok) throw await toError(res, 'Could not fetch withdrawals');
+  const rows = (await res.json()) as Record<string, unknown>[];
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    id: String(r.id),
+    amountUsdc: Number(r.amount_usdc ?? 0),
+    walletAddress: String(r.wallet_address ?? ''),
+    walletChain: String(r.wallet_chain ?? ''),
+    status: String(r.status ?? 'pending'),
+    txHash: (r.tx_hash as string | null) ?? null,
+    requestedAt: String(r.requested_at ?? ''),
+    completedAt: (r.completed_at as string | null) ?? null,
+  }));
+}
+
 export async function createTopup(
   session: PaymentsSession,
   opts: { amountUsd: number; method: 'stripe' | 'cryptocadet'; returnUrl?: string },

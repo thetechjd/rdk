@@ -61,8 +61,11 @@ export async function tipsEnable(): Promise<void> {
   console.log(`  Chain:  ${t.body(config.walletChain)}`);
   console.log(t.dim('  Tip amounts are calculated by the network based on retrieval quality.'));
   console.log('');
-  console.log(t.dim('  Set RDK_WALLET_PRIVATE_KEY env var to enable auto-settlement.'));
-  console.log(t.dim('  Tips queue locally and batch-settle hourly.'));
+  // Tips you EARN are settled by RetroDeck into your account balance; you take
+  // them out with `rdk earnings:withdraw`. This used to promise local hourly
+  // batch settlement over the x402 rail, which no process has ever run.
+  console.log(t.dim('  Tips you earn are credited to your RetroDeck balance.'));
+  console.log(t.dim('  Withdraw them to this wallet with: rdk earnings:withdraw'));
 }
 
 export async function tipsStatus(): Promise<void> {
@@ -80,11 +83,12 @@ export async function tipsStatus(): Promise<void> {
   console.log(`Pending:      ${t.body(`$${pending.toFixed(4)} USDC (${pendingList.length} tips)`)}`);
   console.log('');
 
-  if (!(await isEthersInstalled())) {
-    console.log(t.dim('  Run rdk tips:enable to activate on-chain settlement'));
+  // "Pending" here is the LOCAL queue of tips this node owes for content it
+  // retrieved — it is not money waiting to reach you. Saying so matters: the
+  // queue only ever grows, because the local x402 settlement loop is not wired
+  // up, and reading it as incoming earnings is how "withdraw" looked broken.
+  if (pending > 0) {
+    console.log(t.dim('  Pending = tips this node owes for retrievals, settled by RetroDeck credits.'));
   }
-}
-
-async function isEthersInstalled(): Promise<boolean> {
-  try { await import('ethers' as string); return true; } catch { return false; }
+  console.log(t.dim('  Earnings you can withdraw: rdk earnings  ·  rdk earnings:withdraw'));
 }

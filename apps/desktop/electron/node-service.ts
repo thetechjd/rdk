@@ -877,6 +877,8 @@ export class NodeService {
         plan: me?.planId ?? base.plan,
         balanceUsdc: bal?.balanceUsdc,
         creditLimitUsd: bal?.creditLimitUsd,
+        // The server's figure, not ours — see the note on Account.withdrawable.
+        withdrawable: bal?.withdrawable,
         // Passed through untouched: the desktop must not decide for itself what
         // counts as "low", or it will disagree with the dashboard and the CLI.
         balanceStatus: bal?.balanceStatus,
@@ -993,6 +995,38 @@ export class NodeService {
       return r;
     } catch {
       return { paid: false };
+    }
+  }
+
+  // ── Withdrawals ───────────────────────────────────────────────────────────
+
+  async getWithdrawalStatus(): Promise<{ enabled: boolean; chain: string; reason?: string }> {
+    try {
+      return await retrodeck.getWithdrawalStatus();
+    } catch {
+      // Unknown rather than "available" — better to hide the action than to
+      // offer a withdrawal that debits and then can't settle.
+      return { enabled: false, chain: 'unknown', reason: 'Could not reach the server.' };
+    }
+  }
+
+  async requestWithdrawal(
+    amountUsdc: number,
+    walletAddress: string,
+  ): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }> {
+    try {
+      const r = await retrodeck.requestWithdrawal(amountUsdc, walletAddress);
+      return { ok: true, withdrawalId: r.withdrawalId, chain: r.chain };
+    } catch (e) {
+      return { ok: false, error: this.authMessage(e) };
+    }
+  }
+
+  async getWithdrawals(): Promise<import('../shared/ipc').WithdrawalView[]> {
+    try {
+      return await retrodeck.getWithdrawals();
+    } catch {
+      return [];
     }
   }
 

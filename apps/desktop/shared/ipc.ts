@@ -206,8 +206,13 @@ export interface Account {
   email?: string;
   plan: string;
   balanceUsdc?: number;
-  /** Balance reserved against credit; withdrawable = balance − creditLimit. */
+  /** Balance reserved against credit. */
   creditLimitUsd?: number;
+  /** How much can actually be withdrawn, **as computed by the server**. Clients
+   *  must not re-derive this from balance − creditLimit: money arithmetic has
+   *  exactly one owner, and a client that guesses will eventually offer a
+   *  withdrawal the server rejects (or worse, accepts). */
+  withdrawable?: number;
   walletAddress?: string;
   nodeId?: string;
   centralApiUrl?: string;
@@ -252,6 +257,19 @@ export interface EarningsSummary {
   totalUsdc: number;
   byDocument: { title: string; chunkId: string; earnedUsdc: number; retrievals: number }[];
   overTime: { date: string; usdc: number }[];
+}
+
+/** One withdrawal and where it actually got to. `completed` with a txHash is
+ *  the only state that means the money moved. */
+export interface WithdrawalView {
+  id: string;
+  amountUsdc: number;
+  walletAddress: string;
+  walletChain: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | string;
+  txHash: string | null;
+  requestedAt: string;
+  completedAt: string | null;
 }
 
 export interface Preferences {
@@ -369,6 +387,14 @@ export interface RdkApi {
   verifySubscription(): Promise<{ paid: boolean; planId?: string; planName?: string }>;
 
   // ── Balance top-up (RetroDeck API) ────────────────────────────────────────
+  /** Whether the server can settle a payout right now, and on which chain.
+   *  Ask before offering to withdraw — a request debits the balance at once. */
+  getWithdrawalStatus(): Promise<{ enabled: boolean; chain: string; reason?: string }>;
+  /** Withdraw to the configured wallet. Settlement is asynchronous: an `ok`
+   *  here means accepted and debited, NOT that funds have arrived. */
+  requestWithdrawal(amountUsdc: number, walletAddress: string): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }>;
+  getWithdrawals(): Promise<WithdrawalView[]>;
+
   /** Creates a checkout and opens it in the browser. Poll verifyTopup() after. */
   createTopup(amountUsd: number, method?: 'stripe' | 'cryptocadet'): Promise<{ ok: boolean; paymentId?: string; error?: string }>;
   /** Verifying is what CREDITS the balance (no async webhook). Safe to re-run. */
@@ -394,5 +420,6 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
   'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',
   'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
+  'getWithdrawalStatus', 'requestWithdrawal', 'getWithdrawals',
   'getMcpInfo', 'getPreferences', 'setPreferences', 'openExternal',
 ];

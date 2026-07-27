@@ -21,6 +21,7 @@ import {
   setCreditLimit,
   verifyTopup,
 } from '../src/payments.js';
+import { isFreePlan } from '../src/commands/account.js';
 import { loadConfig } from '../src/config.js';
 import { RetrodeckAuthError } from '../src/retrodeck-api.js';
 import { PLANS, seedHappyPath, startStubApi, type StubApi } from './helpers/stub-api.js';
@@ -225,6 +226,29 @@ describe('Checkpoint 13 · CLI subscription downgrade', () => {
     await selectPlan(session(), { planId: 'starter', interval: 'monthly', method: 'stripe' });
     expect(api.to('/api/v1/plans/select')).toHaveLength(1);
     expect(api.last('/api/v1/plans/select')!.body).toMatchObject({ planId: 'starter' });
+  });
+
+  describe('recognising the Free plan', () => {
+    // The UI guard used to be `price_monthly === 0`, and Postgres sends decimals
+    // as strings — so "0.00" !== 0, the downgrade branch never ran, and choosing
+    // Free prompted for a billing interval and a payment method before failing
+    // with "No checkout URL returned" on a change the server had already made.
+    it('treats a string price of "0.00" as free', () => {
+      expect(isFreePlan({ id: 'free', price_monthly: '0.00' as unknown as number })).toBe(true);
+    });
+
+    it('treats a numeric 0 as free', () => {
+      expect(isFreePlan({ id: 'free', price_monthly: 0 })).toBe(true);
+    });
+
+    it('recognises free by id even if the price is missing entirely', () => {
+      expect(isFreePlan({ id: 'free' })).toBe(true);
+    });
+
+    it('does not mistake a paid plan for free, string or number', () => {
+      expect(isFreePlan({ id: 'starter', price_monthly: '29.00' as unknown as number })).toBe(false);
+      expect(isFreePlan({ id: 'pro', price_monthly: 97 })).toBe(false);
+    });
   });
 });
 
