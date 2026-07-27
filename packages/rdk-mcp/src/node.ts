@@ -191,6 +191,9 @@ export class RDKNode {
         const result = await this.indexer.indexDocument({
           content: content || raw,
           title,
+          // Only when the author set one explicitly — otherwise the indexer
+          // reads the file's H1, which beats the file stem.
+          docTitle: fmTitle || undefined,
           domain: this.config.domain,
           isPublic,
           sourceAdapter: this.config.vaultAdapter,
@@ -368,6 +371,7 @@ export class RDKNode {
           const result = await this.indexer.indexDocument({
             content: content || raw,
             title,
+            docTitle: fmTitle || undefined,
             domain: this.config.domain,
             isPublic,
             sourceAdapter: this.config.vaultAdapter,

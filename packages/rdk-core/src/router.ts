@@ -32,6 +32,16 @@ export interface NetworkChunk {
   title: string;
   summary?: string;
   content?: string;
+  /** Central's wire name for live-fetched content: plaintext for public chunks,
+   *  ciphertext for private ones. (The name is historical; it is not always
+   *  encrypted.) Reading only `content` here silently dropped every network
+   *  result's body. */
+  contentEncrypted?: string | null;
+  /** False when Central matched the chunk but could not obtain its content —
+   *  the owning node is offline and the chunk isn't pinned. */
+  available?: boolean;
+  /** Why the content is missing, when `available` is false (e.g. 'owner_offline'). */
+  unavailableReason?: string;
   isEncrypted?: boolean;
   score: number;
   tipAmountUsdc: number;
@@ -56,7 +66,26 @@ export interface QueryResult {
   tokenEstimate: number;
   tipsPaid: TipRecord[];
   latencyMs: number;
+  /** Set when nothing cleared the confidence bar and these are the best local
+   *  matches, returned so the caller can show something rather than nothing.
+   *  Treat as a weak signal, not an answer. */
+  lowConfidence?: boolean;
+  /** The network step failed outright (auth, credit gate, unreachable Central).
+   *  Distinct from "the network had no match" — this used to be swallowed, so a
+   *  402 and a genuine miss were indistinguishable to the user. */
+  networkError?: string;
+  /** Central's own explanation when it returned no usable results. */
+  networkMessage?: string;
+  /** Matched on the network but not retrievable: the owning node is offline and
+   *  the content isn't pinned. Surfacing these is the difference between
+   *  "nothing matched" and "your own node isn't running". */
+  unavailableChunks?: { chunkId: string; title: string; nodeId: string; reason?: string }[];
 }
+
+/** Below this, a local match is noise and not worth showing even as a hint.
+ *  Between this and `minSimilarity` is the "probably related" band we now
+ *  surface as a low-confidence answer instead of discarding. */
+const LOW_CONFIDENCE_FLOOR = 0.3;
 
 export class RDKRouter {
   constructor(private config: RouterConfig) {}
@@ -109,19 +138,35 @@ export class RDKRouter {
     }
 
     // Step 3: Network query
+    let networkError: string | undefined;
+    let networkMessage: string | undefined;
+    let unavailableChunks: QueryResult['unavailableChunks'];
     if (cfg.centralApiUrl && cfg.centralApiKey) {
       try {
-        const { results: rawNetworkResults, settledByCentral } = await this.queryNetwork(embedding, cfg);
-        const networkResults = rawNetworkResults.map(chunk => {
-          if (!chunk.isEncrypted) return chunk;
-          const key = cfg.sharedVaultKeys?.[chunk.nodeId];
-          if (!key) return { ...chunk, content: '[private — no decryption key]' };
-          try {
-            return { ...chunk, content: decrypt(chunk.content ?? '', key) };
-          } catch {
-            return { ...chunk, content: '[private — decryption failed]' };
-          }
-        });
+        const { results: rawNetworkResults, settledByCentral, message } = await this.queryNetwork(embedding, cfg);
+        networkMessage = message;
+
+        // Chunks Central matched but couldn't fetch content for (owning node
+        // offline, nothing pinned). They can't answer, but the caller needs to
+        // know they exist — otherwise "your node is down" reads as "no match".
+        unavailableChunks = rawNetworkResults
+          .filter(c => c.available === false)
+          .map(c => ({ chunkId: c.chunkId, title: c.title, nodeId: c.nodeId, reason: c.unavailableReason }));
+
+        const networkResults = rawNetworkResults
+          .filter(c => c.available !== false)
+          .map(chunk => {
+            // Central names the live-fetched body `contentEncrypted` on the wire.
+            const body = chunk.contentEncrypted ?? chunk.content;
+            if (!chunk.isEncrypted) return { ...chunk, content: body ?? chunk.summary };
+            const key = cfg.sharedVaultKeys?.[chunk.nodeId];
+            if (!key) return { ...chunk, content: '[private — no decryption key]' };
+            try {
+              return { ...chunk, content: decrypt(body ?? '', key) };
+            } catch {
+              return { ...chunk, content: '[private — decryption failed]' };
+            }
+          });
         const bestNetwork = networkResults[0];
 
         if (bestNetwork && bestNetwork.score >= minSim) {
@@ -162,15 +207,68 @@ export class RDKRouter {
             tokenEstimate: estimateTokens(context),
             tipsPaid,
             latencyMs,
+            ...(unavailableChunks.length ? { unavailableChunks } : {}),
+          };
+        }
+
+        // Nothing retrievable cleared the bar, but Central matched chunks whose
+        // owner is offline. A summary is a poor substitute for the content —
+        // and a far better answer than none. Never tipped: no one served it.
+        const summarised = rawNetworkResults.filter(
+          r => r.available === false && r.score >= minSim && !!r.summary?.trim(),
+        );
+        if (summarised.length > 0) {
+          const context = assembleNetworkContext(summarised);
+          const latencyMs = Date.now() - start;
+          cfg.localStore.logQuery({
+            queryText: userQuery, source: 'network', matchedChunkId: summarised[0].chunkId,
+            matchedChunks: summarised.map(r => ({ id: r.chunkId, score: r.score })), latencyMs,
+          });
+          return {
+            source: 'network',
+            chunks: summarised,
+            context,
+            tokenEstimate: estimateTokens(context),
+            tipsPaid: [],
+            latencyMs,
+            lowConfidence: true,
+            ...(networkMessage ? { networkMessage } : {}),
+            ...(unavailableChunks.length ? { unavailableChunks } : {}),
           };
         }
       } catch (e) {
-        // Network failure → fall through to LLM
+        // Record it — an empty catch here made a 402 credit gate, an expired API
+        // key and an unreachable Central all look identical to "no match".
+        networkError = (e as Error).message;
       }
     }
 
-    // Step 4: LLM fallback signal
+    // Step 4: nothing cleared the bar. Rather than reporting a bare miss, hand
+    // back the best local matches (if any are above the noise floor) marked as
+    // low confidence — the caller can show them, and a near-miss on the user's
+    // own vault is far more useful than silence.
     const latencyMs = Date.now() - start;
+    const nearMisses = privateResults.filter(r => r.score >= LOW_CONFIDENCE_FLOOR);
+    if (nearMisses.length > 0) {
+      const context = assembleContext(nearMisses);
+      cfg.localStore.logQuery({
+        queryText: userQuery, source: 'private', matchedChunkId: nearMisses[0].id,
+        matchedChunks: nearMisses.map(r => ({ id: r.id, score: r.score })), latencyMs,
+      });
+      return {
+        source: 'private',
+        chunks: nearMisses,
+        context,
+        tokenEstimate: estimateTokens(context),
+        tipsPaid: [],
+        latencyMs,
+        lowConfidence: true,
+        ...(networkError ? { networkError } : {}),
+        ...(networkMessage ? { networkMessage } : {}),
+        ...(unavailableChunks?.length ? { unavailableChunks } : {}),
+      };
+    }
+
     cfg.localStore.logQuery({ queryText: userQuery, source: 'llm_fallback', latencyMs });
     return {
       source: 'llm_fallback',
@@ -179,6 +277,9 @@ export class RDKRouter {
       tokenEstimate: 0,
       tipsPaid: [],
       latencyMs,
+      ...(networkError ? { networkError } : {}),
+      ...(networkMessage ? { networkMessage } : {}),
+      ...(unavailableChunks?.length ? { unavailableChunks } : {}),
     };
   }
 
@@ -201,7 +302,7 @@ export class RDKRouter {
   private async queryNetwork(
     embedding: Float32Array,
     cfg: RouterConfig,
-  ): Promise<{ results: NetworkChunk[]; settledByCentral?: boolean }> {
+  ): Promise<{ results: NetworkChunk[]; settledByCentral?: boolean; message?: string }> {
     const jwt = await this.getJwt(cfg);
     const response = await fetch(`${cfg.centralApiUrl}/api/v1/query`, {
       method: 'POST',
@@ -213,15 +314,31 @@ export class RDKRouter {
         embedding: Array.from(embedding),
         topK: cfg.topK ?? 5,
         domain: cfg.domain,
+        // Tell Central we can handle matched-but-unretrievable chunks, so an
+        // offline owner reports as such instead of looking like "no match".
+        // Older centrals ignore the flag.
+        includeUnavailable: true,
       }),
     });
 
-    if (!response.ok) throw new Error(`Network query failed: ${response.status}`);
+    if (!response.ok) {
+      // Carry Central's own explanation (e.g. the 402 top-up message) rather
+      // than reducing every failure to a status code.
+      const detail = await response.text().catch(() => '');
+      let reason = `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(detail) as { message?: string };
+        if (parsed.message) reason = parsed.message;
+      } catch {
+        if (detail.trim()) reason = detail.trim().slice(0, 200);
+      }
+      throw new Error(reason);
+    }
 
     // settledByCentral: newer centrals settle tips server-side via RetroDeck
     // credits and say so; absent (older central) → the local x402 queue pays.
-    const { results, settledByCentral } = (await response.json()) as {
-      results: NetworkChunk[]; queryId: string; settledByCentral?: boolean;
+    const { results, settledByCentral, message } = (await response.json()) as {
+      results: NetworkChunk[]; queryId: string; settledByCentral?: boolean; message?: string;
     };
 
     // Fetch chunk content from provider MCP endpoints where available
@@ -232,11 +349,15 @@ export class RDKRouter {
     const enrichedResults = enriched
       .map((r, i) => r.status === 'fulfilled' ? r.value : results[i])
       .filter(Boolean) as NetworkChunk[];
-    return { results: enrichedResults, settledByCentral };
+    return { results: enrichedResults, settledByCentral, message };
   }
 
   private async fetchChunkContent(chunk: NetworkChunk): Promise<NetworkChunk> {
-    if (!chunk.providerNodeMcpEndpoint) return chunk;
+    // Central already delivered the body — nothing to fetch.
+    if (chunk.contentEncrypted ?? chunk.content) return chunk;
+    // No peer endpoint to try: fall back to the summary rather than returning a
+    // chunk with no body at all.
+    if (!chunk.providerNodeMcpEndpoint) return { ...chunk, content: chunk.content ?? chunk.summary };
     try {
       const res = await fetch(`${chunk.providerNodeMcpEndpoint}/chunks/${chunk.chunkId}`, {
         headers: { 'Content-Type': 'application/json' },

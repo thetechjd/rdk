@@ -55,13 +55,17 @@ export interface IndexedDoc {
 }
 
 /** A chunk as surfaced to the inspector / content pane. */
-/** One entry in a document's version history (Inspector "History" section). */
+/** One VERSION in a document's history (Inspector "History" section) — not one
+ *  chunk. A document is many chunks per version, so a per-chunk list rendered as
+ *  a run of identical "v1" rows. */
 export interface VersionView {
-  id: string;
-  title: string;
   version: number;
+  /** How many chunks this version of the document produced. */
+  chunkCount: number;
+  /** A chunk to open when the row is clicked (the version's first). */
+  chunkId: string;
   state: FileState;
-  /** True when a newer version replaced this chunk (or it was retired). */
+  /** True when a newer version replaced this one (or it was retired). */
   superseded: boolean;
   createdAt: string;
 }
@@ -69,7 +73,11 @@ export interface VersionView {
 export interface ChunkView {
   id: string;
   title: string;
+  /** The source document's own title (H1 / frontmatter), when known. */
+  docTitle?: string;
   state: FileState;
+  /** How many live chunks the source document has — this chunk is one of them. */
+  docChunkCount: number;
   domain?: string;
   categories: string[];
   sourcePath?: string;
@@ -157,6 +165,14 @@ export interface QueryResponse {
   tokenEstimate: number;
   tipsPaidUsdc: number;
   latencyMs: number;
+  /** These hits didn't clear the confidence bar (or are summaries standing in
+   *  for content an offline node couldn't serve). Show them as a weak signal. */
+  lowConfidence?: boolean;
+  /** The network step failed outright — a credit gate, bad key, unreachable
+   *  Central. Distinct from "nothing matched", and must not be shown as such. */
+  networkError?: string;
+  /** Matched on the network but not retrievable: the owning node is offline. */
+  unavailableCount?: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -164,9 +180,18 @@ export interface QueryResponse {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface NodeStatus {
-  /** Node is serving public chunks (Express + WS heartbeat live). */
+  /** The node has been started — intent, not reachability. Drives start/stop. */
   serving: boolean;
+  /** THIS process holds a live WebSocket to Central. */
   wsConnected: boolean;
+  /**
+   * This node's content is actually retrievable right now — either we hold the
+   * Central socket or another local process (the always-on service) does.
+   * Content lives on this machine and is fetched on demand, so when this is
+   * false nothing indexed here can be retrieved, by anyone, including its owner.
+   * This — not `serving` — is what the status indicators must show.
+   */
+  contentServing: boolean;
   nodeId?: string;
   lastSyncAt?: string;
   chunkCount: number;

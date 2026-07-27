@@ -39,7 +39,22 @@ export function QueryBar() {
           <>
             <div className="palette-results">
               {res.hits.length === 0 && (
-                <div className="palette-hit"><div className="snippet">No matches. {res.source === 'llm_fallback' ? 'Nothing in the network answered this — an LLM would handle it.' : ''}</div></div>
+                <div className="palette-hit"><div className="snippet">
+                  {/* A failed network call is not a miss — saying "no matches" for a
+                      credit gate or a dead connection hides the real problem. */}
+                  {res.networkError
+                    ? `Couldn't search the network: ${res.networkError}`
+                    : res.unavailableCount
+                      ? `${res.unavailableCount} match(es) found, but the node that owns them is offline — content is served from the owning node.`
+                      : `No matches. ${res.source === 'llm_fallback' ? 'Nothing in the network answered this — an LLM would handle it.' : ''}`}
+                </div></div>
+              )}
+              {res.hits.length > 0 && res.lowConfidence && (
+                <div className="palette-hit"><div className="snippet" style={{ color: 'var(--cassette)' }}>
+                  {res.source === 'private'
+                    ? 'Nothing matched confidently — showing the closest things in your vault.'
+                    : 'Summaries only — the node that owns this content is offline. No tip charged.'}
+                </div></div>
               )}
               {res.hits.map((h, i) => (
                 <div key={i} className="palette-hit" onClick={() => openHit(h.chunkId, h.title, h.isOwn)}>

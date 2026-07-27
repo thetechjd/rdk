@@ -1,6 +1,6 @@
 {
   "name": "@retrodeck/adapter-obsidian",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "RDK vault adapter for Obsidian — wikilinks, frontmatter, graph-aware indexing",
   "main": "./dist/index.js",
   "scripts": {

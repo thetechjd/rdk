@@ -97,11 +97,22 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           {step === 'node' && (
             <>
               <div className="wizard-title">Start your node</div>
-              <div className="hint">Your node serves your public knowledge to the network and keeps your index in sync.</div>
+              <div className="hint">
+                Your knowledge never leaves this machine — the network stores only what
+                it needs to find it, and asks your node for the content when someone
+                (including you) retrieves it. So your node has to be running for any of
+                it to be retrievable.
+              </div>
               <label className="row" style={{ cursor: 'pointer' }}>
                 <input type="checkbox" checked={autoStart} onChange={e => setAutoStart(e.target.checked)} style={{ width: 'auto' }} />
                 <span>Start RDK automatically when I log in (recommended)</span>
               </label>
+              {!autoStart && (
+                <div className="hint">
+                  Without this, your indexed content stops being retrievable whenever
+                  RDK isn't open. You can turn it on later in Settings.
+                </div>
+              )}
             </>
           )}
 

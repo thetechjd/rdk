@@ -191,9 +191,14 @@ export default class ObsidianAdapter implements VaultAdapter {
     // Filter templates
     if (filePath.includes('/template') || String(data.template ?? '') === 'true') return null;
 
-    // Build title from frontmatter or filename
+    // Build title from frontmatter or filename. `explicitTitle` is the author's
+    // own choice; when they made one it outranks the note's H1. Otherwise we
+    // leave docTitle unset and let the indexer read the H1 out of the content —
+    // frontmatter has already been stripped by gray-matter at this point, so it
+    // can't find the frontmatter title on its own.
     const aliases = Array.isArray(data.aliases) ? data.aliases : [];
-    const title = String(data.title ?? aliases[0] ?? path.basename(filePath, '.md'));
+    const explicitTitle = data.title ?? aliases[0];
+    const title = String(explicitTitle ?? path.basename(filePath, '.md'));
 
     // Resolve [[wikilinks]] — replace with inline content (depth 1)
     const resolveWikilinks = this.config.resolveWikilinks !== false;
@@ -215,6 +220,7 @@ export default class ObsidianAdapter implements VaultAdapter {
     return {
       content,
       title,
+      docTitle: explicitTitle !== undefined ? String(explicitTitle) : undefined,
       sourcePath: filePath,
       sourceAdapter: 'obsidian',
       domain: (this.config.domain as string) ?? options.domain ?? 'general',

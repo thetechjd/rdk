@@ -81,6 +81,82 @@ export async function vaultIndex(opts: { force?: boolean; isPublic?: boolean }):
 }
 
 /** Version history for a vault file's document series (live + superseded). */
+/**
+ * Fill in metadata that older versions of RDK never recorded, for chunks that
+ * are already indexed:
+ *
+ *  - `summary` — only produced when an LLM was wired into the indexer, so in
+ *    practice no chunk had one. It's the one part of a public chunk Central may
+ *    hold, and therefore the only thing that can answer while this node is
+ *    offline.
+ *  - `docTitle` — the document's own title. Without it, every surface guessed
+ *    at one by splitting the chunk title on ' — ', which yields the file stem.
+ *
+ * Touched chunks are re-queued for sync; run `rdk vault:sync` afterwards (or let
+ * the background sync pick them up). Private chunks are stored encrypted, so
+ * their summaries can't be recomputed here — and aren't synced anyway.
+ */
+export async function vaultBackfill(): Promise<void> {
+  const ora = (await import('ora')).default;
+  const fs = await import('fs');
+  const path = await import('path');
+  const { LocalStore, extractDocTitle, extractiveSummary, docTitleFromChunkTitle } = await import('@rdk/core');
+
+  const spinner = ora('Scanning indexed chunks...').start();
+  const store = new LocalStore();
+  try {
+    const chunks = store.getAllChunks().filter(c => !c.supersededAt);
+
+    // One file read per document, not per chunk.
+    const docTitleByPath = new Map<string, string | undefined>();
+    const readDocTitle = (sourcePath: string): string | undefined => {
+      if (docTitleByPath.has(sourcePath)) return docTitleByPath.get(sourcePath);
+      let title: string | undefined;
+      try {
+        if (fs.existsSync(sourcePath) && fs.statSync(sourcePath).isFile()) {
+          const raw = fs.readFileSync(sourcePath, 'utf-8');
+          title = extractDocTitle(raw, path.basename(sourcePath, path.extname(sourcePath)));
+        }
+      } catch { /* unreadable / moved / a URL — fall back below */ }
+      docTitleByPath.set(sourcePath, title);
+      return title;
+    };
+
+    let summaries = 0;
+    let titles = 0;
+    for (const chunk of chunks) {
+      const fields: { summary?: string; docTitle?: string } = {};
+
+      // Public chunks store plaintext; private ones store ciphertext, which
+      // would summarize to noise.
+      if (chunk.isPublic && !chunk.summary?.trim()) {
+        const summary = extractiveSummary(chunk.content);
+        if (summary) { fields.summary = summary; summaries++; }
+      }
+
+      // rowToChunk already falls back to the legacy title split in memory, so
+      // only persist when we can do better — or when nothing is stored at all.
+      const fromFile = chunk.sourcePath ? readDocTitle(chunk.sourcePath) : undefined;
+      const docTitle = fromFile ?? docTitleFromChunkTitle(chunk.title);
+      if (docTitle && docTitle !== chunk.docTitle) { fields.docTitle = docTitle; titles++; }
+
+      if (Object.keys(fields).length > 0) store.backfillMetadata(chunk.id, fields);
+    }
+
+    spinner.succeed(
+      `Backfilled ${summaries} summary(ies) and ${titles} document title(s) across ${chunks.length} chunk(s)`,
+    );
+    if (summaries + titles > 0) {
+      console.log(t.dim('  Run `rdk vault:sync` to push the updated metadata to the network.'));
+    }
+  } catch (e) {
+    spinner.fail((e as Error).message);
+    process.exitCode = 1;
+  } finally {
+    store.close();
+  }
+}
+
 export async function vaultVersions(filePath: string): Promise<void> {
   const path = await import('path');
   const { LocalStore } = await import('@rdk/core');
@@ -201,6 +277,7 @@ export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}
             chunks: [{
               chunkHash: chunk.id,
               title: chunk.title,                                  // sent for public AND private
+              docTitle: chunk.docTitle,                            // names the document in the Files view
               summary: chunk.isPublic ? chunk.summary : undefined, // private summary stays on-node
               domain: chunk.domain ?? config.domain,
               categories: chunk.categories,
@@ -209,6 +286,12 @@ export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}
               isPublic: chunk.isPublic,
               isEncrypted: !chunk.isPublic,  // derived boolean (private ⟺ encrypted) — never a SQLite int
               freshnessAt: chunk.updatedAt.toISOString(),
+              // Version-series metadata, matching the indexer's own sync payload —
+              // without these a `vault:sync` would blank out what indexing set.
+              sourcePath: chunk.sourcePath,
+              sourceAdapter: chunk.sourceAdapter,
+              supersedesHash: chunk.supersedes,
+              version: chunk.version ?? 1,
             }],
           }),
           signal: AbortSignal.timeout(10000),

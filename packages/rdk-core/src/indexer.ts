@@ -9,11 +9,18 @@ import { encrypt, type VaultKey } from './crypto.js';
 import { type EmbeddingModel } from './models/embedding.js';
 import { LocalStore } from './store/local-store.js';
 import { categorizeChunk, scoreInformationDensity } from './taxonomy.js';
+import { extractiveSummary } from './summarize.js';
+import { buildChunkTitle, extractDocTitle } from './title.js';
 import type { IndexResult } from './adapters/interface.js';
 
 export interface Document {
   content: string;
   title: string;
+  /** What the document calls itself — frontmatter `title:` or its H1 — as
+   *  opposed to `title`, which is often just the file stem. When omitted the
+   *  indexer derives it from the content. Kept as its own field so consumers
+   *  stop recovering it by splitting the composite chunk title on ' — '. */
+  docTitle?: string;
   sourcePath?: string;
   sourceAdapter?: string;
   domain?: string;
@@ -61,6 +68,12 @@ export class RDKIndexer {
     let chunksSkipped = 0;
 
     try {
+      // 0. Settle on what this document is called. Derived from the ORIGINAL
+      // content (frontmatter/H1 survive cleaning, but this is where they mean
+      // something), falling back to whatever the caller passed as `title` —
+      // usually the file stem.
+      const docTitle = doc.docTitle?.trim() || extractDocTitle(doc.content, doc.title);
+
       // 1. Clean
       const cleaned = cleanText(doc.content);
       if (cleaned.length < 50) {
@@ -89,7 +102,7 @@ export class RDKIndexer {
           // exact title-match query ("Forward Deployed Engineer") score low
           // against a long article. The stored content (below) is unchanged —
           // only the vector incorporates the title.
-          const chunkTitle = this.buildTitle(doc.title, chunk);
+          const chunkTitle = this.buildTitle(docTitle, chunk);
           const embedText = `${chunkTitle}\n\n${chunk.text}`;
           const embedding = await this.config.embeddingModel.embed(embedText);
 
@@ -98,7 +111,11 @@ export class RDKIndexer {
           const categories = doc.categories ?? categorizeChunk(chunk.text, domain);
           allCategories.push(categories);
 
-          // 6. Generate summary (LLM call — amortized index cost)
+          // 6. Generate summary (LLM call — amortized index cost).
+          // Always end up with SOMETHING: for public chunks the summary is the
+          // only part Central may hold, so it is what answers a query when this
+          // node is offline. An LLM-less indexer used to leave it null, which
+          // left offline content with no fallback at all.
           let summary: string | undefined;
           if (this.llm) {
             try {
@@ -106,8 +123,11 @@ export class RDKIndexer {
                 instruction: 'Summarize this for a knowledge retrieval system. Include: main topic, key facts, intended use case. Be specific. Max 100 words.',
               });
             } catch (e) {
-              // Non-fatal: continue without summary
+              // Non-fatal: fall through to the extractive summary
             }
+          }
+          if (!summary?.trim()) {
+            summary = extractiveSummary(chunk.text, { headings: chunk.headings }) || undefined;
           }
 
           // 7. Store locally — encrypt content if private and vault key is configured
@@ -120,6 +140,7 @@ export class RDKIndexer {
           this.config.localStore.saveChunk({
             id: chunkId,
             title: chunkTitle,
+            docTitle,
             content: contentToStore,
             summary,
             domain,
@@ -171,11 +192,7 @@ export class RDKIndexer {
   }
 
   private buildTitle(docTitle: string, chunk: Chunk): string {
-    if (chunk.headings.length > 0) {
-      const lastHeading = chunk.headings.filter(Boolean).pop();
-      if (lastHeading) return `${docTitle} — ${lastHeading}`;
-    }
-    return docTitle;
+    return buildChunkTitle(docTitle, chunk.headings);
   }
 
   private async syncTocentral(isPublicDoc: boolean): Promise<void> {
@@ -193,6 +210,9 @@ export class RDKIndexer {
         // title in Central for team/cross-node search + the dashboard. Summary
         // stays on the node for private chunks (it's a content-derived gist).
         title: chunk.title,
+        // Document-level title, so Central's Files view can name a document
+        // without picking an arbitrary chunk title out of the group.
+        docTitle: chunk.docTitle,
         summary: chunk.isPublic ? chunk.summary : undefined,
         domain: chunk.domain,
         categories: chunk.categories,

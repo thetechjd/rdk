@@ -47,7 +47,7 @@ export function Inspector() {
             <div className="filename">{chunk.title}</div>
 
             <div className="stat-grid">
-              <Stat label="chunks" value={1} />
+              <Stat label="chunks" value={chunk.docChunkCount} />
               <Stat label="retrievals" value={chunk.retrievals} />
               <Stat label="earned" value={`$${chunk.earnedUsdc.toFixed(2)}`} earn />
               <Stat label="size" value={`${chunk.sizeTokens} tok`} />
@@ -69,16 +69,20 @@ export function Inspector() {
               )}
             </div>
 
+            {/* More than one VERSION — an unedited document has exactly one, however
+                many chunks it split into. */}
             {versions.length > 1 && (
               <div>
                 <div className="section-label" style={{ marginBottom: 8 }}>History</div>
                 <div className="retrieved-list">
                   {versions.map((v) => (
-                    <div key={v.id} className="retrieved-item" style={{ cursor: 'pointer', opacity: v.superseded ? 0.6 : 1 }}
+                    <div key={v.version} className="retrieved-item" style={{ cursor: 'pointer', opacity: v.superseded ? 0.6 : 1 }}
                       title={v.superseded ? 'Superseded — frozen, viewable read-only' : 'Live version'}
-                      onClick={() => app.openContentForChunk(v.id, `${v.title} (v${v.version})`)}>
+                      onClick={() => app.openContentForChunk(v.chunkId, `${chunk.title} (v${v.version})`)}>
                       <span className="q">v{v.version} · {v.state}{v.superseded ? ' · superseded' : ' · live'}</span>
-                      <span className="n">{new Date(v.createdAt).toLocaleDateString()}</span>
+                      <span className="n">
+                        {v.chunkCount} chunk{v.chunkCount === 1 ? '' : 's'} · {new Date(v.createdAt).toLocaleDateString()}
+                      </span>
                     </div>
                   ))}
                 </div>

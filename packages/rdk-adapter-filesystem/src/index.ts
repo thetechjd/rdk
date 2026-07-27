@@ -196,6 +196,10 @@ export class FilesystemAdapter implements VaultAdapter {
     const ext = path.extname(filePath).toLowerCase();
     let content = raw;
     let title = path.basename(filePath, ext);
+    // The author's explicit frontmatter title, when there is one. Left undefined
+    // otherwise so the indexer can fall back to the document's H1 — frontmatter
+    // is stripped from `content` below, so it can't find the title itself.
+    let docTitle: string | undefined;
     let frontmatterCategories: string[] | undefined;
     let isExplicitlyPublic = false;
 
@@ -204,7 +208,7 @@ export class FilesystemAdapter implements VaultAdapter {
       try {
         const parsed = matter(raw);
         content = parsed.content;
-        if (parsed.data.title) title = parsed.data.title as string;
+        if (parsed.data.title) { title = parsed.data.title as string; docTitle = title; }
         if (parsed.data.tags) {
           frontmatterCategories = Array.isArray(parsed.data.tags)
             ? (parsed.data.tags as string[])
@@ -220,6 +224,7 @@ export class FilesystemAdapter implements VaultAdapter {
     return {
       content,
       title,
+      docTitle,
       sourcePath: filePath,
       sourceAdapter: 'filesystem',
       domain: (this.config.domain as string) ?? options.domain ?? 'general',

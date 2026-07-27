@@ -224,4 +224,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => stopWatchers());
+app.on('before-quit', () => {
+  stopWatchers();
+  // Hand the Central WebSocket back cleanly so an installed always-on service
+  // can take it over immediately instead of waiting out the lock heartbeat.
+  void service.stopNode();
+});

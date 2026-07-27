@@ -11,6 +11,10 @@ import crypto from 'crypto';
 export interface StoredChunk {
   id: string;
   title: string;
+  /** The title of the document this chunk came from (frontmatter/H1), as
+   *  opposed to `title`, which is `<document> — <section>`. Undefined for rows
+   *  indexed before this existed; consumers fall back to parsing `title`. */
+  docTitle?: string;
   content: string;
   summary?: string;
   domain?: string;
@@ -41,6 +45,16 @@ export interface StoredChunk {
 
 export interface SearchResult extends StoredChunk {
   score: number; // cosine similarity 0-1
+}
+
+/** One version of a document — the chunks of a single indexing pass, rolled up. */
+export interface DocumentVersion {
+  version: number;
+  chunkCount: number;
+  chunkIds: string[];
+  state: 'public' | 'private';
+  superseded: boolean;
+  createdAt: Date;
 }
 
 export interface TipQueueEntry {
@@ -80,6 +94,7 @@ export class LocalStore {
       CREATE TABLE IF NOT EXISTS chunks (
         id            TEXT PRIMARY KEY,
         title         TEXT NOT NULL,
+        doc_title     TEXT,
         content       TEXT NOT NULL,
         summary       TEXT,
         domain        TEXT,
@@ -122,11 +137,13 @@ export class LocalStore {
       // Column already exists — safe to ignore
     }
 
-    // Migration: versioning columns (supersedes lineage) for existing databases
+    // Migration: versioning columns (supersedes lineage) + the document title
+    // for existing databases
     for (const ddl of [
       `ALTER TABLE chunks ADD COLUMN supersedes TEXT`,
       `ALTER TABLE chunks ADD COLUMN superseded_at DATETIME`,
       `ALTER TABLE chunks ADD COLUMN version INTEGER DEFAULT 1`,
+      `ALTER TABLE chunks ADD COLUMN doc_title TEXT`,
     ]) {
       try { this.db.exec(ddl); } catch { /* column already exists */ }
     }
@@ -184,24 +201,24 @@ export class LocalStore {
     if (existing) {
       this.db.prepare(`
         UPDATE chunks SET
-          title = ?, content = ?, summary = ?, domain = ?, categories = ?,
+          title = ?, doc_title = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
           source_adapter = ?, supersedes = ?, version = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        chunk.title, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
+        chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
         chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1, now, id,
       );
     } else {
       this.db.prepare(`
-        INSERT INTO chunks (id, title, content, summary, domain, categories,
+        INSERT INTO chunks (id, title, doc_title, content, summary, domain, categories,
           is_public, is_encrypted, local_only, quality_score, source_path, source_adapter,
           supersedes, version, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        id, chunk.title, chunk.content, chunk.summary ?? null,
+        id, chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories),
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null,
@@ -261,12 +278,38 @@ export class LocalStore {
     return rows.map(r => this.rowToChunk(r));
   }
 
+  /** One entry per VERSION of a document, newest first.
+   *
+   *  `getVersions` returns chunks, and a document is many chunks — so callers
+   *  that wanted a version history got N identical-looking rows per version
+   *  (five chunks of an unedited note read as five "v1" entries). Grouping is
+   *  the caller's real intent, so it belongs here rather than in each UI. */
+  getDocumentVersions(sourcePath: string, sourceAdapter?: string): DocumentVersion[] {
+    return groupChunkVersions(this.getVersions(sourcePath, sourceAdapter));
+  }
+
   /** Highest version number in a document series (0 when none indexed yet). */
   getLatestVersion(sourcePath: string): number {
     const row = this.db.prepare(
       `SELECT MAX(version) AS v FROM chunks WHERE source_path = ?`,
     ).get(sourcePath) as { v: number | null } | undefined;
     return row?.v ?? 0;
+  }
+
+  /** Fill in metadata that didn't exist when a chunk was first indexed, and
+   *  re-queue it for sync so Central picks the new values up. Only writes the
+   *  fields provided; never touches content or embeddings. */
+  backfillMetadata(id: string, fields: { summary?: string; docTitle?: string }): boolean {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (fields.summary !== undefined) { sets.push('summary = ?'); params.push(fields.summary); }
+    if (fields.docTitle !== undefined) { sets.push('doc_title = ?'); params.push(fields.docTitle); }
+    if (sets.length === 0) return false;
+    params.push(id);
+    const result = this.db.prepare(
+      `UPDATE chunks SET ${sets.join(', ')}, synced_at = NULL WHERE id = ?`,
+    ).run(...params as never[]);
+    return result.changes > 0;
   }
 
   markSynced(id: string): void {
@@ -504,6 +547,10 @@ export class LocalStore {
     return {
       id: row.id as string,
       title: row.title as string,
+      // Rows indexed before doc_title existed fall back to the historical
+      // convention: everything before the first ' — ' section separator.
+      docTitle: ((row.doc_title as string | null) ?? undefined)
+        ?? docTitleFromChunkTitle(row.title as string),
       content: row.content as string,
       summary: row.summary as string | undefined,
       domain: row.domain as string | undefined,
@@ -623,6 +670,54 @@ export class LocalStore {
 }
 
 // ── Utility ────────────────────────────────────────────────────────────────
+
+/**
+ * Roll a document's chunks up into one entry per version, newest first.
+ *
+ * A document is many chunks and every chunk of one indexing pass carries the
+ * same version number, so listing chunks as "history" showed N identical rows
+ * per version — five chunks of an unedited note read as five separate "v1"
+ * entries.
+ */
+export function groupChunkVersions(chunks: readonly StoredChunk[]): DocumentVersion[] {
+  const byVersion = new Map<number, StoredChunk[]>();
+  for (const chunk of chunks) {
+    const version = chunk.version ?? 1;
+    const group = byVersion.get(version) ?? [];
+    group.push(chunk);
+    byVersion.set(version, group);
+  }
+
+  return [...byVersion.entries()]
+    .map(([version, group]) => ({
+      version,
+      chunkCount: group.length,
+      chunkIds: group.map(c => c.id),
+      // Public if ANY chunk is: promoting a document promotes its chunks, and a
+      // partially-promoted document should read as public rather than quietly
+      // claim to be private.
+      state: group.some(c => c.isPublic) ? ('public' as const) : ('private' as const),
+      // Superseded only once EVERY chunk has been replaced — while any chunk
+      // still answers queries, the version is still live.
+      superseded: group.every(c => !!c.supersededAt),
+      createdAt: group.reduce(
+        (earliest, c) => (c.createdAt < earliest ? c.createdAt : earliest),
+        group[0].createdAt,
+      ),
+    }))
+    .sort((a, b) => b.version - a.version);
+}
+
+/**
+ * Legacy recovery of a document title from a composite chunk title
+ * (`<document> — <section>`). Lossy — it truncates any document title that
+ * itself contains ' — ' — which is exactly why `doc_title` exists. Only for
+ * rows written before that column; never for new writes.
+ */
+export function docTitleFromChunkTitle(title: string): string | undefined {
+  const head = title.split(' — ')[0]?.trim();
+  return head || undefined;
+}
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) return 0;
