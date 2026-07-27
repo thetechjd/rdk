@@ -74,14 +74,24 @@ function Shell() {
 }
 
 function Titlebar() {
-  const { status, openGraph } = useApp();
-  // "live" must mean retrievable, not merely started — a node that's running but
+  const { status, openGraph, setPaletteOpen } = useApp();
+  // "live" must mean retrievable, not merely static — a node that's running but
   // holds no connection to Central serves nothing.
   const live = status?.contentServing;
+  const shortcut = navigator.platform.toLowerCase().includes('mac') ? '⌘K' : 'Ctrl K';
   return (
     <div className="titlebar">
       <span className="brand" onClick={openGraph} style={{ cursor: 'pointer' }}>RDK</span>
-      <span className="vault-name">{/* filled by StatusBar's vault name via tree */}</span>
+      <span className="spacer" />
+      {/* Querying is the whole point of the product, and it lived behind an
+          undiscoverable Cmd/Ctrl+K with no affordance anywhere in the UI. The
+          button carries the shortcut so it teaches it rather than replacing it. */}
+      <button className="query-trigger" onClick={() => setPaletteOpen(true)}
+        title="Search your knowledge and the network">
+        <span className="q-icon">⌕</span>
+        <span className="q-label">query</span>
+        <span className="q-key">{shortcut}</span>
+      </button>
       <span className="spacer" />
       <span className="node-pill item" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
         title={live
