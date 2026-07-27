@@ -8,4 +8,6 @@ export * from './indexer.js';
 export * from './models/embedding.js';
 export * from './router.js';
 export * from './store/local-store.js';
+export * from './summarize.js';
 export * from './taxonomy.js';
+export * from './title.js';

@@ -7,11 +7,14 @@
 // the requesting team member decrypts locally with the shared vault key, so
 // Central never sees private plaintext).
 
+// One `content` field for both visibilities — Central's FetchedChunk reads only
+// this name. Private content used to be sent as `contentCiphertext`, which
+// nothing on the other side ever read, so team retrieval of private chunks
+// always came back empty.
 interface FetchContentResult {
   chunkId: string;
   isPublic?: boolean;
   content?: string;
-  contentCiphertext?: string;
   available: boolean;
 }
 
@@ -46,7 +49,7 @@ export async function fetchContentHandler(data: unknown): Promise<{ chunks: Fetc
       } else {
         // Private: content is stored encrypted at rest (when a vault key is
         // configured). Hand over the ciphertext as-is — no decryption.
-        chunks.push({ chunkId, isPublic: false, contentCiphertext: chunk.content, available: true });
+        chunks.push({ chunkId, isPublic: false, content: chunk.content, available: true });
       }
     }
 
