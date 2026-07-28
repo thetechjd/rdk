@@ -1013,9 +1013,10 @@ export class NodeService {
   async requestWithdrawal(
     amountUsdc: number,
     walletAddress: string,
+    walletChain: string,
   ): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }> {
     try {
-      const r = await retrodeck.requestWithdrawal(amountUsdc, walletAddress);
+      const r = await retrodeck.requestWithdrawal(amountUsdc, walletAddress, walletChain);
       return { ok: true, withdrawalId: r.withdrawalId, chain: r.chain };
     } catch (e) {
       return { ok: false, error: this.authMessage(e) };

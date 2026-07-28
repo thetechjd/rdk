@@ -27,9 +27,9 @@ export function Earnings() {
   const wallet = account?.walletAddress;
 
   const withdraw = useCallback(async () => {
-    if (!wallet || withdrawable <= 0) return;
+    if (!wallet || withdrawable <= 0 || !payout?.enabled) return;
     setBusy(true);
-    const r = await window.rdk.requestWithdrawal(withdrawable, wallet);
+    const r = await window.rdk.requestWithdrawal(withdrawable, wallet, payout.chain);
     setBusy(false);
     if (r.ok) {
       // "Requested", not "sent" — settlement happens on-chain afterwards.
@@ -39,7 +39,7 @@ export function Earnings() {
     } else {
       app.toast(r.error ?? 'Withdrawal failed', true);
     }
-  }, [app, refresh, wallet, withdrawable]);
+  }, [app, refresh, wallet, withdrawable, payout]);
 
   if (!data) return <div className="empty">loading earnings…</div>;
 

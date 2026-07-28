@@ -493,6 +493,7 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
     const result = await requestWithdrawal(session, {
       amountUsdc: amount,
       walletAddress: config.walletAddress,
+      walletChain: status.chain,
     });
     sending.succeed(`Withdrawal requested — $${amount.toFixed(4)} USDC to ${config.walletAddress}`);
     // Deliberately not "sent": settlement is asynchronous, and claiming

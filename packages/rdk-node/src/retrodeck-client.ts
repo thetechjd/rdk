@@ -319,12 +319,14 @@ export async function getWithdrawalStatus(): Promise<WithdrawalStatus> {
 export async function requestWithdrawal(
   amountUsdc: number,
   walletAddress: string,
+  walletChain: string,
 ): Promise<{ withdrawalId: string; status: string; chain: string }> {
   const res = await retrodeckFetch('/api/v1/balances/withdraw', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // The chain is the server's to decide — it can only pay from the wallet it holds.
-    body: JSON.stringify({ amountUsdc, walletAddress }),
+    // Address + chain identifies the wallet. Pass the chain the SERVER reported
+    // via getWithdrawalStatus() — it settles on exactly one and records that.
+    body: JSON.stringify({ amountUsdc, walletAddress, walletChain }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => null) as { message?: string } | null;

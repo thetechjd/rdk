@@ -392,7 +392,7 @@ export interface RdkApi {
   getWithdrawalStatus(): Promise<{ enabled: boolean; chain: string; reason?: string }>;
   /** Withdraw to the configured wallet. Settlement is asynchronous: an `ok`
    *  here means accepted and debited, NOT that funds have arrived. */
-  requestWithdrawal(amountUsdc: number, walletAddress: string): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }>;
+  requestWithdrawal(amountUsdc: number, walletAddress: string, walletChain: string): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }>;
   getWithdrawals(): Promise<WithdrawalView[]>;
 
   /** Creates a checkout and opens it in the browser. Poll verifyTopup() after. */

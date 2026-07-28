@@ -347,14 +347,20 @@ export async function fetchWithdrawalStatus(session: PaymentsSession): Promise<W
 
 export async function requestWithdrawal(
   session: PaymentsSession,
-  opts: { amountUsdc: number; walletAddress: string },
+  opts: { amountUsdc: number; walletAddress: string; walletChain: string },
 ): Promise<{ withdrawalId: string; status: string; chain: string }> {
   const res = await session.fetch('/api/v1/balances/withdraw', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // No chain: the server pays on the chain it holds a funded wallet for, and
-    // sending one only creates a way to disagree with it.
-    body: JSON.stringify({ amountUsdc: opts.amountUsdc, walletAddress: opts.walletAddress }),
+    // The wallet is identified by address + chain. Take the chain from the
+    // server's own withdrawal status rather than from local config: the server
+    // settles on exactly one chain and records that regardless, so anything else
+    // here can only ever disagree with what actually happens.
+    body: JSON.stringify({
+      amountUsdc: opts.amountUsdc,
+      walletAddress: opts.walletAddress,
+      walletChain: opts.walletChain,
+    }),
   });
   if (!res.ok) throw await toError(res, 'Withdrawal failed');
   return (await res.json()) as { withdrawalId: string; status: string; chain: string };
