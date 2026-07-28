@@ -320,8 +320,12 @@ export async function fetchBalance(session: PaymentsSession): Promise<BalanceInf
 export interface WithdrawalStatus {
   /** False when the server cannot settle payouts right now. */
   enabled: boolean;
-  /** The ONE chain this server pays out on — never chosen by the client. */
+  /** The chain FAMILY to send back as `walletChain`. Not the settlement
+   *  network — the contract enum only knows families, and echoing the network
+   *  (e.g. 'base-sepolia') back is rejected. */
   chain: string;
+  /** The settlement network, for display: 'base' vs 'base-sepolia'. */
+  network?: string;
   reason?: string;
 }
 
@@ -340,7 +344,7 @@ export async function fetchWithdrawalStatus(session: PaymentsSession): Promise<W
   const res = await session.fetch('/api/v1/balances/withdrawals/status');
   // An older API has no such route — treat that as "unknown, let the request
   // itself decide" rather than blocking a withdrawal that might work.
-  if (res.status === 404) return { enabled: true, chain: 'unknown' };
+  if (res.status === 404) return { enabled: true, chain: 'base' };
   if (!res.ok) throw await toError(res, 'Could not check withdrawal availability');
   return (await res.json()) as WithdrawalStatus;
 }

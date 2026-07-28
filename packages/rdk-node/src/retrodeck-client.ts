@@ -291,8 +291,11 @@ export async function createTopup(
 // ── Withdrawals ─────────────────────────────────────────────────────────────
 
 export interface WithdrawalStatus {
+  /** Chain FAMILY to send back as `walletChain` (not the settlement network). */
   enabled: boolean;
   chain: string;
+  /** Settlement network, for display. */
+  network?: string;
   reason?: string;
 }
 
@@ -311,7 +314,7 @@ export interface WithdrawalRecord {
  *  debits the balance immediately, so ask before offering the action. */
 export async function getWithdrawalStatus(): Promise<WithdrawalStatus> {
   const res = await retrodeckFetch('/api/v1/balances/withdrawals/status');
-  if (res.status === 404) return { enabled: true, chain: 'unknown' }; // older API
+  if (res.status === 404) return { enabled: true, chain: 'base' }; // older API
   if (!res.ok) throw new Error(`Could not check withdrawals (HTTP ${res.status})`);
   return (await res.json()) as WithdrawalStatus;
 }

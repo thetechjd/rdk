@@ -484,7 +484,7 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
 
     const { confirm } = await import('../prompts.js');
     const ok = await confirm({
-      message: `Withdraw $${amount.toFixed(4)} USDC to ${config.walletAddress} on ${status.chain}?`,
+      message: `Withdraw $${amount.toFixed(4)} USDC to ${config.walletAddress} on ${status.network ?? status.chain}?`,
       default: false,
     });
     if (!ok) { console.log(t.dim('  Cancelled.')); return; }
