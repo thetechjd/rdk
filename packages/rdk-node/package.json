@@ -14,6 +14,10 @@
       "import": "./dist/config.js",
       "types": "./dist/config.d.ts"
     },
+    "./register-node": {
+      "import": "./dist/register-node.js",
+      "types": "./dist/register-node.d.ts"
+    },
     "./save-retrieved": {
       "import": "./dist/save-retrieved.js",
       "types": "./dist/save-retrieved.d.ts"

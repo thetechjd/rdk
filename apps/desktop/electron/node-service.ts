@@ -8,6 +8,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { spawnSync } from 'child_process';
 import {
   LocalStore,
@@ -35,6 +36,7 @@ import {
 } from '@rdk/node/config';
 import { SyncService } from '@rdk/node/sync-service';
 import { startWsOwnership, type WsOwnership } from '@rdk/node/ws/ownership';
+import { ensureServableNode } from '@rdk/node/register-node';
 import { wsConnectionHeldByOther } from '@rdk/node/ws/ws-lock';
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
 // (and token) from RDK Central; see the note above getAccount().
@@ -886,11 +888,27 @@ export class NodeService {
   }
 
   async startNode(): Promise<{ ok: boolean; error?: string }> {
-    const cfg = this.getConfig();
+    let cfg = this.getConfig();
     if (!cfg?.apiKey || !cfg.centralApiUrl) {
       return { ok: false, error: 'Sign in first (Settings → Account) to serve on the network.' };
     }
     try {
+      // Desktop onboarding creates an OFFLINE node (`local-<hash>`), which can
+      // index, publish and query but can never hold the WebSocket Central uses
+      // to fetch content — so its chunks are indexed and unretrievable. The
+      // only cure lived behind `rdk network:join`, a CLI command a desktop user
+      // has no way to discover. Register here instead: nobody should have to
+      // open a terminal to make the app they installed work.
+      const ensured = await ensureServableNode({ displayName: `RDK desktop (${os.hostname()})` });
+      if (ensured.status === 'blocked') return { ok: false, error: ensured.reason };
+      if (ensured.status === 'registered') {
+        this.config = loadConfigOrNull(); // nodeId AND apiKey both changed
+        this.store?.close();
+        this.store = null;
+        cfg = this.getConfig();
+        if (!cfg?.apiKey) return { ok: false, error: 'Registration did not persist — try again.' };
+      }
+
       // Two halves, both required to actually serve:
       //  1. the sync loop pushes chunk embeddings + metadata to Central, and
       //  2. the WebSocket answers Central's content fetches at query time.
@@ -910,6 +928,18 @@ export class NodeService {
       this.syncService.start();
       // Defers to an installed always-on service when one already holds the lock.
       this.wsOwnership = startWsOwnership();
+      if (!this.wsOwnership) {
+        // startWsOwnership returns null when this machine has no usable node
+        // identity. Reporting ok here is what made "start node" appear to do
+        // nothing: the button succeeded, the status stayed "not serving", and
+        // there was no way to find out why.
+        this.serving = false;
+        return {
+          ok: false,
+          error: 'This node has no network identity, so it cannot serve content. '
+            + 'Sign out and back in, then start the node again.',
+        };
+      }
       this.serving = true;
       return { ok: true };
     } catch (e) {

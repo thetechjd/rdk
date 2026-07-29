@@ -1,6 +1,6 @@
 {
   "name": "rdk-desktop",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "RDK Desktop — Obsidian-style file explorer + knowledge/retrieval graph for the RDK network",
   "author": "RetroDeck <hello@rdk.network>",
   "homepage": "https://rdk.network",
@@ -52,6 +52,7 @@
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
     "jsdom": "^29.1.1",
+    "playwright": "^1.62.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.8.3",

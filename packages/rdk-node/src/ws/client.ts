@@ -192,6 +192,18 @@ export class RdkWebSocketClient extends EventEmitter {
 // Singleton — created once per mcp:serve process
 let client: RdkWebSocketClient | null = null;
 
+/**
+ * Drop the cached client so the next `getWsClient()` reads the config again.
+ *
+ * The client captures nodeId and apiKey at construction. Registering a node
+ * changes BOTH, so without this the process keeps authenticating as the
+ * `local-` identity it just replaced — and stays offline for its whole life.
+ */
+export function resetWsClient(): void {
+  try { client?.disconnect(); } catch { /* already gone */ }
+  client = null;
+}
+
 export function getWsClient(): RdkWebSocketClient | null {
   if (client) return client;
   try {

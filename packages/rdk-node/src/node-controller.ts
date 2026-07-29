@@ -103,6 +103,24 @@ export class NodeController {
    */
   async start(): Promise<NodeRuntimeStatus> {
     if (!this.router) this.init();
+
+    // An offline (`local-<hash>`) node can index, publish and query but can
+    // NEVER hold the WebSocket Central uses to fetch content — so its chunks
+    // are indexed and permanently unretrievable, while everything looks fine.
+    // Register it here rather than making the user discover `rdk network:join`.
+    try {
+      const { ensureServableNode } = await import('./register-node.js');
+      const ensured = await ensureServableNode();
+      if (ensured.status === 'registered') {
+        this.config = loadConfigOrNull();
+        this.log('info', `registered on RDK Central as ${ensured.nodeId}`);
+      } else if (ensured.status === 'blocked') {
+        this.log('warn', `not serving on the network: ${ensured.reason}`);
+      }
+    } catch (e) {
+      this.log('warn', `could not register this node: ${(e as Error).message}`);
+    }
+
     const cfg = this.config;
 
     if (this.online() && cfg) {
