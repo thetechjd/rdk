@@ -611,7 +611,20 @@ export class NodeService {
     const embedding = store.getEmbedding(id);
     if (!embedding) return { ok: false, error: 'Missing embedding for chunk.' };
     store.saveChunk(
-      { ...c, content, isPublic: true, isEncrypted: false, syncedAt: undefined },
+      {
+        ...c,
+        content,
+        isPublic: true,
+        isEncrypted: false,
+        // Publishing IS the statement "this should reach the network", so it
+        // has to clear local-only. Spreading `...c` alone kept local_only set
+        // on anything saved from a query, and getUnsyncedChunks() skips those —
+        // so publishing an improved retrieved document flipped it public
+        // locally and never synced, with nothing reporting a problem. Same
+        // silent failure as the synced_at bug, one field over.
+        isLocalOnly: false,
+        syncedAt: undefined,
+      },
       embedding,
     );
     return this.forceSync();

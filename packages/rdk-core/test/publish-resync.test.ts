@@ -82,3 +82,35 @@ describe('the sync queue only sees re-queued chunks', () => {
     expect(isQueued({ isPublic: true, isLocalOnly: false, syncedAt: SYNCED })).toBe(false);
   });
 });
+
+/**
+ * Publishing must also clear LOCAL-ONLY.
+ *
+ * Content saved from a query is indexed local-only: it is someone else's work
+ * and must not be republished as-is. Improving it makes it the editor's own, and
+ * publishing it is the statement "this should reach the network". `publishChunk`
+ * spread the existing chunk and set only `isPublic`, so `local_only` survived —
+ * and `getUnsyncedChunks()` skips local-only rows. The document went public
+ * locally and never synced, with nothing anywhere reporting a problem: the same
+ * silent failure as the `synced_at` bug above, one field over.
+ */
+const eligibleForSync = (c: { isPublic: boolean; isLocalOnly: boolean; syncedAt: string | null }) =>
+  !c.isLocalOnly && c.syncedAt === null;
+
+describe('publishing content that was saved from a query', () => {
+  const retrieved = { isPublic: false, isLocalOnly: true, syncedAt: '2026-07-29T00:00:00Z' };
+
+  it('is not synced while it remains a local copy of someone else\'s work', () => {
+    expect(eligibleForSync(retrieved)).toBe(false);
+  });
+
+  it('reaches the network once published', () => {
+    const published = { ...retrieved, isPublic: true, isLocalOnly: false, syncedAt: null };
+    expect(eligibleForSync(published)).toBe(true);
+  });
+
+  it('would never sync if publish left local_only set — the bug', () => {
+    const buggy = { ...retrieved, isPublic: true, syncedAt: null }; // isLocalOnly still true
+    expect(eligibleForSync(buggy)).toBe(false);
+  });
+});

@@ -275,6 +275,24 @@ export class LocalStore {
     return this.rowToChunk(row);
   }
 
+  /**
+   * The lineage already recorded for a file, if any.
+   *
+   * Editing a retrieved document mints new content hashes — that is precisely
+   * what makes the result the editor's own work — so the new chunks would
+   * otherwise lose all trace of what they grew out of, and the original author
+   * would silently stop being credited on the first edit. The file path is the
+   * only thing that survives a re-chunk, so lineage is carried across on it.
+   */
+  getDerivedFromForSource(sourcePath: string): string | undefined {
+    const row = this.db.prepare(`
+      SELECT derived_from FROM chunks
+      WHERE source_path = ? AND derived_from IS NOT NULL
+      ORDER BY created_at ASC LIMIT 1
+    `).get(sourcePath) as { derived_from: string } | undefined;
+    return row?.derived_from;
+  }
+
   /** Absolute path of the SQLite file this store is operating on. */
   getDatabasePath(): string {
     return this.dbPath;

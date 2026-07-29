@@ -117,6 +117,11 @@ export class SyncService {
           sourcePath: chunk.sourcePath,
           sourceAdapter: chunk.sourceAdapter,
           supersedesHash: chunk.supersedes,
+          // Cross-node lineage: this content grew out of someone else's
+          // published document. Central splits the tip along this chain, which
+          // is how seeding a topic is rewarded without favouring incumbents in
+          // ranking. See StoredChunk.derivedFrom.
+          derivedFromHash: chunk.derivedFrom,
           version: chunk.version ?? 1,
         });
       }

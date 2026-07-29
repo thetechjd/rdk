@@ -79,6 +79,13 @@ export class RDKIndexer {
       // usually the file stem.
       const docTitle = doc.docTitle?.trim() || extractDocTitle(doc.content, doc.title);
 
+      // Lineage survives an edit. Re-indexing an edited document mints new
+      // content hashes — which is what makes the result the editor's own work —
+      // so without carrying this across, the original author would stop being
+      // credited the moment anyone improved their document.
+      const derivedFrom = doc.derivedFrom
+        ?? (doc.sourcePath ? this.config.localStore.getDerivedFromForSource(doc.sourcePath) : undefined);
+
       // 1. Clean
       const cleaned = cleanText(doc.content);
       if (cleaned.length < 50) {
@@ -158,7 +165,7 @@ export class RDKIndexer {
             sourceAdapter: doc.sourceAdapter,
             supersedes: doc.supersedes,
             version: doc.version ?? 1,
-            derivedFrom: doc.derivedFrom,
+            derivedFrom,
           }, embedding);
 
           this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });
