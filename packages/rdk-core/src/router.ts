@@ -37,8 +37,7 @@ export interface NetworkChunk {
    *  encrypted.) Reading only `content` here silently dropped every network
    *  result's body. */
   contentEncrypted?: string | null;
-  /** False when Central matched the chunk but could not obtain its content —
-   *  the owning node is offline and the chunk isn't pinned. */
+  /** False when Central matched the chunk but could not obtain its content. */
   available?: boolean;
   /** Why the content is missing, when `available` is false (e.g. 'owner_offline'). */
   unavailableReason?: string;
@@ -76,9 +75,8 @@ export interface QueryResult {
   networkError?: string;
   /** Central's own explanation when it returned no usable results. */
   networkMessage?: string;
-  /** Matched on the network but not retrievable: the owning node is offline and
-   *  the content isn't pinned. Surfacing these is the difference between
-   *  "nothing matched" and "your own node isn't running". */
+  /** Matched on the network but not retrievable. The reason distinguishes an
+   *  offline owner from timeout, transport, and stale-index failures. */
   unavailableChunks?: { chunkId: string; title: string; nodeId: string; reason?: string }[];
 }
 
@@ -146,9 +144,9 @@ export class RDKRouter {
         const { results: rawNetworkResults, settledByCentral, message } = await this.queryNetwork(embedding, cfg);
         networkMessage = message;
 
-        // Chunks Central matched but couldn't fetch content for (owning node
-        // offline, nothing pinned). They can't answer, but the caller needs to
-        // know they exist — otherwise "your node is down" reads as "no match".
+        // Chunks Central matched but couldn't fetch content for. They can't
+        // answer, but the caller needs the real reason rather than a false
+        // blanket claim that the owner is offline.
         unavailableChunks = rawNetworkResults
           .filter(c => c.available === false)
           .map(c => ({ chunkId: c.chunkId, title: c.title, nodeId: c.nodeId, reason: c.unavailableReason }));

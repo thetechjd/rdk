@@ -45,7 +45,8 @@ export function QueryBar() {
                   {res.networkError
                     ? `Couldn't search the network: ${res.networkError}`
                     : res.unavailableCount
-                      ? `${res.unavailableCount} match(es) found, but the node that owns them is offline — content is served from the owning node.`
+                      ? (res.networkMessage
+                        ?? `${res.unavailableCount} match(es) found, but their content could not be retrieved (${res.unavailableReasons?.join(', ') ?? 'unknown reason'}).`)
                       : `No matches. ${res.source === 'llm_fallback' ? 'Nothing in the network answered this — an LLM would handle it.' : ''}`}
                 </div></div>
               )}
@@ -53,7 +54,7 @@ export function QueryBar() {
                 <div className="palette-hit"><div className="snippet" style={{ color: 'var(--cassette)' }}>
                   {res.source === 'private'
                     ? 'Nothing matched confidently — showing the closest things in your vault.'
-                    : 'Summaries only — the node that owns this content is offline. No tip charged.'}
+                    : `Summaries only — full content could not be retrieved${res.unavailableReasons?.length ? ` (${res.unavailableReasons.join(', ')})` : ''}. No tip charged.`}
                 </div></div>
               )}
               {res.hits.map((h, i) => (

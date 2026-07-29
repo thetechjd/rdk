@@ -166,13 +166,17 @@ export interface QueryResponse {
   tipsPaidUsdc: number;
   latencyMs: number;
   /** These hits didn't clear the confidence bar (or are summaries standing in
-   *  for content an offline node couldn't serve). Show them as a weak signal. */
+   *  for content Central couldn't retrieve). Show them as a weak signal. */
   lowConfidence?: boolean;
   /** The network step failed outright — a credit gate, bad key, unreachable
    *  Central. Distinct from "nothing matched", and must not be shown as such. */
   networkError?: string;
-  /** Matched on the network but not retrievable: the owning node is offline. */
+  /** Central's explanation when it returned no usable result. */
+  networkMessage?: string;
+  /** Matched on the network but not retrievable. */
   unavailableCount?: number;
+  /** Machine-readable retrieval failure reasons returned by Central. */
+  unavailableReasons?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

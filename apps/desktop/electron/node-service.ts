@@ -742,7 +742,11 @@ export class NodeService {
       latencyMs: result.latencyMs,
       lowConfidence: result.lowConfidence,
       networkError: result.networkError,
+      networkMessage: result.networkMessage,
       unavailableCount: result.unavailableChunks?.length,
+      unavailableReasons: result.unavailableChunks
+        ? [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))]
+        : undefined,
     };
   }
 

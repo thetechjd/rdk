@@ -66,9 +66,10 @@ export async function unifiedQuery(
         console.log(t.warn('No confident match in your vault or on the network — ask your LLM directly.'));
       }
       if (result.unavailableChunks?.length) {
+        const reasons = [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))];
         console.log(t.dim(
-          `${result.unavailableChunks.length} match(es) skipped — the node that owns them is offline. ` +
-          'Keep RDK running (rdk service:install) so your content stays retrievable.',
+          `${result.unavailableChunks.length} match(es) skipped — content could not be retrieved ` +
+          `(${reasons.join(', ')}).`,
         ));
       }
       return;
@@ -80,8 +81,7 @@ export async function unifiedQuery(
     if (result.lowConfidence) {
       console.log(t.warn(fromLocal
         ? 'Nothing matched confidently — showing the closest things in your vault.\n'
-        : 'Summaries only — the node that owns this content is offline, so the full text\n'
-          + 'could not be fetched. No tip charged.\n'));
+        : 'Summaries only — the full content could not be retrieved. No tip charged.\n'));
     }
 
     result.chunks.forEach((chunk, i) => {
@@ -116,8 +116,10 @@ export async function unifiedQuery(
     // Matches that existed but couldn't be served. Reported even on a successful
     // query — otherwise a partial answer looks like the whole answer.
     if (result.unavailableChunks?.length) {
+      const reasons = [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))];
       console.log(t.dim(
-        `${result.unavailableChunks.length} further match(es) skipped — the node that owns them is offline.`,
+        `${result.unavailableChunks.length} further match(es) skipped — content could not be retrieved ` +
+        `(${reasons.join(', ')}).`,
       ));
     }
   } catch (e) {
