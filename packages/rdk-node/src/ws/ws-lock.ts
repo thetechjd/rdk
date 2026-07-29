@@ -24,11 +24,27 @@ const LOCK_PATH = path.join(
 // Owner refreshes every 30s; treat a lock older than this as abandoned.
 const STALE_MS = 90_000;
 
+/**
+ * How long an owner may hold the lock WITHOUT an open socket before another
+ * process is allowed to take over.
+ *
+ * Holding the lock is not the job — serving content is. An owner that claims it
+ * and then never connects used to block every other process indefinitely,
+ * because the staleness check only asked whether the owner was alive and the
+ * owner refreshed its timestamp every 30s regardless. The desktop then sat at
+ * "connecting…" forever, deferring to a process that was doing nothing.
+ */
+const CONNECT_GRACE_MS = 45_000;
+
 interface LockData {
   pid: number;
   ts: number;
   /** The owner process has an OPEN WebSocket, not merely an intent to connect. */
   connected?: boolean;
+  /** When this owner last had (or first sought) a socket. Unlike `ts`, this does
+   *  NOT move on every refresh, so "has been trying and failing for a while" is
+   *  distinguishable from "just refreshed its claim". */
+  since?: number;
 }
 
 function readLock(): LockData | null {
@@ -43,11 +59,21 @@ function isAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-/** True if a DIFFERENT, live process currently owns the Central WS. */
+/**
+ * True if a DIFFERENT, live process currently owns the Central WS *and is
+ * actually using it* — or has claimed it recently enough to still be connecting.
+ *
+ * Deferring to a live owner that never connects is a deadlock: the holder
+ * refreshes its claim every 30s so it never goes stale, and everyone else waits
+ * forever on work it is not doing.
+ */
 export function wsHeldByOther(): boolean {
   const lock = readLock();
   if (!lock || lock.pid === process.pid) return false;
-  return isAlive(lock.pid) && Date.now() - lock.ts < STALE_MS;
+  if (!isAlive(lock.pid) || Date.now() - lock.ts >= STALE_MS) return false;
+  if (lock.connected === true) return true;
+  // Claimed but not connected: give it a grace period, then take over.
+  return Date.now() - (lock.since ?? lock.ts) < CONNECT_GRACE_MS;
 }
 
 /** True only when another live process reports an OPEN Central socket. */
@@ -62,10 +88,16 @@ export function wsConnectionHeldByOther(): boolean {
 /** Claim/refresh ownership for this process. */
 export function claimWs(connected = false): void {
   try {
+    const now = Date.now();
+    const prev = readLock();
+    // `since` marks when this process last had a socket, or first started trying
+    // for one. Carrying it across refreshes is what lets others tell a healthy
+    // owner from one that has been failing to connect for minutes.
+    const since = connected || prev?.pid !== process.pid ? now : prev.since ?? now;
     fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
     fs.writeFileSync(
       LOCK_PATH,
-      JSON.stringify({ pid: process.pid, ts: Date.now(), connected }),
+      JSON.stringify({ pid: process.pid, ts: now, connected, since }),
       { mode: 0o600 },
     );
   } catch {

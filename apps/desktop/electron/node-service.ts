@@ -905,7 +905,9 @@ export class NodeService {
    * leaving the user staring at "node idle" wondering what to press.
    */
   async ensureServing(): Promise<{ ok: boolean; error?: string }> {
-    if (this.serving && (this.wsOwnership?.isConnected() ?? false)) return { ok: true };
+    // Already started: the ownership loop reconnects on its own, so re-running
+    // startNode here would build a second SyncService every minute forever.
+    if (this.serving) return { ok: this.wsOwnership?.isConnected() ?? false };
     const r = await this.startNode();
     this.notServingReason = r.ok ? null : r.error ?? 'Could not start the node.';
     return r;

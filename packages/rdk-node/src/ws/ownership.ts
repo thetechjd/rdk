@@ -61,7 +61,16 @@ export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | n
 
   const ensureOwner = (): void => {
     if (stopped) return;
-    if (owner) { claimWs(client.isConnected()); return; } // refresh real state
+    if (owner) {
+      claimWs(client.isConnected());
+      // Keep trying while we hold the lock. A 4001 ("another instance took
+      // over") permanently disables this client's automatic reconnect, so if
+      // that other instance later dies, nothing would ever reopen the socket
+      // and the node would sit at "connecting" for the rest of its life.
+      // connect() no-ops when a socket already exists, so this is safe to call.
+      if (!client.isConnected()) void client.connect();
+      return;
+    }
     if (wsHeldByOther()) return;             // another instance owns it
     owner = true;
     claimWs(false);
