@@ -207,7 +207,8 @@ export class RDKRouter {
     let unavailableChunks: QueryResult['unavailableChunks'];
     if (cfg.centralApiUrl && cfg.centralApiKey) {
       try {
-        const { results: rawNetworkResults, settledByCentral, message } = await this.queryNetwork(embedding, cfg);
+        const { results: rawNetworkResults, settledByCentral, message } =
+          await this.queryNetwork(userQuery, embedding, cfg);
         networkMessage = message;
 
         // Chunks Central matched but couldn't fetch content for. They can't
@@ -372,6 +373,7 @@ export class RDKRouter {
   }
 
   private async queryNetwork(
+    queryText: string,
     embedding: Float32Array,
     cfg: RouterConfig,
   ): Promise<{ results: NetworkChunk[]; settledByCentral?: boolean; message?: string }> {
@@ -383,6 +385,10 @@ export class RDKRouter {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
+        // Central needs the words, not only the vector. Exact normalized
+        // document-title matches must outrank noisy short-query embeddings
+        // (`instagram clone` === `instagram-clone`).
+        queryText,
         embedding: Array.from(embedding),
         // Ask for a wider pool than we intend to show, because the re-rank below
         // can promote a chunk the vector score buried. The discord spec sat at

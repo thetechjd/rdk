@@ -60,6 +60,25 @@ describe('RDKRouter network results', () => {
     expect(result.context).toContain('the actual content');
   });
 
+  it('sends the raw query text so Central can recognize exact title matches', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/nodes/auth')) {
+        return new Response(JSON.stringify({ jwtToken: 'jwt' }), { status: 200 });
+      }
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        results: [networkChunk({ contentEncrypted: 'exact result', available: true })],
+        queryId: 'q',
+        settledByCentral: true,
+      }), { status: 200 });
+    }) as never;
+
+    await router(fakeStore([])).query('instagram clone');
+
+    expect(requestBody?.queryText).toBe('instagram clone');
+  });
+
   it('reports matched-but-unretrievable chunks instead of hiding them', async () => {
     globalThis.fetch = mockCentral(200, {
       results: [networkChunk({ available: false, unavailableReason: 'owner_offline' })],
