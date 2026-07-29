@@ -20,6 +20,9 @@ export interface RDKConfig {
   retrodeckAccessToken?: string;  // encrypted at rest
   retrodeckRefreshToken?: string; // encrypted at rest
   emailVerified?: boolean;
+  /** Email this node was set up with. Used to register on RDK Central when no
+   *  RetroDeck session is available to read one from. */
+  ownerEmail?: string;
 
   // Node settings
   plan: string;

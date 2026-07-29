@@ -208,14 +208,24 @@ app.whenReady().then(() => {
   createWindow();
   if (service.isInitialized()) {
     startWatchers();
-    // Launching an initialized desktop means launching its node. Content stays
-    // on this machine, so merely opening the app (including an OS login-item
-    // launch) must establish the serving WebSocket; a one-shot metadata sync is
-    // not an online node.
-    void service.startNode().then(() => service.forceSync()).then(() => {
+    // The app being open IS the node being live. There is no useful state where
+    // the window is on screen and the node sits idle, so this keeps trying for
+    // as long as the app runs rather than failing once at launch and going
+    // quiet — which is what left users pressing "start node" to no effect.
+    //
+    // startNode's result used to be thrown away here, so a start that failed
+    // for a stated reason showed up only as "node idle".
+    const keepServing = async (): Promise<void> => {
+      const r = await service.ensureServing();
+      if (r.ok) await service.forceSync().catch(() => undefined);
       push({ type: 'status', status: service.getStatus() });
       push({ type: 'vault-changed' });
-    });
+    };
+    void keepServing();
+    // Retry while the app is open: a laptop that launches before its network is
+    // up, or a session that expires mid-run, should recover on its own.
+    const servingTimer = setInterval(() => { void keepServing(); }, 60_000);
+    servingTimer.unref?.();
   }
 
   // Update check (throttled to once/day): prompt → confirm → download → installer

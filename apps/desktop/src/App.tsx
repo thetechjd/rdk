@@ -93,13 +93,17 @@ function Titlebar() {
         <span className="q-key">{shortcut}</span>
       </button>
       <span className="spacer" />
+      {/* "node idle" named the state and nothing else — no cause, no fix, and
+          no hint that the app keeps trying on its own. When something really is
+          blocking it (an expired session, no network yet), say that instead. */}
       <span className="node-pill item" style={{ display: 'flex', alignItems: 'center', gap: 6 }}
         title={live
           ? 'Connected to the network — your indexed content can be retrieved.'
-          : 'Not connected — your content stays on this machine and cannot be retrieved right now.'}>
+          : status?.notServingReason
+            ?? 'Connecting to the network — your content cannot be retrieved until this succeeds.'}>
         <span className={`dot ${live ? 'public' : 'local'}`} />
         <span style={{ color: live ? 'var(--cassette)' : 'var(--muted)' }}>
-          {live ? 'node live' : 'node idle'}
+          {live ? 'node live' : status?.notServingReason ? 'node blocked' : 'connecting…'}
         </span>
       </span>
     </div>

@@ -213,6 +213,10 @@ export interface QueryResponse {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface NodeStatus {
+  /** Present only when the node is NOT serving: why, in words a user can act
+   *  on. The indicator previously just read "node idle", which named the state
+   *  without naming a cause or a fix. */
+  notServingReason?: string;
   /** The node has been started — intent, not reachability. Drives start/stop. */
   serving: boolean;
   /** THIS process holds a live WebSocket to Central. */

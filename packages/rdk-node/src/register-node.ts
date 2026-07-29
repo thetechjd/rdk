@@ -80,24 +80,23 @@ export async function ensureServableNode(
 
   if (!isOfflineNode(config)) return { status: 'already-online', nodeId: config.nodeId };
 
-  if (!config.retrodeckAccessToken) {
+  // Prefer the signed-in account (it also lets us link the node for attribution),
+  // but an expired session must not stop the node serving. Serving and being
+  // attributed are different things, and only one of them needs a live token.
+  const me = config.retrodeckAccessToken
+    ? await retrodeck.getMe().catch(() => null)
+    : null;
+  const email = me?.email ?? config.ownerEmail;
+  if (!email) {
     return {
       status: 'blocked',
-      reason: 'This machine has an offline node. Sign in to register it on the network.',
-    };
-  }
-
-  const me = await retrodeck.getMe().catch(() => null);
-  if (!me?.email) {
-    return {
-      status: 'blocked',
-      reason: 'Could not read your account — sign in again, then start the node.',
+      reason: 'Sign in (Settings → Account) so this node can join the network.',
     };
   }
 
   const registered = await registerNode({
     centralApiUrl: config.centralApiUrl,
-    email: me.email,
+    email,
     displayName: opts.displayName ?? `RDK ${config.domain ?? 'general'} node`,
     domain: config.domain,
     walletAddress: config.walletAddress,
@@ -119,10 +118,12 @@ export async function ensureServableNode(
   // Link it to the RetroDeck account so its chunks and earnings are attributed.
   // Best-effort: a node that serves but isn't linked yet is far better than one
   // that refuses to start because a dashboard row is missing.
-  try {
-    const { ensureNodeLinked } = await import('./link-node.js');
-    await ensureNodeLinked({ accessToken: config.retrodeckAccessToken });
-  } catch { /* linking retries on the next launch */ }
+  if (config.retrodeckAccessToken) {
+    try {
+      const { ensureNodeLinked } = await import('./link-node.js');
+      await ensureNodeLinked({ accessToken: config.retrodeckAccessToken });
+    } catch { /* linking retries on the next launch */ }
+  }
 
   return { status: 'registered', nodeId: registered.nodeId };
 }

@@ -173,6 +173,10 @@ export class NodeService {
     const cfg: RDKConfig = existing ?? {
       nodeId: `local-${Math.abs(hashString(opts.vaultPath + (opts.email ?? '')))}`,
       apiKey: '',
+      // Kept so this node can register itself later without a live session.
+      // It was previously used only to salt the offline id and then discarded,
+      // which left nothing to register with.
+      ownerEmail: opts.email,
       centralApiUrl: process.env.RDK_API_URL ?? 'https://api.rdk.network',
       plan: 'free',
       vaultAdapter: 'obsidian',
@@ -877,6 +881,8 @@ export class NodeService {
       serving: this.serving,
       wsConnected,
       contentServing: wsConnected || heldByService,
+      // "node idle" told the user nothing and offered nothing to do about it.
+      notServingReason: wsConnected || heldByService ? undefined : this.notServingReason ?? undefined,
       nodeId: cfg?.nodeId,
       lastSyncAt: undefined,
       chunkCount: stats.totalChunks,
@@ -887,26 +893,42 @@ export class NodeService {
     };
   }
 
+  /** Why the node isn't serving, in words a user can act on. */
+  private notServingReason: string | null = null;
+
+  /**
+   * Keep the node live for as long as the app is open.
+   *
+   * Opening the app IS the node being live — there is no meaningful state where
+   * the window is on screen and the node is deliberately idle. Startup can still
+   * fail (no network yet, an expired session), so this retries instead of
+   * leaving the user staring at "node idle" wondering what to press.
+   */
+  async ensureServing(): Promise<{ ok: boolean; error?: string }> {
+    if (this.serving && (this.wsOwnership?.isConnected() ?? false)) return { ok: true };
+    const r = await this.startNode();
+    this.notServingReason = r.ok ? null : r.error ?? 'Could not start the node.';
+    return r;
+  }
+
   async startNode(): Promise<{ ok: boolean; error?: string }> {
-    let cfg = this.getConfig();
-    if (!cfg?.apiKey || !cfg.centralApiUrl) {
-      return { ok: false, error: 'Sign in first (Settings → Account) to serve on the network.' };
-    }
     try {
-      // Desktop onboarding creates an OFFLINE node (`local-<hash>`), which can
-      // index, publish and query but can never hold the WebSocket Central uses
-      // to fetch content — so its chunks are indexed and unretrievable. The
-      // only cure lived behind `rdk network:join`, a CLI command a desktop user
-      // has no way to discover. Register here instead: nobody should have to
-      // open a terminal to make the app they installed work.
+      // Registration comes FIRST, because registering is how this machine GETS
+      // credentials. Onboarding writes `apiKey: ''` and `nodeId: local-<hash>`,
+      // so a "sign in first" guard ahead of this returned early and the node
+      // could never register — which is exactly why pressing start did nothing
+      // on a fresh install.
       const ensured = await ensureServableNode({ displayName: `RDK desktop (${os.hostname()})` });
       if (ensured.status === 'blocked') return { ok: false, error: ensured.reason };
       if (ensured.status === 'registered') {
         this.config = loadConfigOrNull(); // nodeId AND apiKey both changed
         this.store?.close();
         this.store = null;
-        cfg = this.getConfig();
-        if (!cfg?.apiKey) return { ok: false, error: 'Registration did not persist — try again.' };
+      }
+
+      const cfg = this.getConfig();
+      if (!cfg?.apiKey || !cfg.centralApiUrl) {
+        return { ok: false, error: 'Sign in (Settings → Account) so this node can join the network.' };
       }
 
       // Two halves, both required to actually serve:
@@ -941,6 +963,7 @@ export class NodeService {
         };
       }
       this.serving = true;
+      this.notServingReason = null;
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as Error).message };
