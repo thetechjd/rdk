@@ -78,10 +78,30 @@ export async function unifiedQuery(
     const fromLocal = result.source === 'private'; // wire value; presented as "your vault"
     const headline = fromLocal ? 'your vault — free' : 'the network';
     console.log(t.heading(`\nResults from ${headline} for: "${query}"\n`));
+
+    // Lead with what could NOT be retrieved, naming it. Burying this under five
+    // loosely-related hits is how "I searched for the discord spec and got
+    // telegram" happens — the answer existed, and the footnote explaining why it
+    // was missing came after the wrong answers.
+    if (result.unavailableChunks?.length) {
+      const names = [...new Set(result.unavailableChunks.map(c => c.title.split(' — ')[0]))];
+      const shown = names.slice(0, 3).join(', ');
+      const more = names.length > 3 ? ` +${names.length - 3} more` : '';
+      const reason = result.unavailableChunks[0].reason;
+      console.log(t.warn(
+        `${result.unavailableChunks.length} match(es) could not be retrieved: ${shown}${more}`,
+      ));
+      console.log(t.dim(
+        reason === 'owner_offline'
+          ? '  The node publishing them is not connected right now.\n'
+          : `  Reason: ${reason ?? 'unknown'}.\n`,
+      ));
+    }
+
     if (result.lowConfidence) {
       console.log(t.warn(fromLocal
         ? 'Nothing matched confidently — showing the closest things in your vault.\n'
-        : 'Summaries only — the full content could not be retrieved. No tip charged.\n'));
+        : 'Loose matches — nothing scored as a strong match for this query.\n'));
     }
 
     result.chunks.forEach((chunk, i) => {
@@ -113,15 +133,7 @@ export async function unifiedQuery(
       const total = result.tipsPaid.reduce((s, p) => s + p.amountUsdc, 0);
       console.log(t.dim(`tips: $${total.toFixed(4)} USDC across ${result.tipsPaid.length} chunk(s)`));
     }
-    // Matches that existed but couldn't be served. Reported even on a successful
-    // query — otherwise a partial answer looks like the whole answer.
-    if (result.unavailableChunks?.length) {
-      const reasons = [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))];
-      console.log(t.dim(
-        `${result.unavailableChunks.length} further match(es) skipped — content could not be retrieved ` +
-        `(${reasons.join(', ')}).`,
-      ));
-    }
+    // Unretrievable matches are reported ABOVE the results, named — see there.
   } catch (e) {
     spinner.fail((e as Error).message);
     process.exitCode = 1;
