@@ -199,17 +199,37 @@ export class LocalStore {
     const existing = this.db.prepare('SELECT id FROM chunks WHERE id = ?').get(id) as { id: string } | undefined;
 
     if (existing) {
+      // `synced_at` is cleared whenever VISIBILITY changes, because that is the
+      // one edit Central must be told about and cannot infer.
+      //
+      // It was previously absent from this statement entirely, so a caller
+      // passing `syncedAt: undefined` to mean "re-queue this" was silently
+      // ignored. Publishing a chunk therefore flipped it to public LOCALLY and
+      // left synced_at set — and since the sync only picks up rows with
+      // synced_at IS NULL, the promotion never reached Central. The desktop
+      // showed the file as public forever while the network still held it as
+      // private, so nobody could retrieve it and the owner had no way to tell.
+      //
+      // In SQLite the right-hand side of SET sees the row's OLD values, so this
+      // compares old visibility against the new one being written.
       this.db.prepare(`
         UPDATE chunks SET
           title = ?, doc_title = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
-          source_adapter = ?, supersedes = ?, version = ?, updated_at = ?
+          source_adapter = ?, supersedes = ?, version = ?, updated_at = ?,
+          synced_at = CASE
+            WHEN is_public <> ? OR is_encrypted <> ? OR local_only <> ? THEN NULL
+            ELSE synced_at
+          END
         WHERE id = ?
       `).run(
         chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
-        chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1, now, id,
+        chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1, now,
+        // the CASE comparands — the NEW visibility
+        chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0,
+        id,
       );
     } else {
       this.db.prepare(`
