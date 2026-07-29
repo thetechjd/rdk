@@ -55,6 +55,10 @@ export class RdkWebSocketClient extends EventEmitter {
 
   async connect(): Promise<void> {
     if (this.ws) return;
+    // connect() is an explicit request to own the session again. A previous
+    // replacement close (4001) disables automatic reconnect for that ownership
+    // tenure, but must not permanently poison later manual takeovers.
+    this.shouldReconnect = true;
 
     // Fetch a fresh JWT, then open the socket with it. Both steps are guarded so
     // connect() never rejects — callers (mcp:serve, scheduleReconnect) fire-and-forget.

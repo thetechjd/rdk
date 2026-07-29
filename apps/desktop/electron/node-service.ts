@@ -33,7 +33,7 @@ import {
 } from '@rdk/node/config';
 import { SyncService } from '@rdk/node/sync-service';
 import { startWsOwnership, type WsOwnership } from '@rdk/node/ws/ownership';
-import { wsHeldByOther } from '@rdk/node/ws/ws-lock';
+import { wsConnectionHeldByOther } from '@rdk/node/ws/ws-lock';
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
 // (and token) from RDK Central; see the note above getAccount().
 import * as retrodeck from '@rdk/node/retrodeck-client';
@@ -762,7 +762,7 @@ export class NodeService {
     const wsConnected = this.wsOwnership?.isConnected() ?? false;
     // An installed always-on service holding the socket counts as serving —
     // we deliberately don't open a competing one.
-    const heldByService = !wsConnected && wsHeldByOther();
+    const heldByService = !wsConnected && wsConnectionHeldByOther();
     return {
       serving: this.serving,
       wsConnected,

@@ -24,7 +24,12 @@ const LOCK_PATH = path.join(
 // Owner refreshes every 30s; treat a lock older than this as abandoned.
 const STALE_MS = 90_000;
 
-interface LockData { pid: number; ts: number }
+interface LockData {
+  pid: number;
+  ts: number;
+  /** The owner process has an OPEN WebSocket, not merely an intent to connect. */
+  connected?: boolean;
+}
 
 function readLock(): LockData | null {
   try {
@@ -45,11 +50,24 @@ export function wsHeldByOther(): boolean {
   return isAlive(lock.pid) && Date.now() - lock.ts < STALE_MS;
 }
 
+/** True only when another live process reports an OPEN Central socket. */
+export function wsConnectionHeldByOther(): boolean {
+  const lock = readLock();
+  if (!lock || lock.pid === process.pid) return false;
+  return lock.connected === true
+    && isAlive(lock.pid)
+    && Date.now() - lock.ts < STALE_MS;
+}
+
 /** Claim/refresh ownership for this process. */
-export function claimWs(): void {
+export function claimWs(connected = false): void {
   try {
     fs.mkdirSync(path.dirname(LOCK_PATH), { recursive: true });
-    fs.writeFileSync(LOCK_PATH, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
+    fs.writeFileSync(
+      LOCK_PATH,
+      JSON.stringify({ pid: process.pid, ts: Date.now(), connected }),
+      { mode: 0o600 },
+    );
   } catch {
     // Non-fatal — worst case we fall back to the unmanaged behavior.
   }

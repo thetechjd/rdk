@@ -208,10 +208,11 @@ app.whenReady().then(() => {
   createWindow();
   if (service.isInitialized()) {
     startWatchers();
-    // Repair pending private/public metadata on every launch. This is a
-    // one-shot sync, independent of whether the user enables continuous
-    // serving, and uses the same acknowledged protocol as the CLI.
-    void service.forceSync().then(() => {
+    // Launching an initialized desktop means launching its node. Content stays
+    // on this machine, so merely opening the app (including an OS login-item
+    // launch) must establish the serving WebSocket; a one-shot metadata sync is
+    // not an online node.
+    void service.startNode().then(() => service.forceSync()).then(() => {
       push({ type: 'status', status: service.getStatus() });
       push({ type: 'vault-changed' });
     });

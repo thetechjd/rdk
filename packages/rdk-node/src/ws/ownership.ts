@@ -50,17 +50,21 @@ export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | n
   let owner = false;
   let stopped = false;
 
-  client.on('connected', () => log('connected to RDK Central — serving content'));
+  client.on('connected', () => {
+    if (owner) claimWs(true);
+    log('connected to RDK Central — serving content');
+  });
   client.on('disconnected', ({ code, reason }: { code: number; reason: string }) => {
+    if (owner) claimWs(false);
     if (code !== 1000) log(`disconnected from RDK Central (${code})${reason ? ': ' + reason : ''}`);
   });
 
   const ensureOwner = (): void => {
     if (stopped) return;
-    if (owner) { claimWs(); return; }        // refresh our heartbeat
+    if (owner) { claimWs(client.isConnected()); return; } // refresh real state
     if (wsHeldByOther()) return;             // another instance owns it
     owner = true;
-    claimWs();
+    claimWs(false);
     log('holding the RDK Central connection for this node');
     void client.connect();
   };
