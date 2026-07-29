@@ -21,6 +21,8 @@ import {
   type VaultKey,
   type StoredChunk,
   type EmbeddingModel,
+  type NetworkChunk,
+  type RetrievedDocument,
 } from '@rdk/core';
 import {
   loadConfigOrNull,
@@ -45,7 +47,7 @@ import {
 import type {
   Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
   GraphEdge, GraphNode, IndexedDoc, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
-  Preferences, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
+  Preferences, QueryDocument, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
 } from '../shared/ipc';
 
 const IGNORE_DIRS = new Set(['.git', '.obsidian', 'node_modules', '.trash', '.rdk']);
@@ -53,6 +55,16 @@ const TEXT_EXTS = new Set(['.md', '.markdown', '.txt', '.mdx']);
 /** Semantic-edge threshold + fan-out cap, to keep the graph legible. */
 const SEMANTIC_MIN_SIM = 0.55;
 const SEMANTIC_MAX_EDGES_PER_NODE = 4;
+
+/** A retrieved document's body without provenance frontmatter — what we index. */
+function documentBody(doc: RetrievedDocument): string {
+  const out = [`# ${doc.name}`, ''];
+  for (const s of doc.sections) {
+    if (s.heading && s.heading !== doc.name) out.push(`## ${s.heading}`, '');
+    out.push(s.content.trim(), '');
+  }
+  return out.join('\n');
+}
 
 export class NodeService {
   private store: LocalStore | null = null;
@@ -733,10 +745,19 @@ export class NodeService {
         tipUsdc: isOwn ? 0 : isNetwork ? (c as { tipAmountUsdc?: number }).tipAmountUsdc ?? 0 : 0,
       };
     });
+    // Network results become documents, saved into the vault so the answer
+    // outlives the query that fetched it. Previously the desktop fetched the
+    // content, paid the tip, and then discarded it: clicking a network result
+    // did nothing at all (openHit only acted on own content).
+    const documents = result.source === 'network'
+      ? await this.saveRetrievedDocuments(result.chunks as NetworkChunk[], q)
+      : undefined;
+
     return {
       query: q,
       source: result.source,
       hits,
+      documents,
       tokenEstimate: result.tokenEstimate,
       tipsPaidUsdc: result.tipsPaid.reduce((s, t) => s + t.amountUsdc, 0),
       latencyMs: result.latencyMs,
@@ -748,6 +769,78 @@ export class NodeService {
         ? [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))]
         : undefined,
     };
+  }
+
+  /**
+   * Group network chunks into documents, write each into the vault, and index
+   * it for local search.
+   *
+   * Saved LOCAL-ONLY and never republished: chunk ids are content hashes and
+   * Central stores each hash once, so a verbatim copy cannot be published — and
+   * shouldn't be, since copying is not a contribution. Editing the file changes
+   * its hash and makes it genuinely the editor's work, with `derivedFrom`
+   * recording what seeded it so the original author keeps a share.
+   *
+   * Best-effort throughout: a query that succeeded and was paid for must not be
+   * reported as a failure because a file could not be written.
+   */
+  private async saveRetrievedDocuments(chunks: NetworkChunk[], query: string): Promise<QueryDocument[]> {
+    const { groupIntoDocuments } = await import('@rdk/core');
+    const { saveRetrievedDocument } = await import('@rdk/node/save-retrieved');
+    const cfg = this.getConfig();
+    const docs = groupIntoDocuments(chunks);
+    const out: QueryDocument[] = [];
+
+    for (const doc of docs) {
+      const isOwn = doc.isOwn || doc.originNodeId === cfg?.nodeId;
+      let filePath: string | undefined;
+
+      // A summary is not the document. Saving one under the document's name
+      // creates a stub that future local queries match instead of the real
+      // thing, permanently shadowing the content it claims to be.
+      if (!isOwn && doc.contentAvailable && cfg?.vaultPath) {
+        try {
+          const saved = saveRetrievedDocument(doc, { vaultPath: cfg.vaultPath, query });
+          filePath = saved.filePath;
+          if (!saved.unchanged) {
+            await this.getIndexer().indexDocument({
+              content: documentBody(doc),
+              title: doc.name,
+              docTitle: doc.name,
+              sourcePath: saved.filePath,
+              sourceAdapter: 'retrieved',
+              domain: doc.domain,
+              isPublic: false,
+              localOnly: true,
+              derivedFrom: doc.sections[0]?.chunkId,
+            });
+          }
+        } catch (e) {
+          console.error(`[query] could not save "${doc.name}": ${(e as Error).message}`);
+        }
+      }
+
+      const bestSection = [...doc.sections].sort((a, b) => b.score - a.score)[0];
+      const preview = bestSection?.content
+        .split('\n')
+        .filter((l) => l.trim() && !l.trim().startsWith('#'))
+        .slice(0, 3)
+        .join(' ')
+        .slice(0, 280) ?? '';
+
+      out.push({
+        name: doc.name,
+        score: doc.score,
+        sectionCount: doc.sections.length,
+        isOwn,
+        tipUsdc: isOwn ? 0 : doc.tipUsdc,
+        originNode: doc.originNodeId,
+        contentAvailable: doc.contentAvailable,
+        preview,
+        filePath,
+      });
+    }
+    return out;
   }
 
   // ── node lifecycle / status ─────────────────────────────────────────────────

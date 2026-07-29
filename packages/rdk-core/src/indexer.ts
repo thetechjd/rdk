@@ -34,6 +34,11 @@ export interface Document {
   supersedes?: string;
   /** 1-based version number for the new chunks (series counter). */
   version?: number;
+  /** Chunk id of the published chunk this content was retrieved from, when it
+   *  originated on another node. Carried onto every chunk so an edit — which
+   *  mints new hashes and makes the work genuinely the editor's — still records
+   *  who seeded it. See StoredChunk.derivedFrom. */
+  derivedFrom?: string;
 }
 
 export interface IndexerConfig {
@@ -153,6 +158,7 @@ export class RDKIndexer {
             sourceAdapter: doc.sourceAdapter,
             supersedes: doc.supersedes,
             version: doc.version ?? 1,
+            derivedFrom: doc.derivedFrom,
           }, embedding);
 
           this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });

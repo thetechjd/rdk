@@ -135,9 +135,10 @@ program
   .description('Query your knowledge — local vault first (free), then the network. Same routing as the desktop app.')
   .option('-d, --domain <domain>')
   .option('-k, --top-k <n>', 'Results', '5')
+  .option('--no-save', "Don't keep retrieved documents in your vault")
   .action(async (query, opts) => {
     const { unifiedQuery } = await import('./commands/query.js');
-    await unifiedQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10) });
+    await unifiedQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10), save: opts.save });
   });
 
 // ── Network ──────────────────────────────────────────────────────────────────

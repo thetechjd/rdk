@@ -27,9 +27,16 @@ export interface RouterConfig {
 
 export interface NetworkChunk {
   chunkId: string;
+  /** The CONTENT hash — identity of the content itself, identical on every node
+   *  that holds it. `chunkId` is Central's row id and means nothing elsewhere.
+   *  Absent from older centrals. */
+  chunkHash?: string;
   nodeId: string;
   providerNodeMcpEndpoint?: string;
   title: string;
+  /** The document's own name, when Central knows it. Falls back to splitting
+   *  `title` on the section separator. */
+  docTitle?: string;
   summary?: string;
   content?: string;
   /** Central's wire name for live-fetched content: plaintext for public chunks,

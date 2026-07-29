@@ -158,10 +158,39 @@ export interface QueryHit {
   tipUsdc: number;
 }
 
+/**
+ * A source document reassembled from the chunks a query matched.
+ *
+ * Results used to arrive as chunks, so five fragments of one spec rendered as
+ * five rows and the user was asked to pick one — an impossible choice, since a
+ * fragment shows too little to judge and picking discards the rest of the
+ * answer. A document is the unit a question is actually about.
+ */
+export interface QueryDocument {
+  name: string;
+  score: number;
+  sectionCount: number;
+  isOwn: boolean;
+  tipUsdc: number;
+  originNode: string;
+  /** False when only summaries came back because the owning node couldn't serve
+   *  the content. Such a document is never saved — a summary wearing the
+   *  document's name would shadow the real thing in every later local query. */
+  contentAvailable: boolean;
+  /** First readable lines — enough to tell two candidates apart. */
+  preview: string;
+  /** Absolute path of the markdown file it was saved to, when it was saved.
+   *  Own content is never re-saved: it is already in the vault. */
+  filePath?: string;
+}
+
 export interface QueryResponse {
   query: string;
   source: 'private' | 'network' | 'llm_fallback';
   hits: QueryHit[];
+  /** Network results, grouped into documents. The UI opens these; `hits` stays
+   *  for the local-vault path, where results are already the user's own files. */
+  documents?: QueryDocument[];
   tokenEstimate: number;
   tipsPaidUsdc: number;
   latencyMs: number;

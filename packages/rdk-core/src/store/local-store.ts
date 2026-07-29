@@ -39,6 +39,17 @@ export interface StoredChunk {
   supersededAt?: Date;
   /** 1-based version number within the document series. */
   version?: number;
+  /**
+   * Chunk id (content hash) of the PUBLISHED chunk this content came from, when
+   * it was retrieved from another node rather than written here.
+   *
+   * Distinct from `supersedes`, which links versions of your own document. This
+   * crosses nodes: it records that someone else's work seeded this one, so the
+   * original author keeps a share of what a derivative earns. Editing a
+   * retrieved file changes its hash and makes it genuinely new work — this is
+   * the only thing that remembers where it started.
+   */
+  derivedFrom?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -108,6 +119,7 @@ export class LocalStore {
         source_adapter TEXT,
         supersedes    TEXT,
         superseded_at DATETIME,
+        derived_from  TEXT,
         version       INTEGER DEFAULT 1,
         created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -144,6 +156,7 @@ export class LocalStore {
       `ALTER TABLE chunks ADD COLUMN superseded_at DATETIME`,
       `ALTER TABLE chunks ADD COLUMN version INTEGER DEFAULT 1`,
       `ALTER TABLE chunks ADD COLUMN doc_title TEXT`,
+      `ALTER TABLE chunks ADD COLUMN derived_from TEXT`,
     ]) {
       try { this.db.exec(ddl); } catch { /* column already exists */ }
     }
@@ -216,7 +229,7 @@ export class LocalStore {
         UPDATE chunks SET
           title = ?, doc_title = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
-          source_adapter = ?, supersedes = ?, version = ?, updated_at = ?,
+          source_adapter = ?, supersedes = ?, version = ?, derived_from = ?, updated_at = ?,
           synced_at = CASE
             WHEN is_public <> ? OR is_encrypted <> ? OR local_only <> ? THEN NULL
             ELSE synced_at
@@ -226,7 +239,8 @@ export class LocalStore {
         chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
-        chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1, now,
+        chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1,
+        chunk.derivedFrom ?? null, now,
         // the CASE comparands — the NEW visibility
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0,
         id,
@@ -235,14 +249,14 @@ export class LocalStore {
       this.db.prepare(`
         INSERT INTO chunks (id, title, doc_title, content, summary, domain, categories,
           is_public, is_encrypted, local_only, quality_score, source_path, source_adapter,
-          supersedes, version, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          supersedes, version, derived_from, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories),
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null,
-        chunk.supersedes ?? null, chunk.version ?? 1, now, now,
+        chunk.supersedes ?? null, chunk.version ?? 1, chunk.derivedFrom ?? null, now, now,
       );
     }
 
@@ -585,6 +599,7 @@ export class LocalStore {
       supersedes: (row.supersedes as string | null) ?? undefined,
       supersededAt: row.superseded_at ? new Date(row.superseded_at as string) : undefined,
       version: (row.version as number | null) ?? 1,
+      derivedFrom: (row.derived_from as string | null) ?? undefined,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };
