@@ -18,6 +18,26 @@ interface FetchContentResult {
   available: boolean;
 }
 
+// One store for the life of the process, not one per request.
+//
+// This handler used to `new LocalStore()` on every fetch — a fresh SQLite open,
+// WAL pragma and schema-migration check — inside Central's fetch deadline. On a
+// loaded or just-woken laptop that open alone could blow the budget, and Central
+// reported the resulting timeout as the node being offline. The open is pure
+// overhead: the file, the schema and the process are the same every time.
+let storePromise: Promise<import('@rdk/core').LocalStore> | null = null;
+
+async function sharedStore(): Promise<import('@rdk/core').LocalStore> {
+  if (!storePromise) {
+    storePromise = import('@rdk/core')
+      .then(({ LocalStore }) => new LocalStore())
+      // Don't cache a failed open — the next request should retry rather than
+      // inherit a rejected promise forever.
+      .catch((e) => { storePromise = null; throw e; });
+  }
+  return storePromise;
+}
+
 export async function fetchContentHandler(data: unknown): Promise<{ chunks: FetchContentResult[] }> {
   const { chunkIds } = data as {
     chunkIds: string[];
@@ -29,9 +49,8 @@ export async function fetchContentHandler(data: unknown): Promise<{ chunks: Fetc
   // team access (it holds team membership) before issuing this command. We trust
   // that verification and simply serve the stored content.
 
-  const { LocalStore } = await import('@rdk/core');
-  const store = new LocalStore();
-  try {
+  const store = await sharedStore();
+  {
     const chunks: FetchContentResult[] = [];
 
     for (const chunkId of chunkIds ?? []) {
@@ -54,7 +73,5 @@ export async function fetchContentHandler(data: unknown): Promise<{ chunks: Fetc
     }
 
     return { chunks };
-  } finally {
-    store.close();
   }
 }
