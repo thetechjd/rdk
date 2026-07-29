@@ -125,9 +125,12 @@ export async function unifiedQuery(
         console.log('');
       });
       const savedCount = saved.filter(Boolean).length;
-      console.log(t.dim(savedCount > 0
-        ? `Open any of the ${savedCount} saved file(s) to read the whole document.`
-        : 'Nothing was saved — these are summaries, not the documents themselves.'));
+      if (savedCount > 0) {
+        const allSummaries = documents.every(d => !d.contentAvailable);
+        console.log(t.dim(allSummaries
+          ? `Open any of the ${savedCount} saved file(s) to read what was returned.`
+          : `Open any of the ${savedCount} saved file(s) to read the whole document.`));
+      }
     }
 
     if (result.tipsPaid.length > 0) {
@@ -165,17 +168,18 @@ async function saveDocuments(
     // Own content is already in the vault — re-saving it would create a second
     // copy of a file the user wrote.
     if (doc.isOwn || doc.originNodeId === config.nodeId) { paths.push(undefined); continue; }
-    // A summary is not the document. Saved under the document's name it becomes
-    // a stub that future local queries match instead of the real thing —
-    // permanently shadowing the content it claims to be.
-    if (!doc.contentAvailable) { paths.push(undefined); continue; }
     try {
-      const { filePath, unchanged } = saveRetrievedDocument(doc, { vaultPath: config.vaultPath, query });
+      const { filePath, unchanged, summaryOnly } = saveRetrievedDocument(
+        doc, { vaultPath: config.vaultPath, query },
+      );
       paths.push(filePath);
       // Index LOCAL-ONLY so the next query for this answers from disk, free and
       // instantly, without republishing someone else's work to the network.
       // `derivedFrom` survives the eventual edit that makes it the user's own.
-      if (!unchanged) {
+      //
+      // Summaries are written but never indexed: in the index a summary answers
+      // future queries in place of the real document and permanently shadows it.
+      if (!unchanged && !summaryOnly) {
         await indexer.indexDocument({
           content: sectionsAsMarkdown(doc),
           title: doc.name,

@@ -808,14 +808,16 @@ export class NodeService {
       const isOwn = doc.isOwn || doc.originNodeId === cfg?.nodeId;
       let filePath: string | undefined;
 
-      // A summary is not the document. Saving one under the document's name
-      // creates a stub that future local queries match instead of the real
-      // thing, permanently shadowing the content it claims to be.
-      if (!isOwn && doc.contentAvailable && cfg?.vaultPath) {
+      if (!isOwn && cfg?.vaultPath) {
         try {
           const saved = saveRetrievedDocument(doc, { vaultPath: cfg.vaultPath, query });
           filePath = saved.filePath;
-          if (!saved.unchanged) {
+          // Summaries are WRITTEN but never INDEXED. Indexing is what does the
+          // damage — a summary in the local index answers future queries in
+          // place of the real document and permanently shadows it. Refusing to
+          // write it, which is what this did first, left the user clicking a
+          // result that produced nothing at all.
+          if (!saved.unchanged && !saved.summaryOnly) {
             await this.getIndexer().indexDocument({
               content: documentBody(doc),
               title: doc.name,

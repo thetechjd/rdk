@@ -48,7 +48,7 @@ export function QueryBar() {
     // Exactly one document answered the question — opening a chooser with a
     // single entry is just an extra click before the only possible outcome.
     const docs = r.documents ?? [];
-    if (docs.length === 1 && docs[0].filePath && docs[0].contentAvailable) { openDocument(docs[0]); return; }
+    if (docs.length === 1 && docs[0].filePath) { openDocument(docs[0]); return; }
     setRes(r);
   };
 
@@ -103,8 +103,16 @@ export function QueryBar() {
 
               {docs.length > 1 && (
                 <div className="palette-hit"><div className="snippet">
-                  {docs.length} documents matched — all saved to your vault. Open whichever fits;
-                  the others stay on disk.
+                  {/* Say what actually happened. This claimed "all saved to your
+                      vault" unconditionally, which was false whenever a node
+                      was offline — the common case — and the user then clicked
+                      a result expecting a file that had never been written. */}
+                  {docs.length} documents matched
+                  {docs.every((d) => d.filePath)
+                    ? ' — all saved to your vault. Open whichever fits; the others stay on disk.'
+                    : docs.some((d) => d.filePath)
+                      ? ` — ${docs.filter((d) => d.filePath).length} saved to your vault. Open any to read it.`
+                      : ' — click one to read what was returned.'}
                 </div></div>
               )}
 

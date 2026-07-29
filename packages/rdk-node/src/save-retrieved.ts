@@ -37,6 +37,15 @@ export interface SavedDocument {
   filePath: string;
   /** True when an identical file was already there and nothing was rewritten. */
   unchanged: boolean;
+  /**
+   * The caller must NOT index this — it holds summaries, not the document.
+   *
+   * Indexing is the part that does damage: a summary in the local index matches
+   * future queries in place of the real document and permanently shadows it.
+   * Writing the file does no such harm, and refusing to write it left the user
+   * clicking a result that did nothing at all.
+   */
+  summaryOnly: boolean;
 }
 
 /**
@@ -53,7 +62,7 @@ export function saveRetrievedDocument(
   const dir = path.join(opts.vaultPath, RETRIEVED_DIR);
   fs.mkdirSync(dir, { recursive: true });
 
-  const filePath = path.join(dir, documentFileName(doc.name));
+  const filePath = path.join(dir, documentFileName(doc.name, !doc.contentAvailable));
   const body = renderDocument(doc, {
     query: opts.query,
     retrievedAt: opts.retrievedAt ?? new Date().toISOString(),
@@ -64,11 +73,11 @@ export function saveRetrievedDocument(
   // the whole document for nothing.
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : null;
   if (existing !== null && stripFrontmatter(existing) === stripFrontmatter(body)) {
-    return { filePath, unchanged: true };
+    return { filePath, unchanged: true, summaryOnly: !doc.contentAvailable };
   }
 
   fs.writeFileSync(filePath, body, 'utf-8');
-  return { filePath, unchanged: false };
+  return { filePath, unchanged: false, summaryOnly: !doc.contentAvailable };
 }
 
 function stripFrontmatter(md: string): string {

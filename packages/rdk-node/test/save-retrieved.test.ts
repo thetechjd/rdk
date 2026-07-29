@@ -99,21 +99,58 @@ describe('keeping what a query returned', () => {
   });
 });
 
-describe('what must never be saved', () => {
-  it('marks a summary-only document as lacking content', () => {
-    // Callers refuse to save these: a summary under the document's name becomes
-    // a stub that every later local query matches instead of the real thing.
-    const doc = docFrom(
-      { ...chunk({ title: 'discord — Servers' }), content: undefined, summary: 'a one-line gist', available: false },
-    );
-    expect(doc.contentAvailable).toBe(false);
+/**
+ * When the owning node isn't serving, Central returns summaries. That is the
+ * COMMON case, and refusing to write anything for it left the user clicking a
+ * result that produced nothing at all — no file, no tab, not even a toast.
+ *
+ * So a summary is written, under its own name, and simply never indexed.
+ * Indexing is the part that does damage: a summary in the local index answers
+ * future queries in place of the real document and permanently shadows it.
+ */
+const summaryDoc = () => docFrom(
+  { ...chunk({ title: 'discord — Servers' }), content: undefined, summary: 'a one-line gist', available: false },
+);
+
+describe('when only summaries came back', () => {
+  it('marks the document as lacking content', () => {
+    expect(summaryDoc().contentAvailable).toBe(false);
   });
 
-  it('marks a partially-served document as lacking content', () => {
+  it('marks a PARTIALLY served document as lacking content too', () => {
     const doc = docFrom(
       chunk({ title: 'spec — 1. Stack' }),
       { ...chunk({ title: 'spec — 2. Auth' }), chunkId: 'u2', chunkHash: 'h2', content: undefined, summary: 'gist', available: false },
     );
     expect(doc.contentAvailable).toBe(false);
+  });
+
+  it('still writes a file, so clicking the result always opens something', () => {
+    const saved = saveRetrievedDocument(summaryDoc(), { vaultPath: vault, query: 'q', retrievedAt: 'T0' });
+    expect(fs.existsSync(saved.filePath)).toBe(true);
+  });
+
+  it('tells the caller not to index it', () => {
+    const saved = saveRetrievedDocument(summaryDoc(), { vaultPath: vault, query: 'q', retrievedAt: 'T0' });
+    expect(saved.summaryOnly).toBe(true);
+  });
+
+  it('says so in the file, not only in the UI that opened it', () => {
+    // Someone reading this a week later has no query results on screen.
+    const { filePath } = saveRetrievedDocument(summaryDoc(), { vaultPath: vault, query: 'q', retrievedAt: 'T0' });
+    const body = fs.readFileSync(filePath, 'utf-8');
+    expect(body).toContain('rdk_summary_only: true');
+    expect(body).toContain('Summary only.');
+  });
+
+  it('never overwrites the real document', () => {
+    // A user who has both should be able to see that they have both.
+    saveRetrievedDocument(docFrom(chunk({ title: 'discord — Servers' })), { vaultPath: vault, query: 'q', retrievedAt: 'T0' });
+    saveRetrievedDocument(summaryDoc(), { vaultPath: vault, query: 'q', retrievedAt: 'T0' });
+
+    expect(fs.readdirSync(path.join(vault, RETRIEVED_DIR)).sort())
+      .toEqual(['discord (summary).md', 'discord.md']);
+    expect(fs.readFileSync(path.join(vault, RETRIEVED_DIR, 'discord.md'), 'utf-8'))
+      .toContain('the real content');
   });
 });

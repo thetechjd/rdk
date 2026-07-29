@@ -5,6 +5,27 @@ import { useApp, type Tab } from '../store';
 
 marked.setOptions({ gfm: true, breaks: false });
 
+/**
+ * YAML frontmatter is metadata, not prose.
+ *
+ * `marked` has no idea what a `---` block is, so it rendered the whole thing as
+ * a paragraph. On a retrieved document — nine chunk hashes and a node id — that
+ * filled the entire pane with hex before a word of the document appeared.
+ * Editing still sees the raw file: frontmatter is part of what you're editing.
+ */
+function splitFrontmatter(md: string): { meta: Record<string, string>; body: string } {
+  if (!md.startsWith('---')) return { meta: {}, body: md };
+  const end = md.indexOf('\n---', 3);
+  if (end === -1) return { meta: {}, body: md };
+
+  const meta: Record<string, string> = {};
+  for (const line of md.slice(4, end).split('\n')) {
+    const m = /^([A-Za-z0-9_]+):\s*(.*)$/.exec(line);
+    if (m && m[2]) meta[m[1]] = m[2].replace(/^"|"$/g, '');
+  }
+  return { meta, body: md.slice(end + 4).replace(/^\n+/, '') };
+}
+
 export function ContentPane({ tab }: { tab: Tab }) {
   const app = useApp();
   const [tabContent, setTabContent] = useState<ContentView | null>(null);
@@ -94,10 +115,14 @@ export function ContentPane({ tab }: { tab: Tab }) {
     );
   }
 
+  const { meta, body } = splitFrontmatter(display.body);
   const html =
     display.format === 'markdown'
-      ? (marked.parse(display.body) as string)
-      : `<pre>${escapeHtml(display.body)}</pre>`;
+      ? (marked.parse(body) as string)
+      : `<pre>${escapeHtml(body)}</pre>`;
+
+  const retrievedFrom = meta.rdk_retrieved_from;
+  const summaryOnly = meta.rdk_summary_only === 'true';
 
   return (
     <div className="content">
@@ -105,6 +130,15 @@ export function ContentPane({ tab }: { tab: Tab }) {
         {display.decrypted && <span className="decrypt-note">◆ decrypted locally with your vault key</span>}
         {display.state === 'private' && !display.decrypted && (
           <span className="decrypt-note" style={{ color: 'var(--muted)' }}>encrypted — no key available</span>
+        )}
+        {/* Provenance as one readable line, rather than a wall of hashes. */}
+        {retrievedFrom && (
+          <span className="decrypt-note" style={{ color: summaryOnly ? 'var(--cassette)' : 'var(--muted)' }}>
+            {summaryOnly ? '◆ summary only — ' : '◆ retrieved from '}
+            node {retrievedFrom.slice(0, 10)}
+            {meta.rdk_retrieved_query ? ` · "${meta.rdk_retrieved_query}"` : ''}
+            {summaryOnly ? ' · that node was not serving content' : ''}
+          </span>
         )}
         <span style={{ flex: 1 }} />
         {editablePath && <button onClick={() => void startEdit()} title="Edit this file">edit</button>}

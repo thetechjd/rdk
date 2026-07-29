@@ -161,6 +161,7 @@ export function renderDocument(doc: RetrievedDocument, opts: RenderOptions): str
     `rdk_retrieved_from: ${doc.originNodeId}`,
     `rdk_retrieved_query: ${JSON.stringify(opts.query)}`,
     `rdk_retrieved_at: ${opts.retrievedAt}`,
+    `rdk_summary_only: ${!doc.contentAvailable}`,
     `rdk_derived_from: ${doc.sections[0]?.chunkHash ?? ''}`,
     'rdk_source_chunks:',
     ...doc.sections.map(s => `  - ${s.chunkHash}`),
@@ -169,6 +170,19 @@ export function renderDocument(doc: RetrievedDocument, opts: RenderOptions): str
   ];
 
   const body: string[] = [`# ${doc.name}`, ''];
+
+  // Say so IN the file. A summary that looks like the document is how someone
+  // ends up quoting a one-line gist as if it were the spec.
+  if (!doc.contentAvailable) {
+    body.push(
+      `> **Summary only.** The node publishing \`${doc.name}\` was not serving`,
+      '> content when this was retrieved, so what follows is the per-section',
+      '> summaries RDK Central holds — not the document itself.',
+      '>',
+      '> Run the same query again once that node is online to get the full text.',
+      '',
+    );
+  }
   for (const s of doc.sections) {
     // A section whose text already opens with its own heading must not get a
     // second one stacked above it.
@@ -185,8 +199,14 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Filesystem-safe file name for a retrieved document. */
-export function documentFileName(name: string): string {
+/**
+ * Filesystem-safe file name for a retrieved document.
+ *
+ * A summary lands under its own name. It must never overwrite — or later be
+ * overwritten by — the real document: those are different things, and a user
+ * who has both should be able to see that they have both.
+ */
+export function documentFileName(name: string, summaryOnly = false): string {
   const base = name.replace(/[/\\:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim() || 'retrieved';
-  return `${base}.md`;
+  return summaryOnly ? `${base} (summary).md` : `${base}.md`;
 }
