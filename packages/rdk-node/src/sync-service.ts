@@ -82,7 +82,16 @@ export class SyncService {
     try {
       // Public AND private chunks sync (embedding + metadata); only content stays on-node.
       const unsynced = this.store.getUnsyncedChunks(100);
-      if (unsynced.length === 0) return { synced: 0, errors: 0 };
+      if (unsynced.length === 0) {
+        // "Nothing to push" is precisely the state drift hides in: a chunk that
+        // is marked synced here but stored with the wrong visibility on Central
+        // looks like a healthy, idle vault. Reconcile occasionally so a publish
+        // that failed to propagate repairs itself, instead of the user having to
+        // be told to run `vault:sync --force`. Anything found is re-queued and
+        // pushed on the next tick.
+        await this.reconcileIfDue();
+        return { synced: 0, errors: 0 };
+      }
 
       this.log(`[sync] ${unsynced.length} unsynced chunk(s) found`);
 
@@ -165,21 +174,43 @@ export class SyncService {
     return { synced, errors };
   }
 
+  /** Reconcile at most once an hour — it scans the whole synced set. */
+  private lastReconcile = 0;
+  private static readonly RECONCILE_INTERVAL_MS = 60 * 60 * 1000;
+
+  private async reconcileIfDue(): Promise<void> {
+    const now = Date.now();
+    if (now - this.lastReconcile < SyncService.RECONCILE_INTERVAL_MS) return;
+    this.lastReconcile = now;
+    try {
+      await this.verify();
+    } catch (e) {
+      // An old Central without /chunks/exists throws here. Reconcile is a
+      // repair path, not a precondition — never let it break normal sync.
+      this.log(`[sync] reconcile skipped: ${(e as Error).message}`);
+    }
+  }
+
   /**
    * Reconcile local sync state against central: ask which locally-"synced"
    * chunks central still actually stores, and clear `synced_at` on the ones it
-   * doesn't (hard-deleted on re-index, lost, or owned by a since-orphaned node).
-   * Cleared chunks re-push on the next sync. Returns how many were re-queued.
+   * doesn't (hard-deleted on re-index, lost, or owned by a since-orphaned node)
+   * — plus the ones it stores with the WRONG VISIBILITY, which is what a publish
+   * that never propagated looks like. Both clear `synced_at` and re-push next
+   * sync. Returns how many of each were re-queued.
    *
    * This is the repair path for `rdk vault:sync --verify`; it fixes the "status
    * says N synced but central only has M" drift at its source.
    */
-  async verify(): Promise<{ checked: number; missing: number }> {
-    const hashes = this.store.getSyncedChunkIds();
-    if (hashes.length === 0) return { checked: 0, missing: 0 };
+  async verify(): Promise<{ checked: number; missing: number; drifted: number }> {
+    const local = this.store.getSyncedChunks();
+    const hashes = local.map((c) => c.id);
+    if (hashes.length === 0) return { checked: 0, missing: 0, drifted: 0 };
 
     const jwt = await this.getJwt();
     const existing = new Set<string>();
+    /** Central's visibility per hash — absent on old centrals, which omit `chunks`. */
+    const remoteVisibility = new Map<string, boolean>();
     const batchSize = 200;
     for (let i = 0; i < hashes.length; i += batchSize) {
       const batch = hashes.slice(i, i + batchSize);
@@ -194,14 +225,32 @@ export class SyncService {
         // re-queue everything (that would be a needless full re-sync).
         throw new Error(`verify unsupported by central (HTTP ${res.status})`);
       }
-      const { existing: present } = await res.json() as { existing: string[] };
+      const { existing: present, chunks } = await res.json() as {
+        existing: string[];
+        chunks?: { chunkHash: string; isPublic: boolean }[];
+      };
       for (const h of present) existing.add(h);
+      for (const c of chunks ?? []) remoteVisibility.set(c.chunkHash, c.isPublic);
     }
 
     const missing = hashes.filter((h) => !existing.has(h));
-    if (missing.length) this.store.markUnsynced(missing);
-    this.log(`[sync] verify: ${hashes.length} checked, ${missing.length} missing → re-queued`);
-    return { checked: hashes.length, missing: missing.length };
+
+    // Visibility drift: present on both sides, but Central is serving it with
+    // the wrong visibility. This is what a failed publish looks like — the chunk
+    // is public here and private there, so it never answers a query and nothing
+    // reports an error. Re-queueing pushes the current visibility, which is why
+    // publishing now self-heals instead of needing `vault:sync --force`.
+    const drifted = local
+      .filter((c) => remoteVisibility.has(c.id) && remoteVisibility.get(c.id) !== c.isPublic)
+      .map((c) => c.id);
+
+    const repush = [...new Set([...missing, ...drifted])];
+    if (repush.length) this.store.markUnsynced(repush);
+    this.log(
+      `[sync] verify: ${hashes.length} checked, ${missing.length} missing, ` +
+      `${drifted.length} visibility drift → ${repush.length} re-queued`,
+    );
+    return { checked: hashes.length, missing: missing.length, drifted: drifted.length };
   }
 
   getStatus(): { enabled: boolean; intervalMinutes: number; running: boolean } {

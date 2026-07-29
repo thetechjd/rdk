@@ -236,8 +236,10 @@ export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}
           { enabled: false, intervalMinutes: 0, centralApiUrl: config.centralApiUrl, centralApiKey: config.apiKey, log: () => {} },
           store,
         );
-        const { checked, missing } = await sync.verify();
-        spinner.text = `Reconciled ${checked} chunk(s) — ${missing} re-queued for sync...`;
+        const { checked, missing, drifted } = await sync.verify();
+        spinner.text =
+          `Reconciled ${checked} chunk(s) — ${missing} missing, ${drifted} wrong visibility ` +
+          `→ re-queued for sync...`;
       } catch (e) {
         spinner.text = `Reconcile skipped (${(e as Error).message}) — syncing...`;
       }

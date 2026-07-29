@@ -662,10 +662,20 @@ export class LocalStore {
    * rows are intentionally left out so a replaced version is never resurrected.
    */
   getSyncedChunkIds(): string[] {
+    return this.getSyncedChunks().map(c => c.id);
+  }
+
+  /**
+   * The same set, with the visibility this machine believes each chunk has.
+   * Reconcile compares this against Central: a chunk can exist on both sides and
+   * still be unqueryable because Central thinks it is private, which is exactly
+   * the failure an id-only check cannot see.
+   */
+  getSyncedChunks(): { id: string; isPublic: boolean }[] {
     const rows = this.db.prepare(
-      'SELECT id FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND superseded_at IS NULL',
-    ).all() as { id: string }[];
-    return rows.map(r => r.id);
+      'SELECT id, is_public FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND superseded_at IS NULL',
+    ).all() as { id: string; is_public: number }[];
+    return rows.map(r => ({ id: r.id, isPublic: r.is_public === 1 }));
   }
 
   /**
