@@ -3,6 +3,7 @@ import { AppProvider, useApp } from './store';
 import { VaultTree } from './panes/VaultTree';
 import { GraphView } from './panes/GraphView';
 import { ContentPane } from './panes/ContentPane';
+import { FileBrowser } from './panes/FileBrowser';
 import { Inspector } from './panes/Inspector';
 import { Earnings } from './panes/Earnings';
 import { QueryBar } from './QueryBar';
@@ -57,6 +58,9 @@ function Shell() {
               <GraphView />
             </div>
             {activeTab?.kind === 'content' && <ContentPane tab={activeTab} />}
+            {activeTab?.kind === 'folder' && activeTab.location && (
+              <FileBrowser location={activeTab.location} title={activeTab.title} />
+            )}
             {activeTab?.kind === 'earnings' && <Earnings />}
           </div>
         </div>

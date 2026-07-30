@@ -18,7 +18,14 @@ export function LoginForm({ onSuccess }: { onSuccess?: () => void }) {
     if (!email.trim() || !password) { setError('Enter your email and password.'); return; }
     setBusy(true);
     setError(null);
-    const r = await window.rdk.login(email.trim(), password);
+    let r;
+    try {
+      r = await window.rdk.login(email.trim(), password);
+    } catch (cause) {
+      setError(`Could not finish signing in: ${(cause as Error).message || 'unexpected desktop error'}`);
+      setBusy(false);
+      return;
+    }
     setBusy(false);
     if (!r.ok) { setError(r.error ?? 'Login failed'); return; }
 

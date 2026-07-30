@@ -5,6 +5,7 @@ import {
   RETRODECK_DEFAULT_URL,
   createTopup,
   dashboardUrl,
+  login,
   selectPlan,
   verifySubscription,
   verifyTopup,
@@ -89,6 +90,35 @@ describe('dashboardUrl', () => {
   it('leaves a localhost base untouched — there is no api. subdomain to swap', () => {
     updateConfig({ retrodeckApiUrl: 'http://localhost:3001' });
     expect(dashboardUrl()).toBe('http://localhost:3001');
+  });
+});
+
+describe('first-run login before a node config can be persisted', () => {
+  it('returns the authenticated session without mutating the existing config', async () => {
+    respond(
+      { status: 200, json: { accessToken: 'first-access', refreshToken: 'first-refresh' } },
+      {
+        status: 200,
+        json: { user: { id: 'user-first', emailVerified: true, planId: 'pro' } },
+      },
+    );
+
+    const before = loadConfig().retrodeckAccessToken;
+    const result = await login('first@example.com', 'password', { persist: false });
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: 'pro',
+      emailVerified: true,
+      session: {
+        accessToken: 'first-access',
+        refreshToken: 'first-refresh',
+        userId: 'user-first',
+        apiBase: API,
+      },
+    });
+    expect(loadConfig().retrodeckAccessToken).toBe(before);
+    expect(captured).toHaveLength(2); // login + /users/me; no link request
   });
 });
 

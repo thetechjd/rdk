@@ -238,6 +238,97 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
   line-height: 1.4;
 }
 
+/* ── Center-pane folder browser ───────────────────────────────────────────── */
+.file-browser {
+  position: relative; height: 100%; display: flex; flex-direction: column;
+  background: var(--bg-deep); overflow: hidden;
+}
+.browser-toolbar {
+  min-height: 43px; padding: 6px 14px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border); background: var(--bg-chrome);
+}
+.browser-back {
+  width: 28px; height: 27px; padding: 0; border: 0; border-radius: 4px;
+  font-size: 23px; line-height: 20px; text-transform: none;
+}
+.browser-back:disabled { opacity: 0.25; cursor: default; }
+.browser-breadcrumbs {
+  min-width: 0; display: flex; align-items: center; gap: 5px; overflow: hidden;
+}
+.browser-breadcrumbs > button,
+.browser-breadcrumbs span button {
+  padding: 3px 4px; border: 0; background: transparent; color: var(--text);
+  text-transform: none; letter-spacing: 0; white-space: nowrap;
+}
+.browser-breadcrumbs button:hover { color: var(--text-bright); border: 0; background: var(--bg-elev); }
+.browser-separator { color: var(--muted); margin-right: 3px; }
+.browser-item-count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.browser-grid {
+  flex: 1; align-content: start; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  grid-auto-rows: 125px; gap: 10px; padding: 22px; overflow: auto;
+}
+.browser-item {
+  position: relative; min-width: 0; height: 120px; padding: 10px 8px 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  border: 1px solid transparent; border-radius: 7px; background: transparent;
+  color: var(--text); text-transform: none; letter-spacing: 0; cursor: pointer;
+}
+.browser-item:hover, .browser-item:focus {
+  border-color: var(--border); background: var(--bg-elev); color: var(--text-bright);
+}
+.browser-item-name {
+  width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); text-align: center;
+}
+.browser-item .dot { position: absolute; right: 9px; top: 9px; }
+.folder-sprite {
+  position: relative; width: 68px; height: 47px; display: block;
+  border: 1px solid rgba(255, 205, 100, 0.75); border-radius: 4px;
+  background: linear-gradient(180deg, #d7a74d 0 18%, #b9822c 19% 100%);
+  box-shadow: inset 0 2px rgba(255,255,255,0.13), 0 5px 14px rgba(0,0,0,0.28);
+}
+.folder-sprite::before {
+  content: ''; position: absolute; left: 5px; top: -7px; width: 27px; height: 10px;
+  border: 1px solid rgba(255, 205, 100, 0.75); border-bottom: 0;
+  border-radius: 4px 4px 0 0; background: #d7a74d;
+}
+.folder-sprite span {
+  position: absolute; inset: 9px 4px 4px; border-radius: 2px;
+  background: linear-gradient(180deg, rgba(255,218,139,0.42), transparent);
+}
+.file-sprite {
+  position: relative; width: 46px; height: 58px; display: block;
+  border: 1px solid var(--border-bright); border-radius: 3px;
+  background: linear-gradient(135deg, var(--bg-elev), #111812);
+  box-shadow: 0 5px 14px rgba(0,0,0,0.25);
+}
+.file-sprite::before {
+  content: ''; position: absolute; right: -1px; top: -1px;
+  border-style: solid; border-width: 0 0 13px 13px;
+  border-color: transparent transparent var(--border-bright) transparent;
+}
+.file-sprite span, .file-sprite span::before, .file-sprite span::after {
+  position: absolute; content: ''; left: 8px; right: 8px; height: 1px; background: var(--muted);
+}
+.file-sprite span { top: 26px; }
+.file-sprite span::before { top: 7px; left: 0; right: 0; }
+.file-sprite span::after { top: 14px; left: 0; right: 6px; }
+.browser-empty {
+  grid-column: 1 / -1; height: 230px; align-self: start;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  color: var(--muted); font-size: var(--fs-sm);
+}
+.browser-empty b { color: var(--text); }
+.folder-sprite.large { transform: scale(1.2); margin-bottom: 8px; opacity: 0.55; }
+.file-browser.drop-over { box-shadow: inset 0 0 0 2px var(--phosphor); }
+.browser-drop-label {
+  position: absolute; inset: 52px 14px auto; padding: 10px; z-index: 3;
+  border: 1px dashed var(--phosphor); background: rgba(8,10,8,0.9);
+  color: var(--phosphor); text-align: center; text-transform: uppercase;
+  letter-spacing: 0.1em; font-size: var(--fs-xs);
+}
+
 .tree { padding: 6px 0; }
 .tree-row {
   display: flex; align-items: center; gap: 7px;

@@ -2,7 +2,7 @@
 //
 // Authenticated client for the RetroDeck API (api.retrodeck.ai) — the account /
 // plans / balance / top-up / subscription backend. This is a DIFFERENT service
-// from RDK Central (api.rdk.network), which owns node registration, chunk sync
+// from RDK Central (rdk.retrodeck.ai), which owns node registration, chunk sync
 // and tips/earnings and authenticates with the node apiKey. Mixing them up sends
 // account calls to the wrong host with the wrong token.
 //
@@ -117,6 +117,14 @@ export interface LoginResult {
   plan?: string;
   /** Outcome of linking this node to the account (dashboard visibility). */
   link?: LinkResult;
+  /** Returned for first-run consumers that cannot persist yet because the node
+   * config (notably the vault path) does not exist. */
+  session?: {
+    accessToken: string;
+    refreshToken: string;
+    userId: string;
+    apiBase: string;
+  };
 }
 
 /** Base URL used for login, before any config exists to read from. */
@@ -132,7 +140,11 @@ function retrodeckBase(): string {
  * CLI), then idempotently links this node to the account so its chunks show up in
  * the dashboard.
  */
-export async function login(email: string, password: string): Promise<LoginResult> {
+export async function login(
+  email: string,
+  password: string,
+  opts: { persist?: boolean } = {},
+): Promise<LoginResult> {
   const apiBase = retrodeckBase();
   let data: { accessToken: string; refreshToken: string };
   try {
@@ -170,21 +182,37 @@ export async function login(email: string, password: string): Promise<LoginResul
     }
   } catch { /* non-fatal — tokens are still good */ }
 
-  updateConfig({
-    retrodeckAccessToken: data.accessToken,
-    retrodeckRefreshToken: data.refreshToken,
-    retrodeckUserId: userId,
-    retrodeckApiUrl: apiBase,
-    plan,
-    ...(emailVerified !== undefined ? { emailVerified } : {}),
-  });
+  const persist = opts.persist ?? true;
+  if (persist) {
+    updateConfig({
+      retrodeckAccessToken: data.accessToken,
+      retrodeckRefreshToken: data.refreshToken,
+      retrodeckUserId: userId,
+      retrodeckApiUrl: apiBase,
+      plan,
+      ...(emailVerified !== undefined ? { emailVerified } : {}),
+    });
+  }
 
   // Link the node so the dashboard can resolve its chunks. Pass the fresh token
   // explicitly (as the CLI does) so it links even if the check can't be done.
   let link: LinkResult | undefined;
-  try { link = await ensureNodeLinked({ accessToken: data.accessToken }); } catch { /* non-fatal */ }
+  if (persist) {
+    try { link = await ensureNodeLinked({ accessToken: data.accessToken }); } catch { /* non-fatal */ }
+  }
 
-  return { ok: true, emailVerified, plan, link };
+  return {
+    ok: true,
+    emailVerified,
+    plan,
+    link,
+    session: {
+      accessToken: data.accessToken,
+      refreshToken: data.refreshToken,
+      userId,
+      apiBase,
+    },
+  };
 }
 
 /** Clear the RetroDeck session. The node's own apiKey/identity is untouched. */

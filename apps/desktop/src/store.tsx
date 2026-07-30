@@ -4,14 +4,16 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Account, NodeStatus, PlatformCapabilities, PushEvent } from '../shared/ipc';
+import type { ExplorerLocation } from './panes/VaultTree';
 
-export type TabKind = 'graph' | 'content' | 'earnings';
+export type TabKind = 'graph' | 'content' | 'folder' | 'earnings';
 export interface Tab {
   id: string;
   kind: TabKind;
   title: string;
   chunkId?: string;
   filePath?: string;
+  location?: ExplorerLocation;
 }
 
 interface ToastMsg { text: string; error?: boolean }
@@ -35,6 +37,7 @@ interface AppState {
   openTab(tab: Tab): void;
   closeTab(id: string): void;
   openGraph(): void;
+  openLocation(location: ExplorerLocation, title: string): void;
   openEarnings(): void;
   openContentForChunk(chunkId: string, title: string): void;
   openContentForFile(filePath: string, title: string): void;
@@ -108,6 +111,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const openGraph = useCallback(() => setActiveTabId('graph'), []);
+  const openLocation = useCallback((location: ExplorerLocation, title: string) =>
+    openTab({ id: `folder:${location}`, kind: 'folder', title, location }), [openTab]);
   const openEarnings = useCallback(() => openTab({ id: 'earnings', kind: 'earnings', title: 'earnings' }), [openTab]);
   const openContentForChunk = useCallback((chunkId: string, title: string) =>
     openTab({ id: `c:${chunkId}`, kind: 'content', title, chunkId }), [openTab]);
@@ -122,13 +127,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const value: AppState = useMemo(() => ({
     status, account, caps, tabs, activeTabId,
     selectedChunkId, selectedFilePath, paletteOpen, settingsOpen, dataVersion,
-    setActiveTab: setActiveTabId, openTab, closeTab, openGraph, openEarnings,
+    setActiveTab: setActiveTabId, openTab, closeTab, openGraph, openLocation, openEarnings,
     openContentForChunk, openContentForFile, openFileForEdit,
     pendingEditPath, clearPendingEdit,
     selectChunk: setSelectedChunkId, selectFile: setSelectedFilePath,
     setPaletteOpen, setSettingsOpen, refreshData, refreshStatus, toast, currentToast,
   }), [status, account, caps, tabs, activeTabId, selectedChunkId, selectedFilePath,
-    paletteOpen, settingsOpen, dataVersion, openTab, closeTab, openGraph, openEarnings,
+    paletteOpen, settingsOpen, dataVersion, openTab, closeTab, openGraph, openLocation, openEarnings,
     openContentForChunk, openContentForFile, openFileForEdit, pendingEditPath, clearPendingEdit,
     refreshData, refreshStatus, toast, currentToast]);
 

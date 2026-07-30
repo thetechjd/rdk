@@ -31,6 +31,7 @@ import {
   saveConfig,
   updateConfig,
   configExists,
+  DEFAULT_CENTRAL_API_URL,
   rdkDir,
   type RDKConfig,
 } from '@rdk/node/config';
@@ -82,6 +83,17 @@ export class NodeService {
    *  chunks while this socket is up. Without it our content is silently skipped
    *  and our own documents come back unfindable. */
   private wsOwnership: WsOwnership | null = null;
+  /** First-run login happens before a vault exists, so there is no valid config
+   * to persist into yet. Keep the authenticated session in memory until init. */
+  private pendingAccount: {
+    accessToken: string;
+    refreshToken: string;
+    userId: string;
+    apiBase: string;
+    plan?: string;
+    emailVerified?: boolean;
+    email: string;
+  } | null = null;
 
   // ── lifecycle / lazy wiring ────────────────────────────────────────────────
 
@@ -177,7 +189,7 @@ export class NodeService {
       // It was previously used only to salt the offline id and then discarded,
       // which left nothing to register with.
       ownerEmail: opts.email,
-      centralApiUrl: process.env.RDK_API_URL ?? 'https://api.rdk.network',
+      centralApiUrl: process.env.RDK_API_URL ?? DEFAULT_CENTRAL_API_URL,
       plan: 'free',
       vaultAdapter: 'obsidian',
       vaultPath: opts.vaultPath,
@@ -189,8 +201,18 @@ export class NodeService {
       syncIntervalMinutes: 5,
     };
     cfg.vaultPath = opts.vaultPath;
+    if (this.pendingAccount) {
+      cfg.ownerEmail = this.pendingAccount.email;
+      cfg.retrodeckAccessToken = this.pendingAccount.accessToken;
+      cfg.retrodeckRefreshToken = this.pendingAccount.refreshToken;
+      cfg.retrodeckUserId = this.pendingAccount.userId;
+      cfg.retrodeckApiUrl = this.pendingAccount.apiBase;
+      cfg.plan = this.pendingAccount.plan ?? cfg.plan;
+      cfg.emailVerified = this.pendingAccount.emailVerified;
+    }
     saveConfig(cfg);
     this.config = loadConfig();
+    this.pendingAccount = null;
   }
 
   // ── vault tree ────────────────────────────────────────────────────────────
@@ -968,7 +990,14 @@ export class NodeService {
       this.notServingReason = null;
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: (e as Error).message };
+      const message = (e as Error).message || String(e);
+      const endpoint = this.getConfig()?.centralApiUrl ?? DEFAULT_CENTRAL_API_URL;
+      return {
+        ok: false,
+        error: /fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|network/i.test(message)
+          ? `Could not connect to the RDK network at ${endpoint}. Check your internet connection; the desktop will retry automatically.`
+          : message,
+      };
     }
   }
 
@@ -1058,9 +1087,19 @@ export class NodeService {
 
   /** Native email/password login (same exchange as `rdk account:login`). */
   async login(email: string, password: string): Promise<LoginOutcome> {
-    const r = await retrodeck.login(email, password);
-    this.config = loadConfigOrNull(); // pick up the freshly persisted tokens/plan
+    const initialized = configExists();
+    const r = await retrodeck.login(email, password, { persist: initialized });
     if (!r.ok) return { ok: false, error: r.error };
+    if (initialized) {
+      this.config = loadConfigOrNull(); // pick up persisted tokens/plan
+    } else if (r.session) {
+      this.pendingAccount = {
+        ...r.session,
+        plan: r.plan,
+        emailVerified: r.emailVerified,
+        email,
+      };
+    }
     return {
       ok: true,
       emailVerified: r.emailVerified,

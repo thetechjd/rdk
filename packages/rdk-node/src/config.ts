@@ -50,6 +50,13 @@ export interface RDKConfig {
 
 const RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
 const CONFIG_PATH = path.join(RDK_DIR, 'config.json');
+/** Public Central endpoint. `api.rdk.network` was documented but never had DNS;
+ * production has always been routed by nginx at rdk.retrodeck.ai. */
+export const DEFAULT_CENTRAL_API_URL = 'https://rdk.retrodeck.ai';
+const DEAD_CENTRAL_API_URLS = new Set([
+  'https://api.rdk.network',
+  'http://api.rdk.network',
+]);
 // Machine-specific key: hash of hostname + os username (deters casual reads of config)
 const MACHINE_KEY = crypto.createHash('sha256').update(`${os.hostname()}${os.userInfo().username}`).digest();
 
@@ -71,6 +78,9 @@ export function loadConfig(): RDKConfig {
     throw new Error('RDK not initialized. Run: rdk init');
   }
   const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as RDKConfig;
+  if (DEAD_CENTRAL_API_URLS.has(raw.centralApiUrl?.replace(/\/+$/, ''))) {
+    raw.centralApiUrl = DEFAULT_CENTRAL_API_URL;
+  }
   raw.apiKey = decryptValue(raw.apiKey);
   if (raw.retrodeckAccessToken) raw.retrodeckAccessToken = decryptValue(raw.retrodeckAccessToken);
   if (raw.retrodeckRefreshToken) raw.retrodeckRefreshToken = decryptValue(raw.retrodeckRefreshToken);

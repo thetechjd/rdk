@@ -41,6 +41,7 @@ const service = new NodeService();
 let mainWindow: BrowserWindow | null = null;
 let vaultWatcher: fs.FSWatcher | null = null;
 let statusTimer: NodeJS.Timeout | null = null;
+let servingTimer: NodeJS.Timeout | null = null;
 
 function push(event: PushEvent): void {
   mainWindow?.webContents.send(PUSH_CHANNEL, event);
@@ -98,7 +99,12 @@ function registerHandlers(): void {
       return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
     },
     initNode: async (opts: never) => {
-      try { await service.initNode(opts); startWatchers(); return { ok: true }; }
+      try {
+        await service.initNode(opts);
+        startWatchers();
+        beginServingLoop();
+        return { ok: true };
+      }
       catch (e) { return { ok: false, error: (e as Error).message }; }
     },
     // vault
@@ -203,29 +209,28 @@ function stopWatchers(): void {
   statusTimer = null;
 }
 
+/** The app being open is the node being live. Start this both for an existing
+ * install and immediately after first-run setup; previously it was created only
+ * in app.whenReady(), when onboarding had not written a config yet. */
+function beginServingLoop(): void {
+  if (servingTimer) return;
+  const keepServing = async (): Promise<void> => {
+    const result = await service.ensureServing();
+    if (result.ok) await service.forceSync().catch(() => undefined);
+    push({ type: 'status', status: service.getStatus() });
+    push({ type: 'vault-changed' });
+  };
+  void keepServing();
+  servingTimer = setInterval(() => { void keepServing(); }, 60_000);
+  servingTimer.unref?.();
+}
+
 app.whenReady().then(() => {
   registerHandlers();
   createWindow();
   if (service.isInitialized()) {
     startWatchers();
-    // The app being open IS the node being live. There is no useful state where
-    // the window is on screen and the node sits idle, so this keeps trying for
-    // as long as the app runs rather than failing once at launch and going
-    // quiet — which is what left users pressing "start node" to no effect.
-    //
-    // startNode's result used to be thrown away here, so a start that failed
-    // for a stated reason showed up only as "node idle".
-    const keepServing = async (): Promise<void> => {
-      const r = await service.ensureServing();
-      if (r.ok) await service.forceSync().catch(() => undefined);
-      push({ type: 'status', status: service.getStatus() });
-      push({ type: 'vault-changed' });
-    };
-    void keepServing();
-    // Retry while the app is open: a laptop that launches before its network is
-    // up, or a session that expires mid-run, should recover on its own.
-    const servingTimer = setInterval(() => { void keepServing(); }, 60_000);
-    servingTimer.unref?.();
+    beginServingLoop();
   }
 
   // Update check (throttled to once/day): prompt → confirm → download → installer
@@ -246,6 +251,8 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopWatchers();
+  if (servingTimer) clearInterval(servingTimer);
+  servingTimer = null;
   // Hand the Central WebSocket back cleanly so an installed always-on service
   // can take it over immediately instead of waiting out the lock heartbeat.
   void service.stopNode();

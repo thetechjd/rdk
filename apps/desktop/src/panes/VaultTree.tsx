@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { FileState, IndexedDoc, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
 import { useApp } from '../store';
 
-type ExplorerLocation = 'public' | 'private' | 'local' | 'retrieved';
+export type ExplorerLocation = 'public' | 'private' | 'local' | 'retrieved';
 
 const LOCATIONS: Array<{
   id: ExplorerLocation;
@@ -214,7 +214,10 @@ export function VaultTree() {
               >
                 <button
                   className="explorer-location-head"
-                  onClick={() => toggle(locationKey)}
+                  onClick={() => {
+                    if (!isOpen) toggle(locationKey);
+                    app.openLocation(location.id, location.label);
+                  }}
                   title={`${location.description}${acceptsDrop ? ` — drop files here to index as ${location.id}` : ''}`}
                   aria-expanded={isOpen}
                 >
