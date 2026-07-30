@@ -1,6 +1,6 @@
 {
   "name": "rdk-desktop",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "RDK Desktop — Obsidian-style file explorer + knowledge/retrieval graph for the RDK network",
   "author": "RetroDeck <hello@rdk.network>",
   "homepage": "https://rdk.network",

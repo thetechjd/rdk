@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RDKIndexer } from '../src/indexer.js';
-import type { LocalStore, StoredChunk } from '../src/store/local-store.js';
+import type { LocalStore, StoredChunk, StoredDocument } from '../src/store/local-store.js';
 import type { EmbeddingModel } from '../src/models/embedding.js';
 
 /**
@@ -29,8 +29,14 @@ allow/deny overwrite layer resolved at read time rather than materialised.
 
 function stubStore(derivedBySource: Record<string, string> = {}) {
   const saved: Array<Omit<StoredChunk, 'createdAt' | 'updatedAt'>> = [];
+  const savedDocuments: Array<Omit<StoredDocument, 'createdAt' | 'updatedAt'>> = [];
   const store = {
     saved,
+    savedDocuments,
+    saveDocument(document: Omit<StoredDocument, 'createdAt' | 'updatedAt'>) {
+      savedDocuments.push(document);
+      return document.hash;
+    },
     saveChunk(chunk: Omit<StoredChunk, 'createdAt' | 'updatedAt'>) {
       saved.push(chunk);
       return chunk.id;
@@ -39,7 +45,10 @@ function stubStore(derivedBySource: Record<string, string> = {}) {
       return derivedBySource[sourcePath];
     },
   };
-  return store as unknown as LocalStore & { saved: typeof saved };
+  return store as unknown as LocalStore & {
+    saved: typeof saved;
+    savedDocuments: typeof savedDocuments;
+  };
 }
 
 const embeddingModel: EmbeddingModel = {
@@ -60,6 +69,14 @@ describe('carrying lineage through an edit', () => {
     await index(store, { derivedFrom: 'origin-hash' });
     expect(store.saved.length).toBeGreaterThan(0);
     expect(store.saved.every((c) => c.derivedFrom === 'origin-hash')).toBe(true);
+  });
+
+  it('preserves the complete original as the authoritative document', async () => {
+    const store = stubStore();
+    await index(store, { isPublic: true });
+    expect(store.savedDocuments).toHaveLength(1);
+    expect(store.savedDocuments[0].content).toBe(LONG_ENOUGH);
+    expect(store.saved.every((c) => c.documentHash === store.savedDocuments[0].hash)).toBe(true);
   });
 
   it('inherits the origin from the FILE when re-indexing an edit', async () => {

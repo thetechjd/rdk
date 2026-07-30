@@ -94,6 +94,27 @@ export class RDKIndexer {
 
       // 2. Chunk
       const chunks = chunkText(cleaned, { strategy: 'semantic', maxChunkTokens: 512, overlapTokens: 64 });
+      const documentHash = crypto.createHash('sha256').update(doc.content).digest('hex');
+      const isPublic = doc.isPublic ?? false;
+      const isEncrypted = !isPublic && !!this.config.vaultKey;
+      const documentContent = isEncrypted
+        ? encrypt(doc.content, this.config.vaultKey!)
+        : doc.content;
+
+      // Preserve the authoritative source once. Chunks below are search-index
+      // windows only; no caller should have to reconstruct a document from
+      // overlapping, independently ranked fragments.
+      this.config.localStore.saveDocument({
+        hash: documentHash,
+        title: docTitle,
+        content: documentContent,
+        isPublic,
+        isEncrypted,
+        sourcePath: doc.sourcePath,
+        sourceAdapter: doc.sourceAdapter,
+        version: doc.version ?? 1,
+        tokenEstimate: estimateTokens(doc.content),
+      });
 
       // 3. Process each chunk
       for (const chunk of chunks) {
@@ -143,8 +164,6 @@ export class RDKIndexer {
           }
 
           // 7. Store locally — encrypt content if private and vault key is configured
-          const isPublic = doc.isPublic ?? false;
-          const isEncrypted = !isPublic && !!this.config.vaultKey;
           const contentToStore = isEncrypted
             ? encrypt(chunk.text, this.config.vaultKey!)
             : chunk.text;
@@ -153,6 +172,10 @@ export class RDKIndexer {
             id: chunkId,
             title: chunkTitle,
             docTitle,
+            documentHash,
+            chunkIndex: chunk.index,
+            chunkCount: chunks.length,
+            documentTokens: estimateTokens(doc.content),
             content: contentToStore,
             summary,
             domain,
@@ -226,6 +249,10 @@ export class RDKIndexer {
         // Document-level title, so Central's Files view can name a document
         // without picking an arbitrary chunk title out of the group.
         docTitle: chunk.docTitle,
+        documentHash: chunk.documentHash,
+        chunkIndex: chunk.chunkIndex,
+        chunkCount: chunk.chunkCount,
+        documentTokens: chunk.documentTokens,
         summary: chunk.isPublic ? chunk.summary : undefined,
         domain: chunk.domain,
         categories: chunk.categories,

@@ -15,6 +15,12 @@ export interface StoredChunk {
    *  opposed to `title`, which is `<document> — <section>`. Undefined for rows
    *  indexed before this existed; consumers fall back to parsing `title`. */
   docTitle?: string;
+  /** Hash of the complete source document version this search fragment indexes. */
+  documentHash?: string;
+  /** Stable position inside the document's hidden search index. */
+  chunkIndex?: number;
+  chunkCount?: number;
+  documentTokens?: number;
   content: string;
   summary?: string;
   domain?: string;
@@ -56,6 +62,21 @@ export interface StoredChunk {
 
 export interface SearchResult extends StoredChunk {
   score: number; // cosine similarity 0-1
+}
+
+/** The authoritative user-facing object. Chunks are only an index over this. */
+export interface StoredDocument {
+  hash: string;
+  title: string;
+  content: string;
+  isPublic: boolean;
+  isEncrypted: boolean;
+  sourcePath?: string;
+  sourceAdapter?: string;
+  version: number;
+  tokenEstimate: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 /** One version of a document — the chunks of a single indexing pass, rolled up. */
@@ -106,6 +127,10 @@ export class LocalStore {
         id            TEXT PRIMARY KEY,
         title         TEXT NOT NULL,
         doc_title     TEXT,
+        document_hash TEXT,
+        chunk_index   INTEGER,
+        chunk_count   INTEGER,
+        document_tokens INTEGER,
         content       TEXT NOT NULL,
         summary       TEXT,
         domain        TEXT,
@@ -128,6 +153,20 @@ export class LocalStore {
       CREATE TABLE IF NOT EXISTS chunk_embeddings (
         chunk_id    TEXT PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
         embedding   BLOB NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS documents (
+        hash           TEXT PRIMARY KEY,
+        title          TEXT NOT NULL,
+        content        TEXT NOT NULL,
+        is_public      INTEGER DEFAULT 0,
+        is_encrypted   INTEGER DEFAULT 0,
+        source_path    TEXT,
+        source_adapter TEXT,
+        version        INTEGER DEFAULT 1,
+        token_estimate INTEGER DEFAULT 0,
+        created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE INDEX IF NOT EXISTS idx_chunks_public ON chunks(is_public, domain);
@@ -157,6 +196,10 @@ export class LocalStore {
       `ALTER TABLE chunks ADD COLUMN version INTEGER DEFAULT 1`,
       `ALTER TABLE chunks ADD COLUMN doc_title TEXT`,
       `ALTER TABLE chunks ADD COLUMN derived_from TEXT`,
+      `ALTER TABLE chunks ADD COLUMN document_hash TEXT`,
+      `ALTER TABLE chunks ADD COLUMN chunk_index INTEGER`,
+      `ALTER TABLE chunks ADD COLUMN chunk_count INTEGER`,
+      `ALTER TABLE chunks ADD COLUMN document_tokens INTEGER`,
     ]) {
       try { this.db.exec(ddl); } catch { /* column already exists */ }
     }
@@ -227,7 +270,8 @@ export class LocalStore {
       // compares old visibility against the new one being written.
       this.db.prepare(`
         UPDATE chunks SET
-          title = ?, doc_title = ?, content = ?, summary = ?, domain = ?, categories = ?,
+          title = ?, doc_title = ?, document_hash = ?, chunk_index = ?, chunk_count = ?,
+          document_tokens = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
           source_adapter = ?, supersedes = ?, version = ?, derived_from = ?, updated_at = ?,
           synced_at = CASE
@@ -236,7 +280,9 @@ export class LocalStore {
           END
         WHERE id = ?
       `).run(
-        chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null, chunk.domain ?? null,
+        chunk.title, chunk.docTitle ?? null, chunk.documentHash ?? null,
+        chunk.chunkIndex ?? null, chunk.chunkCount ?? null, chunk.documentTokens ?? null,
+        chunk.content, chunk.summary ?? null, chunk.domain ?? null,
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
         chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1,
@@ -248,12 +294,14 @@ export class LocalStore {
     } else {
       this.db.prepare(`
         INSERT INTO chunks (id, title, doc_title, content, summary, domain, categories,
+          document_hash, chunk_index, chunk_count, document_tokens,
           is_public, is_encrypted, local_only, quality_score, source_path, source_adapter,
           supersedes, version, derived_from, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null,
-        chunk.domain ?? null, JSON.stringify(chunk.categories),
+        chunk.domain ?? null, JSON.stringify(chunk.categories), chunk.documentHash ?? null,
+        chunk.chunkIndex ?? null, chunk.chunkCount ?? null, chunk.documentTokens ?? null,
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null,
         chunk.supersedes ?? null, chunk.version ?? 1, chunk.derivedFrom ?? null, now, now,
@@ -267,6 +315,50 @@ export class LocalStore {
     `).run(id, embeddingBuffer);
 
     return id;
+  }
+
+  saveDocument(doc: Omit<StoredDocument, 'createdAt' | 'updatedAt'>): string {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO documents (
+        hash, title, content, is_public, is_encrypted, source_path,
+        source_adapter, version, token_estimate, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hash) DO UPDATE SET
+        title = excluded.title,
+        content = excluded.content,
+        is_public = excluded.is_public,
+        is_encrypted = excluded.is_encrypted,
+        source_path = excluded.source_path,
+        source_adapter = excluded.source_adapter,
+        version = excluded.version,
+        token_estimate = excluded.token_estimate,
+        updated_at = excluded.updated_at
+    `).run(
+      doc.hash, doc.title, doc.content, doc.isPublic ? 1 : 0,
+      doc.isEncrypted ? 1 : 0, doc.sourcePath ?? null, doc.sourceAdapter ?? null,
+      doc.version, doc.tokenEstimate, now, now,
+    );
+    return doc.hash;
+  }
+
+  getDocument(hash: string): StoredDocument | null {
+    const row = this.db.prepare('SELECT * FROM documents WHERE hash = ?').get(hash) as
+      Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      hash: row.hash as string,
+      title: row.title as string,
+      content: row.content as string,
+      isPublic: row.is_public === 1,
+      isEncrypted: row.is_encrypted === 1,
+      sourcePath: row.source_path as string | undefined,
+      sourceAdapter: row.source_adapter as string | undefined,
+      version: (row.version as number) ?? 1,
+      tokenEstimate: (row.token_estimate as number) ?? 0,
+      createdAt: new Date(row.created_at as string),
+      updatedAt: new Date(row.updated_at as string),
+    };
   }
 
   getChunk(id: string): StoredChunk | null {
@@ -410,10 +502,31 @@ export class LocalStore {
 
     scored.sort((a, b) => b.similarity - a.similarity);
 
-    return scored.slice(0, topK).map(({ row, similarity }) => ({
-      ...this.rowToChunk(row),
-      score: similarity,
-    }));
+    const results: SearchResult[] = [];
+    const seenDocuments = new Set<string>();
+    for (const { row, similarity } of scored) {
+      const chunk = this.rowToChunk(row);
+      const identity = chunk.documentHash ?? chunk.id;
+      if (seenDocuments.has(identity)) continue;
+      seenDocuments.add(identity);
+
+      const document = chunk.documentHash ? this.getDocument(chunk.documentHash) : null;
+      results.push({
+        ...chunk,
+        ...(document
+          ? {
+              title: document.title,
+              docTitle: document.title,
+              content: document.content,
+              isPublic: document.isPublic,
+              isEncrypted: document.isEncrypted,
+            }
+          : {}),
+        score: similarity,
+      });
+      if (results.length >= topK) break;
+    }
+    return results;
   }
 
   getEmbedding(chunkId: string): Float32Array | null {
@@ -603,6 +716,10 @@ export class LocalStore {
       // convention: everything before the first ' — ' section separator.
       docTitle: ((row.doc_title as string | null) ?? undefined)
         ?? docTitleFromChunkTitle(row.title as string),
+      documentHash: (row.document_hash as string | null) ?? undefined,
+      chunkIndex: (row.chunk_index as number | null) ?? undefined,
+      chunkCount: (row.chunk_count as number | null) ?? undefined,
+      documentTokens: (row.document_tokens as number | null) ?? undefined,
       content: row.content as string,
       summary: row.summary as string | undefined,
       domain: row.domain as string | undefined,

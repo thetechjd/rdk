@@ -14,7 +14,8 @@ export type InboundCommand =
   | { type: 'command.promote_public'; id: string; data: { chunkId: string } }
   | { type: 'command.delete_chunk';   id: string; data: { chunkId: string } }
   | { type: 'command.vault_list';     id: string; data: Record<string, never> }
-  | { type: 'command.fetch_content';  id: string; data: { chunkIds: string[]; requesterId: string; requesterTeamKeyId: string | null } };
+  | { type: 'command.fetch_content';  id: string; data: { chunkIds: string[]; requesterId: string; requesterTeamKeyId: string | null } }
+  | { type: 'command.fetch_document'; id: string; data: { documentHashes: string[]; requesterId: string; requesterUserId: string | null } };
 
 // Outbound: node → RDK Central
 export type OutboundEvent =

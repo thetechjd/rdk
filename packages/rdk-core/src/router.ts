@@ -31,12 +31,16 @@ export interface NetworkChunk {
    *  that holds it. `chunkId` is Central's row id and means nothing elsewhere.
    *  Absent from older centrals. */
   chunkHash?: string;
+  /** Stable identity of the complete source document. */
+  documentHash?: string;
   nodeId: string;
   providerNodeMcpEndpoint?: string;
   title: string;
   /** The document's own name, when Central knows it. Falls back to splitting
    *  `title` on the section separator. */
   docTitle?: string;
+  /** The section whose embedding caused this complete document to match. */
+  matchedSection?: string;
   summary?: string;
   content?: string;
   /** Central's wire name for live-fetched content: plaintext for public chunks,
