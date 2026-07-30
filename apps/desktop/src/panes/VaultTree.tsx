@@ -1,13 +1,33 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { IndexedDoc, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
+import type { FileState, IndexedDoc, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
 import { useApp } from '../store';
+
+type ExplorerLocation = 'public' | 'private' | 'local' | 'retrieved';
+
+const LOCATIONS: Array<{
+  id: ExplorerLocation;
+  label: string;
+  icon: string;
+  description: string;
+  dropVisibility?: VisibilityChoice;
+}> = [
+  { id: 'public', label: 'Public', icon: '◎', description: 'Published for anyone to retrieve', dropVisibility: 'public' },
+  { id: 'private', label: 'Private', icon: '◆', description: 'Encrypted on the network', dropVisibility: 'private' },
+  { id: 'local', label: 'Local', icon: '⌂', description: 'Only on this device' },
+  { id: 'retrieved', label: 'Retrieved', icon: '⇣', description: 'Documents saved from queries' },
+];
+
+const virtualKey = (location: ExplorerLocation) => `location:${location}`;
 
 export function VaultTree() {
   const app = useApp();
   const [tree, setTree] = useState<VaultTreeData | null>(null);
   const [indexedDocs, setIndexedDocs] = useState<IndexedDoc[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(
+    new Set(LOCATIONS.map(location => virtualKey(location.id))),
+  );
   const [dragOver, setDragOver] = useState(false);
+  const [locationDragOver, setLocationDragOver] = useState<ExplorerLocation | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; node: VaultNode } | null>(null);
   const [naming, setNaming] = useState<{ parentRelPath: string } | null>(null);
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(null);
@@ -23,6 +43,19 @@ export function VaultTree() {
   // private/public network content the on-disk tree can't show (a page indexed
   // from a URL, docs synced before the vault path changed, saved results).
   const networkDocs = indexedDocs.filter(d => !d.inVault && d.chunkIds.length > 0);
+
+  const nodesByLocation = Object.fromEntries(
+    LOCATIONS.map(location => [
+      location.id,
+      filterTreeForLocation(tree?.nodes ?? [], location.id),
+    ]),
+  ) as Record<ExplorerLocation, VaultNode[]>;
+  const docsByLocation = Object.fromEntries(
+    LOCATIONS.map(location => [
+      location.id,
+      networkDocs.filter(doc => locationForIndexedDoc(doc) === location.id),
+    ]),
+  ) as Record<ExplorerLocation, IndexedDoc[]>;
 
   const openDoc = useCallback((doc: IndexedDoc) => {
     app.selectChunk(doc.chunkIds[0]);
@@ -71,6 +104,35 @@ export function VaultTree() {
       : Array.from(e.dataTransfer.files).map(f => window.rdkNative.pathForFile(f)).filter(Boolean);
     askIndex(paths);
   }, [askIndex]);
+
+  const pathsFromDrop = useCallback((e: React.DragEvent): string[] => {
+    const internal = e.dataTransfer.getData('application/x-rdk-path');
+    return internal
+      ? [internal]
+      : Array.from(e.dataTransfer.files)
+          .map(file => window.rdkNative.pathForFile(file))
+          .filter(Boolean);
+  }, []);
+
+  const onLocationDrop = useCallback(async (
+    e: React.DragEvent,
+    visibility?: VisibilityChoice,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setLocationDragOver(null);
+    if (!visibility) return;
+    const paths = pathsFromDrop(e);
+    if (!paths.length) return;
+    app.toast(`Indexing ${paths.length} item(s) as ${visibility}…`);
+    const result = await window.rdk.indexPaths(paths, visibility);
+    app.toast(
+      result.error ? result.error : `Indexed ${result.indexed} chunk(s) — ${visibility}`,
+      !!result.error,
+    );
+    app.refreshData();
+    app.refreshStatus();
+  }, [app, pathsFromDrop]);
 
   const onFileClick = (node: VaultNode) => {
     if (node.chunkIds && node.chunkIds.length > 0) {
@@ -126,37 +188,72 @@ export function VaultTree() {
         onDrop={onDrop}
         onClick={() => { setMenu(null); setVaultMenu(null); }}
       >
-        <div className="tree">
-          {tree?.nodes.length ? (
-            tree.nodes.map(n => (
-              <TreeRow key={n.path} node={n} depth={0} expanded={expanded} toggle={toggle}
-                onFileClick={onFileClick} selectedChunk={app.selectedChunkId} selectedFile={app.selectedFilePath}
-                onContext={(x, y, node) => setMenu({ x, y, node })} />
-            ))
-          ) : (
-            <div className="empty">Vault is empty or not set.<br />Drop files below to index.</div>
-          )}
-        </div>
-
-        {networkDocs.length > 0 && (
-          <div className="indexed-section">
-            <div className="indexed-head" title="Indexed content that isn't a file in this vault folder — private is encrypted on the network, public earns tips. Click to open.">
-              indexed on network · {networkDocs.length}
-            </div>
-            {networkDocs.map(doc => (
-              <div
-                key={doc.key}
-                className={`indexed-row${doc.chunkIds[0] === app.selectedChunkId ? ' selected' : ''}`}
-                onClick={() => openDoc(doc)}
-                title={`${doc.title} — ${doc.chunkCount} chunk${doc.chunkCount === 1 ? '' : 's'} (${doc.state})`}
+        <div className="file-explorer" aria-label="Knowledge file explorer">
+          {LOCATIONS.map(location => {
+            const locationKey = virtualKey(location.id);
+            const isOpen = expanded.has(locationKey);
+            const nodes = nodesByLocation[location.id];
+            const docs = docsByLocation[location.id];
+            const itemCount = countFiles(nodes) + docs.length;
+            const acceptsDrop = !!location.dropVisibility;
+            return (
+              <section
+                className={`explorer-location ${location.id}${locationDragOver === location.id ? ' drop-over' : ''}`}
+                key={location.id}
+                onDragOver={e => {
+                  if (!acceptsDrop) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = 'copy';
+                  setLocationDragOver(location.id);
+                }}
+                onDragLeave={e => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setLocationDragOver(null);
+                }}
+                onDrop={e => onLocationDrop(e, location.dropVisibility)}
               >
-                <span className={`dot ${doc.state}`} />
-                <span className="name">{doc.title}</span>
-                <span className="ct">{doc.chunkCount}</span>
-              </div>
-            ))}
-          </div>
-        )}
+                <button
+                  className="explorer-location-head"
+                  onClick={() => toggle(locationKey)}
+                  title={`${location.description}${acceptsDrop ? ` — drop files here to index as ${location.id}` : ''}`}
+                  aria-expanded={isOpen}
+                >
+                  <span className="location-chevron">{isOpen ? '⌄' : '›'}</span>
+                  <span className="location-icon">{location.icon}</span>
+                  <span className="location-label">{location.label}</span>
+                  {acceptsDrop && <span className="location-drop-hint">drop to index</span>}
+                  <span className="location-count">{itemCount}</span>
+                </button>
+                {isOpen && (
+                  <div className="explorer-location-content">
+                    {nodes.map(node => (
+                      <TreeRow key={node.path} node={node} depth={0} expanded={expanded} toggle={toggle}
+                        onFileClick={onFileClick} selectedChunk={app.selectedChunkId} selectedFile={app.selectedFilePath}
+                        onContext={(x, y, item) => setMenu({ x, y, node: item })} />
+                    ))}
+                    {docs.map(doc => (
+                      <div
+                        key={doc.key}
+                        className={`indexed-row${doc.chunkIds[0] === app.selectedChunkId ? ' selected' : ''}`}
+                        onClick={() => openDoc(doc)}
+                        title={`${doc.title} — ${doc.chunkCount} chunk${doc.chunkCount === 1 ? '' : 's'} (${doc.state})`}
+                      >
+                        <span className={`dot ${doc.state}`} />
+                        <span className="name">{doc.title}</span>
+                        <span className="ct">{doc.chunkCount}</span>
+                      </div>
+                    ))}
+                    {itemCount === 0 && (
+                      <div className="explorer-empty">
+                        {acceptsDrop ? `Drop files here to index as ${location.label.toLowerCase()}.` : 'No files here yet.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+        </div>
 
         <div className={`dropzone${dragOver ? ' over' : ''}`}>
           {dragOver ? 'drop to index (choose private/public)' : 'drag files here to index — or drop from your file manager'}
@@ -190,6 +287,60 @@ export function VaultTree() {
         <IndexChoice count={indexing.paths.length} onChoose={doIndex} onClose={() => setIndexing(null)} />
       )}
     </>
+  );
+}
+
+/** Retrieved is an origin, not a visibility. It gets its own location even when
+ * the saved copy is currently local/private/public. */
+export function isRetrievedPath(filePath?: string): boolean {
+  return !!filePath && filePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .some(part => part.toLowerCase() === 'retrieved');
+}
+
+export function locationForState(state?: FileState): Exclude<ExplorerLocation, 'retrieved'> {
+  if (state === 'public') return 'public';
+  // A mixed document is not wholly public, so keep it in the conservative
+  // Private location until the user resolves its visibility.
+  if (state === 'private' || state === 'mixed') return 'private';
+  return 'local';
+}
+
+export function locationForIndexedDoc(doc: IndexedDoc): ExplorerLocation {
+  return isRetrievedPath(doc.sourcePath) ? 'retrieved' : locationForState(doc.state);
+}
+
+export function filterTreeForLocation(nodes: VaultNode[], location: ExplorerLocation): VaultNode[] {
+  const filterNode = (node: VaultNode): VaultNode | null => {
+    if (node.type === 'file') {
+      const actual = isRetrievedPath(node.relPath)
+        ? 'retrieved'
+        : locationForState(node.state);
+      return actual === location ? node : null;
+    }
+    const children = (node.children ?? [])
+      .map(filterNode)
+      .filter((child): child is VaultNode => child !== null);
+    return children.length ? { ...node, children } : null;
+  };
+  const filtered = nodes.map(filterNode).filter((node): node is VaultNode => node !== null);
+  // The physical vault/Retrieved directory is represented by the permanent
+  // virtual root, so promote its children instead of showing a second,
+  // easy-to-miss disclosure row named Retrieved underneath it.
+  if (location === 'retrieved') {
+    return filtered.flatMap(node =>
+      node.type === 'folder' && node.relPath.toLowerCase() === 'retrieved'
+        ? (node.children ?? [])
+        : [node]);
+  }
+  return filtered;
+}
+
+function countFiles(nodes: VaultNode[]): number {
+  return nodes.reduce(
+    (total, node) => total + (node.type === 'file' ? 1 : countFiles(node.children ?? [])),
+    0,
   );
 }
 
