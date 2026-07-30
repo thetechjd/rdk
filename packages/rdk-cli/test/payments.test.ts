@@ -372,6 +372,23 @@ describe('Checkpoint 14 · CLI top-up via Stripe', () => {
   });
 });
 
+describe('CLI top-up via hosted crypto checkout', () => {
+  it('uses the current browser-handoff contract and preserves the payment ref', async () => {
+    const result = await createTopup(session(), {
+      amountUsd: 25,
+      method: 'cryptocadet',
+    });
+
+    expect(api.last('/api/v1/balances/topup')!.body).toEqual({
+      amountUsd: 25,
+      method: 'cryptocadet',
+      source: 'cli',
+    });
+    expect(result.checkoutUrl).toContain('/dashboard/billing/cryptocadet?ref=');
+    expect(result.paymentId).toBe('pay_crypto_1');
+  });
+});
+
 // ── credit limit & low-balance alert ────────────────────────────────────────
 
 describe('credit limit and low-balance alert', () => {

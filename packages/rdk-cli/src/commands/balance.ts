@@ -229,48 +229,52 @@ export async function topup(
   }
 }
 
-// Crypto top-up: install/init/fund the CryptoCadet signer, mint a quote from RetroDeck,
-// pay it on-chain, then poll verify-topup (which credits the balance).
+// Crypto top-up: hand off to RetroDeck's hosted CryptoCadet checkout, then poll
+// verify-topup (which credits the balance). Dashboard and Desktop use this same
+// contract. The old CLI branch expected an embedded signed quote and tried to
+// drive a separately installed `cryptocadet` binary; the current API returns a
+// checkoutUrl, so that branch received no quote and silently stopped.
 async function topupCrypto(amountUsd: number): Promise<void> {
   const ora = (await import('ora')).default;
-  const { payTopupWithCryptocadet } = await import('./cryptocadet.js');
+  const { openUrl } = await import('../open-url.js');
   const config = loadConfig();
   const session = sessionFromConfig(config.retrodeckApiUrl);
+  const spinner = ora(`Creating crypto checkout to add $${amountUsd.toFixed(2)} USDC...`).start();
 
-  const outcome = await payTopupWithCryptocadet({
-    amountUsd,
-    mintQuote: async () => {
-      try {
-        const result = await createTopup(session, { amountUsd, method: 'cryptocadet' });
-        return (result.cryptocadet as never) ?? null;
-      } catch (e) {
-        console.log(t.warn(`  Server declined the crypto top-up: ${(e as Error).message}`));
-        return null;
-      }
-    },
-  });
+  try {
+    const { checkoutUrl, paymentId } = await createTopup(session, {
+      amountUsd,
+      method: 'cryptocadet',
+    });
+    if (!checkoutUrl) throw new Error('No crypto checkout URL returned');
 
-  // `payTopupWithCryptocadet` reports every business outcome as a value — the
-  // CryptoCadet CLI exits 0 for REFUSED/ESCALATE/FAILED alike, so anything other
-  // than an explicit 'paid' means nothing was broadcast.
-  if (outcome.status !== 'paid') {
-    console.log(t.warn(`  Crypto top-up ${outcome.status}: ${outcome.detail}`));
+    spinner.succeed(`Opening crypto checkout to add $${amountUsd.toFixed(2)} USDC`);
+    openUrl(checkoutUrl);
+    console.log(t.dim(`  If your browser didn't open: ${checkoutUrl}`));
     console.log('');
-    return;
-  }
 
-  const verify = ora('Confirming your on-chain top-up...').start();
-  const result = await pollTopupCredit(session, { ...CRYPTO_POLL });
+    const { pressEnter } = await import('../prompts.js');
+    await pressEnter('Complete the crypto payment in your browser, then press Enter:');
 
-  if (result.completed) {
-    verify.succeed(
-      `Added $${amountUsd.toFixed(2)} USDC — balance is now $${result.balance.toFixed(4)}`,
-    );
-  } else {
-    verify.warn('Payment broadcast — crediting can take a moment to settle.');
-    console.log(t.dim('  Run `rdk balance` shortly; it re-checks any pending top-up.'));
+    const verify = ora('Confirming your on-chain top-up...').start();
+    const result = await pollTopupCredit(session, { ...CRYPTO_POLL, paymentRef: paymentId });
+
+    if (result.completed) {
+      verify.succeed(
+        `Added $${amountUsd.toFixed(2)} USDC — balance is now $${result.balance.toFixed(4)}`,
+      );
+    } else {
+      verify.warn('Payment not confirmed yet — on-chain settlement can take a moment.');
+      console.log(t.dim('  Run `rdk balance` shortly; it re-checks any pending top-up.'));
+    }
+    console.log('');
+  } catch (e) {
+    if (e instanceof RetrodeckAuthError) {
+      spinner.fail('Not logged in to RetroDeck. Run: rdk account:login');
+    } else {
+      spinner.fail((e as Error).message);
+    }
   }
-  console.log('');
 }
 
 // ── `rdk balance:limit` / `rdk balance:alert` ───────────────────────────────

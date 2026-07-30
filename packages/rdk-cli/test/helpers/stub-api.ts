@@ -219,7 +219,13 @@ export function seedHappyPath(api: StubApi): void {
   api.on('/api/v1/balances/topup', (req) => {
     const body = req.body as { method?: string } | undefined;
     if (body?.method === 'cryptocadet') {
-      return { json: { method: 'cryptocadet', checkoutUrl: null, paymentId: 'pay_1', cryptocadet: CRYPTO_TOPUP } };
+      return {
+        json: {
+          method: 'cryptocadet',
+          checkoutUrl: 'https://dashboard.retrodeck.ai/dashboard/billing/cryptocadet?ref=pay_crypto_1',
+          paymentId: 'pay_crypto_1',
+        },
+      };
     }
     return {
       json: {

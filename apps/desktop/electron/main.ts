@@ -169,6 +169,7 @@ function registerHandlers(): void {
     createTopup: (amountUsd: never, method: never) => service.createTopup(amountUsd, method),
     verifyTopup: (paymentRef: never) => service.verifyTopup(paymentRef),
     getWithdrawalStatus: () => service.getWithdrawalStatus(),
+    getWallets: () => service.getWallets(),
     requestWithdrawal: async (amountUsdc: never, walletAddress: never, walletChain: never) => {
       const r = await service.requestWithdrawal(amountUsdc, walletAddress, walletChain);
       // The balance changed the moment this was accepted — refresh so the UI

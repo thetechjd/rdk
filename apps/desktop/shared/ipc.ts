@@ -312,6 +312,13 @@ export interface WithdrawalView {
   completedAt: string | null;
 }
 
+export interface AccountWallet {
+  id: string;
+  address: string;
+  chain: string;
+  isPrimary: boolean;
+}
+
 export interface Preferences {
   defaultVisibility: VisibilityChoice;
   autoStartOnBoot: boolean;
@@ -430,6 +437,7 @@ export interface RdkApi {
   /** Whether the server can settle a payout right now, and on which chain.
    *  Ask before offering to withdraw — a request debits the balance at once. */
   getWithdrawalStatus(): Promise<{ enabled: boolean; chain: string; reason?: string }>;
+  getWallets(): Promise<AccountWallet[]>;
   /** Withdraw to the configured wallet. Settlement is asynchronous: an `ok`
    *  here means accepted and debited, NOT that funds have arrived. */
   requestWithdrawal(amountUsdc: number, walletAddress: string, walletChain: string): Promise<{ ok: boolean; withdrawalId?: string; chain?: string; error?: string }>;
@@ -460,6 +468,6 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
   'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',
   'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
-  'getWithdrawalStatus', 'requestWithdrawal', 'getWithdrawals',
+  'getWithdrawalStatus', 'getWallets', 'requestWithdrawal', 'getWithdrawals',
   'getMcpInfo', 'getPreferences', 'setPreferences', 'openExternal',
 ];

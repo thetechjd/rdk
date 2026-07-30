@@ -115,7 +115,7 @@ function Titlebar() {
 }
 
 function Tabs() {
-  const { tabs, activeTabId, setActiveTab, closeTab, setSettingsOpen } = useApp();
+  const { tabs, activeTabId, setActiveTab, closeTab, openEarnings, setSettingsOpen } = useApp();
   return (
     <div className="tabs">
       {tabs.map(t => (
@@ -127,6 +127,9 @@ function Tabs() {
         </div>
       ))}
       <div className="spacer" style={{ flex: 1 }} />
+      {/* Withdraw existed, but only inside an Earnings tab with no way to open
+          it. Money controls must be visible navigation, not unreachable code. */}
+      <div className="tab" onClick={openEarnings} title="Earnings and withdrawals">◎ earnings / withdraw</div>
       <div className="tab" onClick={() => setSettingsOpen(true)} title="Settings">⚙ settings</div>
     </div>
   );

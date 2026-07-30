@@ -338,6 +338,26 @@ export interface WithdrawalRecord {
   completedAt: string | null;
 }
 
+export interface AccountWallet {
+  id: string;
+  address: string;
+  chain: string;
+  isPrimary: boolean;
+}
+
+/** Payout destinations belong to the account, not this machine's config. */
+export async function getWallets(): Promise<AccountWallet[]> {
+  const res = await retrodeckFetch('/api/v1/wallets/me');
+  if (!res.ok) throw new Error(`Could not fetch wallets (HTTP ${res.status})`);
+  const rows = (await res.json()) as Array<Record<string, unknown>>;
+  return (Array.isArray(rows) ? rows : []).map((r) => ({
+    id: String(r.id),
+    address: String(r.address ?? ''),
+    chain: String(r.chain ?? 'base'),
+    isPrimary: Boolean(r.is_primary ?? r.isPrimary),
+  }));
+}
+
 /** Whether this server can settle a payout right now. Requesting a withdrawal
  *  debits the balance immediately, so ask before offering the action. */
 export async function getWithdrawalStatus(): Promise<WithdrawalStatus> {

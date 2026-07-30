@@ -1234,6 +1234,14 @@ export class NodeService {
     }
   }
 
+  async getWallets(): Promise<import('../shared/ipc').AccountWallet[]> {
+    try {
+      return await retrodeck.getWallets();
+    } catch {
+      return [];
+    }
+  }
+
   async requestWithdrawal(
     amountUsdc: number,
     walletAddress: string,

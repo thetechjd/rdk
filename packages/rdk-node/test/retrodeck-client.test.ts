@@ -5,6 +5,7 @@ import {
   RETRODECK_DEFAULT_URL,
   createTopup,
   dashboardUrl,
+  getWallets,
   login,
   selectPlan,
   verifySubscription,
@@ -199,6 +200,31 @@ describe('createTopup', () => {
 
     expect(captured[0].body).toMatchObject({ method: 'cryptocadet', source: 'desktop' });
     expect(res.checkoutUrl).toContain('/dashboard/billing/cryptocadet');
+  });
+});
+
+describe('getWallets', () => {
+  it('loads account payout destinations and maps the primary wallet', async () => {
+    respond({
+      status: 200,
+      json: [{
+        id: 'wallet-1',
+        address: '0x1111111111111111111111111111111111111111',
+        chain: 'base',
+        is_primary: true,
+      }],
+    });
+
+    await expect(getWallets()).resolves.toEqual([{
+      id: 'wallet-1',
+      address: '0x1111111111111111111111111111111111111111',
+      chain: 'base',
+      isPrimary: true,
+    }]);
+    expect(captured[0]).toMatchObject({
+      url: `${API}/api/v1/wallets/me`,
+      method: 'GET',
+    });
   });
 });
 
