@@ -120,6 +120,20 @@ function docName(title: string): string {
   return (title.split(' — ')[0] ?? title).toLowerCase();
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function isExactDocumentName(query: string, title: string): boolean {
+  return normalizeSearchText(query) === normalizeSearchText(docName(title));
+}
+
 /**
  * Rank candidates by vector score plus how distinctively their NAME matches the
  * query, weighting each term by how rare it is among the candidates (IDF).
@@ -145,14 +159,29 @@ function rerank<T extends { title: string; score: number }>(query: string, items
   };
   const weights = new Map(terms.map(t => [t, idf(t)]));
   const total = terms.reduce((s, t) => s + (weights.get(t) ?? 0), 0);
-  if (total <= 0) return items; // every term is uninformative here
+  if (total <= 0) {
+    // A one-item candidate set makes every term's IDF zero, but an exact name
+    // is still exact. Preserve score order for everything else.
+    return [...items].sort(
+      (a, b) => Number(isExactDocumentName(query, b.title))
+        - Number(isExactDocumentName(query, a.title)),
+    );
+  }
 
   return items
     .map((item, i) => {
       const matched = terms
         .filter(t => names[i].includes(t))
         .reduce((s, t) => s + (weights.get(t) ?? 0), 0);
-      return { item, rank: item.score + 0.35 * (matched / total) };
+      return {
+        item,
+        // Identical normalized document names are definitive. Embeddings and
+        // corpus-relative boosts must never demote "slack clone" below a
+        // differently named document for the query "slack clone".
+        rank: isExactDocumentName(query, item.title)
+          ? 2
+          : item.score + 0.35 * (matched / total),
+      };
     })
     .sort((a, b) => b.rank - a.rank)
     .map(x => x.item);
@@ -178,8 +207,11 @@ export class RDKRouter {
     // here is theirs: answered locally, free, no network round-trip. (Previously
     // privateOnly=true hid own public chunks, forcing a charged network fetch
     // for content the user had sitting on disk.)
-    const rawPrivateResults = cfg.localStore.search(embedding, topK, false);
-    const privateResults = rawPrivateResults.map(chunk => {
+    // Pull a wider local candidate pool for the same reason we do on Central:
+    // title-aware reranking cannot rescue an exact-name document that vector
+    // ordering already cut out of a topK-sized result set.
+    const rawPrivateResults = cfg.localStore.search(embedding, Math.max(20, topK * 4), false);
+    const decryptedPrivateResults = rawPrivateResults.map(chunk => {
       if (!chunk.isEncrypted || !cfg.vaultKey) return chunk;
       try {
         return { ...chunk, content: decrypt(chunk.content, cfg.vaultKey) };
@@ -187,9 +219,18 @@ export class RDKRouter {
         return { ...chunk, content: '[encrypted — cannot decrypt]' };
       }
     });
+    const privateResults = rerank(userQuery, decryptedPrivateResults).slice(0, topK);
     const bestPrivate = privateResults[0];
+    const exactPrivateTitle = !!bestPrivate && isExactDocumentName(userQuery, bestPrivate.title);
 
-    if (bestPrivate && bestPrivate.score >= minSim) {
+    // A weak local semantic resemblance is a fallback, not a veto on searching
+    // the public network. Desktop onboarding often indexes a few generic notes;
+    // one scoring 0.25 used to stop here with "nothing matched confidently" and
+    // Central never got the chance to return the exact Slack spec. Only a
+    // genuinely confident local result or an exact document-name match wins
+    // before the network step.
+    if (bestPrivate && bestPrivate.score >= minSim
+      && (bestPrivate.score >= CONFIDENT_MATCH || exactPrivateTitle)) {
       const matched = privateResults.filter(r => r.score >= minSim);
       const context = assembleContext(matched);
       const latencyMs = Date.now() - start;
@@ -204,11 +245,6 @@ export class RDKRouter {
         tokenEstimate: estimateTokens(context),
         tipsPaid: [],
         latencyMs,
-        // Above the noise floor but below a confident match: worth showing,
-        // worth hedging about. Lowering the floor moved these results out of
-        // the step-4 near-miss path and onto this one, so the hedge has to
-        // live here too or a 0.3 match would be presented as a firm answer.
-        ...(bestPrivate.score < CONFIDENT_MATCH ? { lowConfidence: true } : {}),
       };
     }
 

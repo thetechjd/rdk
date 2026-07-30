@@ -167,6 +167,45 @@ describe('RDKRouter local fallback', () => {
     expect(result.context).toContain('close enough to show');
   });
 
+  it('searches the network before showing a low-confidence local guess', async () => {
+    globalThis.fetch = mockCentral(200, {
+      results: [networkChunk({
+        title: 'Slack clone',
+        score: 1,
+        contentEncrypted: '# Slack clone\n\nThe requested complete specification.',
+        available: true,
+      })],
+      queryId: 'q',
+      settledByCentral: true,
+    }) as never;
+
+    const result = await router(fakeStore([{
+      title: 'Welcome to RDK',
+      score: 0.31,
+      content: 'A generic onboarding note that is only vaguely similar.',
+    }])).query('slack clone');
+
+    expect(result.source).toBe('network');
+    expect(result.chunks[0]).toMatchObject({ title: 'Slack clone' });
+    expect(result.context).toContain('requested complete specification');
+  });
+
+  it('treats an exact local document name as definitive even with a weak vector score', async () => {
+    const fetchSpy = mockCentral(200, { results: [], queryId: 'q' });
+    globalThis.fetch = fetchSpy as never;
+
+    const result = await router(fakeStore([{
+      title: 'slack-clone',
+      score: 0.3,
+      content: 'My local Slack specification.',
+    }])).query('slack clone');
+
+    expect(result.source).toBe('private');
+    expect(result.lowConfidence).toBeUndefined();
+    expect(result.context).toContain('My local Slack specification');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('still reports nothing when the best local match is noise', async () => {
     globalThis.fetch = mockCentral(200, { results: [], queryId: 'q' }) as never;
 
