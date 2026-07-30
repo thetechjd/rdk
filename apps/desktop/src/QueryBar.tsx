@@ -147,8 +147,14 @@ export function QueryBar() {
                   key={i}
                   className="palette-hit"
                   onClick={() => {
-                    app.selectChunk(h.chunkId);
-                    app.openContentForChunk(h.chunkId, h.title);
+                    if (h.filePath) {
+                      // The chunk identified why the document matched; it is
+                      // not the content unit the user asked to read.
+                      app.openContentForFile(h.filePath, h.title);
+                    } else {
+                      app.selectChunk(h.chunkId);
+                      app.openContentForChunk(h.chunkId, h.title);
+                    }
                     app.setPaletteOpen(false);
                   }}
                 >

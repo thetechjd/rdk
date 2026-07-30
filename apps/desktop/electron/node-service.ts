@@ -765,11 +765,15 @@ export class NodeService {
     const cfg = this.getConfig();
     const result = await this.getRouter().query(q);
     const nodeId = cfg?.nodeId;
-    const hits = result.chunks.map((c) => {
+    const rawHits = result.chunks.map((c) => {
       const isNetwork = 'chunkId' in c;
       const chunkId = isNetwork ? (c as { chunkId: string }).chunkId : (c as { id: string }).id;
       const providerNode = isNetwork ? (c as { nodeId: string }).nodeId : (nodeId ?? 'you');
       const content = (c as { content?: string }).content ?? (c as { summary?: string }).summary ?? '';
+      const localChunk = isNetwork ? undefined : c as StoredChunk;
+      const filePath = localChunk?.sourcePath && fs.existsSync(localChunk.sourcePath)
+        ? localChunk.sourcePath
+        : undefined;
       // Own content is never charged/tipped: prefer central's account-level
       // isOwn flag (covers the user's OTHER linked nodes too), fall back to a
       // node-id comparison for older centrals.
@@ -778,7 +782,10 @@ export class NodeService {
         || providerNode === nodeId;
       return {
         chunkId,
-        title: (c as { title: string }).title,
+        filePath,
+        // Chunks are invisible search-index windows. Present the source
+        // document name, not "Slack clone — section 2.1".
+        title: localChunk?.docTitle ?? (c as { title: string }).title,
         snippet: content.slice(0, 240),
         score: (c as { score: number }).score,
         sourceNode: isNetwork ? providerNode : 'you',
@@ -786,6 +793,17 @@ export class NodeService {
         tipUsdc: isOwn ? 0 : isNetwork ? (c as { tipAmountUsdc?: number }).tipAmountUsdc ?? 0 : 0,
       };
     });
+    // A local document can contribute several matching search windows. Show it
+    // once and keep its strongest match; otherwise the chooser itself still
+    // looks fragmented even though every row opens the same complete file.
+    const hits = result.source === 'private'
+      ? [...rawHits.reduce((byDocument, hit) => {
+          const key = hit.filePath ?? hit.chunkId;
+          const existing = byDocument.get(key);
+          if (!existing || hit.score > existing.score) byDocument.set(key, hit);
+          return byDocument;
+        }, new Map<string, typeof rawHits[number]>()).values()]
+      : rawHits;
     // Network results become documents, saved into the vault so the answer
     // outlives the query that fetched it. Previously the desktop fetched the
     // content, paid the tip, and then discarded it: clicking a network result

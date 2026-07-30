@@ -149,6 +149,9 @@ export interface GraphData {
 
 export interface QueryHit {
   chunkId: string;
+  /** Complete backing file for local results. A chunk is only the search index;
+   *  when this exists the editor must open the file, never the fragment. */
+  filePath?: string;
   title: string;
   snippet: string;
   score: number;
