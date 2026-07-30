@@ -189,10 +189,18 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
   padding: 0 14px; height: 32px; cursor: pointer;
   font-size: var(--fs-sm); color: var(--phosphor-dim);
   border-right: 1px solid var(--border);
+  min-width: 0;
+  max-width: 240px;
+}
+.tab > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tab:hover { color: var(--text-bright); }
 .tab.active { color: var(--text-bright); background: var(--bg-deep); border-bottom: 1px solid var(--bg-deep); }
-.tab .close { color: var(--muted); margin-left: 4px; }
+.tab .close { color: var(--muted); margin-left: 4px; flex: 0 0 auto; }
 .tab .close:hover { color: var(--danger); }
 
 /* ── Finder-style knowledge file explorer ─────────────────────────────────── */
