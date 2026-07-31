@@ -472,7 +472,8 @@ export class LocalStore {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
       WHERE is_public = 1 AND synced_at IS NULL AND local_only = 0
-      ORDER BY created_at ASC
+        AND superseded_at IS NULL
+      ORDER BY created_at DESC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
     return rows.map(r => this.rowToChunk(r));
@@ -778,7 +779,8 @@ export class LocalStore {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
       WHERE is_public = 0 AND is_encrypted = 1 AND synced_at IS NULL AND local_only = 0
-      ORDER BY created_at ASC
+        AND superseded_at IS NULL
+      ORDER BY created_at DESC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
     return rows.map(r => this.rowToChunk(r));
@@ -794,7 +796,11 @@ export class LocalStore {
     const rows = this.db.prepare(`
       SELECT * FROM chunks
       WHERE synced_at IS NULL AND local_only = 0
-      ORDER BY created_at ASC
+        AND superseded_at IS NULL
+      -- A just-published document must not sit behind years of private import
+      -- backlog. Public first, newest first makes "index and sync" refer to the
+      -- document the user just acted on.
+      ORDER BY is_public DESC, created_at DESC
       LIMIT ?
     `).all(limit) as Record<string, unknown>[];
     return rows.map(r => this.rowToChunk(r));

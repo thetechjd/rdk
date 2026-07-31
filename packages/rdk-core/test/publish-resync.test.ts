@@ -81,6 +81,21 @@ describe('the sync queue only sees re-queued chunks', () => {
     // Old UPDATE omitted synced_at, so it survived the publish.
     expect(isQueued({ isPublic: true, isLocalOnly: false, syncedAt: SYNCED })).toBe(false);
   });
+
+  it('prioritizes the newest public content over an old private backlog', () => {
+    const rows = [
+      { id: 'old-private', isPublic: false, createdAt: '2025-01-01', supersededAt: null },
+      { id: 'new-public', isPublic: true, createdAt: '2026-07-31', supersededAt: null },
+      { id: 'dead-public', isPublic: true, createdAt: '2026-08-01', supersededAt: '2026-08-02' },
+    ];
+    const queue = rows
+      .filter((row) => row.supersededAt === null)
+      .sort((a, b) =>
+        Number(b.isPublic) - Number(a.isPublic)
+        || b.createdAt.localeCompare(a.createdAt));
+
+    expect(queue.map((row) => row.id)).toEqual(['new-public', 'old-private']);
+  });
 });
 
 /**
