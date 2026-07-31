@@ -19,6 +19,7 @@ import { requireDeps } from '../require-dep.js';
 import { t } from '../theme.js';
 import type { NetworkChunk, QueryResult, RetrievedDocument } from '@rdk/core';
 import type { SearchResult } from '@rdk/core';
+import { select } from '../prompts.js';
 
 export async function unifiedQuery(
   query: string,
@@ -58,7 +59,12 @@ export async function unifiedQuery(
     // socket even our own published chunks come back unavailable and get
     // skipped. Defers to `rdk mcp:serve` when that already owns the connection.
     const { withWsConnection } = await import('@rdk/node/ws/ownership');
-    const result: QueryResult = await withWsConnection(() => router.query(query));
+    // Match Desktop's two-phase query contract. Phase one returns free
+    // title/summary previews only; Central neither fetches provider content nor
+    // settles a tip until the user explicitly chooses a document.
+    let result: QueryResult = await withWsConnection(() =>
+      router.query(query, { networkPreviewOnly: true }),
+    );
     spinner.stop();
 
     if (result.chunks.length === 0) {
@@ -88,6 +94,42 @@ export async function unifiedQuery(
       return;
     }
 
+    const previews = groupIntoDocuments(result.chunks as NetworkChunk[]);
+    if (previews.length === 0) { reportUnavailable(result); return; }
+
+    console.log(t.heading(`\n${previews.length} documents matched "${query}"\n`));
+    const selectedChunkId = await select({
+      message: 'Choose a document to retrieve:',
+      choices: previews.map((doc) => {
+        const representative = [...doc.sections].sort((a, b) => b.score - a.score)[0];
+        const ownership = doc.isOwn ? 'yours · free' : doc.tipUsdc > 0
+          ? `tip $${doc.tipUsdc.toFixed(4)}`
+          : 'free';
+        const preview = representative?.content?.trim() || 'No preview available';
+        return {
+          name: doc.name,
+          value: representative.chunkId,
+          hint: `${(doc.score * 100).toFixed(0)}% · ${doc.sections.length} section(s) · ${ownership}\n` +
+            `      ${preview.replace(/\s+/g, ' ').slice(0, 140)}${preview.length > 140 ? '…' : ''}`,
+        };
+      }),
+      default: previews[0].sections[0]!.chunkId,
+      footer: 'Content is retrieved and any tip is charged only after you select.',
+    });
+
+    const retrieveSpinner = ora('Retrieving the selected document...').start();
+    result = await withWsConnection(() =>
+      router.query(query, { selectedNetworkChunkId: selectedChunkId }),
+    );
+    retrieveSpinner.stop();
+
+    if (result.chunks.length === 0) {
+      if (result.networkError) console.log(t.warn(`Couldn't retrieve that document: ${result.networkError}`));
+      else console.log(t.warn('That document could not be retrieved.'));
+      reportUnavailable(result);
+      return;
+    }
+
     const documents = groupIntoDocuments(result.chunks as NetworkChunk[]);
     if (documents.length === 0) { reportUnavailable(result); printLocal(result, query, config.nodeId); return; }
 
@@ -104,34 +146,9 @@ export async function unifiedQuery(
       ? documents.map(() => undefined)
       : await saveDocuments(documents, query, config, localStore, embeddingModel);
 
-    if (documents.length === 1) {
-      // One document matched — that IS the answer. Print it, don't ask.
-      printDocument(documents[0], query, saved[0]);
-    } else {
-      // Several documents matched. Show what each one is and where it went,
-      // rather than interleaving their sections into an unreadable stream.
-      console.log(t.heading(`\n${documents.length} documents matched "${query}"\n`));
-      documents.forEach((doc, i) => {
-        console.log(
-          t.bold(`[${i + 1}] ${doc.name}`) +
-          t.dim(`  (${(doc.score * 100).toFixed(0)}% · ${doc.sections.length} section(s) · ` +
-            `${doc.isOwn ? 'yours · free' : doc.tipUsdc > 0 ? `tip $${doc.tipUsdc.toFixed(4)}` : 'free'}` +
-            `${doc.contentAvailable ? '' : ' · summary only'})`),
-        );
-        const best = [...doc.sections].sort((a, b) => b.score - a.score)[0];
-        const lead = best?.content.trim().split('\n').find(l => l.trim() && !l.startsWith('#'));
-        if (lead) console.log(t.body(`    ${lead.slice(0, 160)}${lead.length > 160 ? '…' : ''}`));
-        if (saved[i]) console.log(t.dim(`    saved → ${saved[i]}`));
-        console.log('');
-      });
-      const savedCount = saved.filter(Boolean).length;
-      if (savedCount > 0) {
-        const allSummaries = documents.every(d => !d.contentAvailable);
-        console.log(t.dim(allSummaries
-          ? `Open any of the ${savedCount} saved file(s) to read what was returned.`
-          : `Open any of the ${savedCount} saved file(s) to read the whole document.`));
-      }
-    }
+    // A selected result resolves to one complete document. If an older Central
+    // returns more than one, print only the selected document group.
+    printDocument(documents[0], query, saved[0]);
 
     if (result.tipsPaid.length > 0) {
       const total = result.tipsPaid.reduce((s, p) => s + p.amountUsdc, 0);
@@ -153,7 +170,7 @@ export async function unifiedQuery(
 async function saveDocuments(
   documents: RetrievedDocument[],
   query: string,
-  config: { vaultPath?: string; nodeId?: string },
+  config: { vaultPath?: string; nodeId?: string; domain?: string },
   localStore: import('@rdk/core').LocalStore,
   embeddingModel: import('@rdk/core').EmbeddingModel,
 ): Promise<(string | undefined)[]> {
@@ -161,7 +178,11 @@ async function saveDocuments(
 
   const { saveRetrievedDocument } = await import('@rdk/node/save-retrieved');
   const { RDKIndexer } = await import('@rdk/core');
-  const indexer = new RDKIndexer({ localStore, embeddingModel });
+  const indexer = new RDKIndexer({
+    localStore,
+    embeddingModel,
+    domain: config.domain ?? 'general',
+  });
   const paths: (string | undefined)[] = [];
 
   for (const doc of documents) {
