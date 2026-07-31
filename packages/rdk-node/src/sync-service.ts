@@ -14,6 +14,8 @@ export interface SyncConfig {
   centralApiKey: string;
   /** Progress/diagnostic sink. Defaults to console.error. */
   log?: (message: string) => void;
+  /** Called after a sync attempt completes without throwing. */
+  onComplete?: (result: { synced: number; errors: number }) => void;
 }
 
 /** Response shape of POST /api/v1/chunks/sync (fields optional for old centrals). */
@@ -73,11 +75,20 @@ export class SyncService {
   }
 
   async syncOnce(): Promise<{ synced: number; errors: number }> {
-    if (this.syncing) return { synced: 0, errors: 0 };
+    // Do not pretend a concurrent request synced zero chunks. Indexing often
+    // lands while the startup sync is still running; queue one pass behind it
+    // so the newly-created rows are pushed before the indexing call completes.
+    if (this.syncing) {
+      while (this.syncing) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
+      return this.syncOnce();
+    }
     this.syncing = true;
 
     let synced = 0;
     let errors = 0;
+    let failed = false;
 
     try {
       // Public AND private chunks sync (embedding + metadata); only content stays on-node.
@@ -181,8 +192,12 @@ export class SyncService {
           errors += batch.length;
         }
       }
+    } catch (error) {
+      failed = true;
+      throw error;
     } finally {
       this.syncing = false;
+      if (!failed) this.config.onComplete?.({ synced, errors });
     }
 
     return { synced, errors };

@@ -71,7 +71,10 @@ function Shell() {
       {app.paletteOpen && <QueryBar />}
       {app.settingsOpen && <Settings />}
       {app.currentToast && (
-        <div className={`toast${app.currentToast.error ? ' error' : ''}`}>{app.currentToast.text}</div>
+        <div className={`toast${app.currentToast.error ? ' error' : ''}${app.currentToast.busy ? ' busy' : ''}`}>
+          {app.currentToast.busy && <span className="toast-spinner" aria-hidden="true" />}
+          {app.currentToast.text}
+        </div>
       )}
     </div>
   );

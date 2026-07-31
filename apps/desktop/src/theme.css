@@ -553,3 +553,5 @@ input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--g
 @keyframes spin { to { transform: rotate(360deg); } }
 .toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 3000; background: var(--bg-elev); border: 1px solid var(--border-bright); padding: 10px 18px; font-size: var(--fs-sm); color: var(--text-bright); }
 .toast.error { border-color: var(--danger); color: var(--danger); }
+.toast.busy { display: flex; align-items: center; gap: 9px; }
+.toast-spinner { width: 13px; height: 13px; border: 2px solid var(--border-bright); border-top-color: var(--phosphor); border-radius: 50%; animation: spin .8s linear infinite; }

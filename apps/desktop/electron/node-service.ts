@@ -78,6 +78,9 @@ export class NodeService {
   private serving = false;
   /** Background sync loop (from @rdk/node) — runs while the node is "serving". */
   private syncService: SyncService | null = null;
+  /** Most recent successful Central sync attempt, including a no-op when
+   * everything was already current. */
+  private lastSyncAt?: string;
   /** The Central WebSocket. Syncing embeddings is not enough to be "serving":
    *  content stays on this machine, so Central can only answer a query with our
    *  chunks while this socket is up. Without it our content is silently skipped
@@ -411,6 +414,15 @@ export class NodeService {
       } catch (e) {
         errors.push(`${path.basename(file)}: ${(e as Error).message}`);
       }
+    }
+
+    // A public document that exists only in SQLite cannot answer a network
+    // query. Push it before reporting indexing complete so "Indexed" means the
+    // document is actually discoverable, rather than "it may appear in five
+    // minutes." Private metadata follows the same consistency rule.
+    if (indexed > 0 && errors.length === 0) {
+      const sync = await this.forceSync();
+      if (!sync.ok) errors.push(`Network sync: ${sync.error ?? 'failed'}`);
     }
     return { indexed, error: errors.length ? errors.slice(0, 3).join('; ') : undefined };
   }
@@ -949,7 +961,7 @@ export class NodeService {
       // "node idle" told the user nothing and offered nothing to do about it.
       notServingReason: wsConnected || heldByService ? undefined : this.notServingReason ?? undefined,
       nodeId: cfg?.nodeId,
-      lastSyncAt: undefined,
+      lastSyncAt: this.lastSyncAt,
       chunkCount: stats.totalChunks,
       publicChunks: stats.publicChunks,
       privateChunks: stats.privateChunks,
@@ -1011,6 +1023,9 @@ export class NodeService {
           centralApiUrl: cfg.centralApiUrl,
           centralApiKey: cfg.apiKey,
           log: () => {}, // diagnostics surface via getStatus / push events, not stderr
+          onComplete: ({ errors }) => {
+            if (errors === 0) this.lastSyncAt = new Date().toISOString();
+          },
         },
         this.getStore(),
       );
@@ -1061,6 +1076,9 @@ export class NodeService {
       if (result.errors > 0) {
         return { ok: false, error: `Sync completed with ${result.errors} rejected chunk(s).` };
       }
+      // centralClient() can create a one-shot SyncService without the callback
+      // installed on the background service.
+      this.lastSyncAt = new Date().toISOString();
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e as Error).message };

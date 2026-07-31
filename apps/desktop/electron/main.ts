@@ -110,7 +110,19 @@ function registerHandlers(): void {
     // vault
     getVaultTree: () => service.getVaultTree(),
     getIndexedDocuments: () => service.getIndexedDocuments(),
-    indexPaths: (paths: never, visibility: never) => service.indexPaths(paths, visibility),
+    indexPaths: async (paths: never, visibility: never) => {
+      push({ type: 'sync-progress', done: 0, total: 1, message: 'Indexing and syncing…' });
+      const result = await service.indexPaths(paths, visibility);
+      push({
+        type: 'sync-progress',
+        done: 1,
+        total: 1,
+        message: result.error ? 'Indexing or sync failed' : `Indexed and synced ${result.indexed} chunk(s)`,
+      });
+      push({ type: 'status', status: service.getStatus() });
+      push({ type: 'vault-changed' });
+      return result;
+    },
     reindex: () => service.reindex(),
     setFolderPublic: (relPath: never, isPublic: never) => {
       service.setFolderPublic(relPath, isPublic);

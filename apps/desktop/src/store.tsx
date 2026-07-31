@@ -16,7 +16,7 @@ export interface Tab {
   location?: ExplorerLocation;
 }
 
-interface ToastMsg { text: string; error?: boolean }
+interface ToastMsg { text: string; error?: boolean; busy?: boolean }
 
 interface AppState {
   status: NodeStatus | null;
@@ -54,7 +54,7 @@ interface AppState {
   setSettingsOpen(v: boolean): void;
   refreshData(): void;
   refreshStatus(): void;
-  toast(text: string, error?: boolean): void;
+  toast(text: string, error?: boolean, busy?: boolean): void;
   currentToast: ToastMsg | null;
 }
 
@@ -78,9 +78,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const refreshStatus = useCallback(() => { window.rdk.getStatus().then(setStatus).catch(() => {}); }, []);
   const refreshData = useCallback(() => setDataVersion(v => v + 1), []);
-  const toast = useCallback((text: string, error?: boolean) => {
-    setCurrentToast({ text, error });
-    setTimeout(() => setCurrentToast(null), 3200);
+  const toastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toast = useCallback((text: string, error?: boolean, busy?: boolean) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setCurrentToast({ text, error, busy });
+    toastTimer.current = busy
+      ? null
+      : setTimeout(() => setCurrentToast(null), 3200);
   }, []);
 
   useEffect(() => {
@@ -93,11 +97,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         case 'vault-changed': setDataVersion(v => v + 1); break;
         case 'retrieval': setDataVersion(v => v + 1); break;
         case 'tip-earned': setDataVersion(v => v + 1); refreshStatus(); break;
-        case 'sync-progress': if (e.message) setCurrentToast({ text: e.message }); break;
+        case 'sync-progress':
+          if (e.message) toast(e.message, false, e.done < e.total);
+          break;
       }
     });
     return off;
-  }, [refreshStatus]);
+  }, [refreshStatus, toast]);
 
   const openTab = useCallback((tab: Tab) => {
     setTabs(prev => (prev.some(t => t.id === tab.id) ? prev : [...prev, tab]));
