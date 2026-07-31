@@ -56,6 +56,15 @@ export interface IndexerConfig {
 
 export type { IndexResult };
 
+/** Document-scoped identity for an internal search window. */
+export function chunkIdentity(documentHash: string, text: string): string {
+  return crypto.createHash('sha256')
+    .update(documentHash)
+    .update('\0')
+    .update(text)
+    .digest('hex');
+}
+
 export interface LLMSummarizer {
   summarize(text: string, opts: { instruction: string }): Promise<string>;
 }
@@ -71,6 +80,7 @@ export class RDKIndexer {
     const allCategories: string[][] = [];
     let chunksIndexed = 0;
     let chunksSkipped = 0;
+    const indexedChunkIds: string[] = [];
 
     try {
       // 0. Settle on what this document is called. Derived from the ORIGINAL
@@ -119,7 +129,13 @@ export class RDKIndexer {
       // 3. Process each chunk
       for (const chunk of chunks) {
         try {
-          const chunkId = crypto.createHash('sha256').update(chunk.text).digest('hex');
+          // A search window belongs to a document. Hashing only its text made
+          // generic sections ("Authentication", "Deployment") from unrelated
+          // clone specs collide globally; Central then kept the first title and
+          // silently treated MetaMask sections as an older Slack/Ethereum row.
+          // Scope identity to the authoritative document while retaining
+          // content-addressing and verbatim-document deduplication.
+          const chunkId = chunkIdentity(documentHash, chunk.text);
 
           // Pre-score: skip low-density chunks
           const density = scoreInformationDensity(chunk.text);
@@ -192,6 +208,7 @@ export class RDKIndexer {
           }, embedding);
 
           this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });
+          indexedChunkIds.push(chunkId);
           chunksIndexed++;
         } catch (e) {
           errors.push(`Chunk ${chunk.index}: ${(e as Error).message}`);
@@ -202,7 +219,7 @@ export class RDKIndexer {
       //    Content (public plaintext or private ciphertext) stays on this node and
       //    is served to Central on demand via the fetch_content handler.
       if (!doc.localOnly && this.config.syncToNetwork && this.config.centralApiUrl && this.config.centralApiKey) {
-        await this.syncTocentral(doc.isPublic ?? false);
+        await this.syncTocentral(indexedChunkIds);
       }
     } catch (e) {
       errors.push(`Fatal: ${(e as Error).message}`);
@@ -231,10 +248,12 @@ export class RDKIndexer {
     return buildChunkTitle(docTitle, chunk.headings);
   }
 
-  private async syncTocentral(isPublicDoc: boolean): Promise<void> {
-    const unsynced = isPublicDoc
-      ? this.config.localStore.getUnsyncedPublicChunks(100)
-      : this.config.localStore.getUnsyncedEncryptedChunks(100);
+  private async syncTocentral(indexedChunkIds: string[]): Promise<void> {
+    // Synchronize THIS indexing operation, not an arbitrary queue page. A new
+    // publication must never disappear behind thousands of old imports.
+    const unsynced = [...new Set(indexedChunkIds)]
+      .map((id) => this.config.localStore.getChunk(id))
+      .filter((chunk): chunk is NonNullable<typeof chunk> => !!chunk && !chunk.isLocalOnly);
 
     if (unsynced.length === 0) return;
 
@@ -271,13 +290,28 @@ export class RDKIndexer {
 
     if (payload.length === 0) return;
 
+    // The sync endpoint accepts a node JWT, not the long-lived node API key.
+    // Sending the API key directly produced a 401 that this method used to
+    // ignore, allowing Desktop to say "Indexed" when Central received nothing.
+    const auth = await fetch(`${this.config.centralApiUrl}/api/v1/nodes/auth`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.config.centralApiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!auth.ok) {
+      throw new Error(`Central authentication failed (HTTP ${auth.status})`);
+    }
+    const { token } = await auth.json() as { token?: string };
+    if (!token) throw new Error('Central authentication returned no token');
+
     const response = await fetch(`${this.config.centralApiUrl}/api/v1/chunks/sync`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.config.centralApiKey}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ chunks: payload }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (response.ok) {
@@ -296,6 +330,9 @@ export class RDKIndexer {
       for (const chunk of unsynced) {
         if (accepted.has(chunk.id)) this.config.localStore.markSynced(chunk.id);
       }
+    } else {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Central sync failed (HTTP ${response.status})${detail ? `: ${detail}` : ''}`);
     }
   }
 }
