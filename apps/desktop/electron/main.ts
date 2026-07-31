@@ -132,6 +132,7 @@ function registerHandlers(): void {
     // graph + query
     getGraphData: () => service.getGraphData(),
     query: (q: never) => service.query(q),
+    retrieveQueryDocument: (q: never, chunkId: never) => service.retrieveQueryDocument(q, chunkId),
     // lifecycle
     getStatus: () => service.getStatus(),
     startNode: async () => { const r = await service.startNode(); push({ type: 'status', status: service.getStatus() }); return r; },

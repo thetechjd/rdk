@@ -130,6 +130,23 @@ describe('rendering a retrieved document', () => {
     const out = renderDocument(withHeading, { query: 'q', retrievedAt: 'now' });
     expect(out.match(/## Overview/g)).toHaveLength(1);
   });
+
+  it('preserves an authoritative full document without adding duplicate headings', () => {
+    const source = '# WeChat Clone: Build Specification\n\n## 1. Overview\n\nThe complete source.';
+    const complete = groupIntoDocuments([
+      {
+        ...chunk({ title: 'WeChat Clone: Build Specification', score: 0.8 }),
+        docTitle: 'WeChat Clone: Build Specification',
+        documentHash: 'sha256:complete',
+        content: source,
+      },
+    ])[0];
+
+    const out = renderDocument(complete, { query: 'wechat clone', retrievedAt: 'now' });
+    expect(complete.completeDocument).toBe(true);
+    expect(out.match(/# WeChat Clone: Build Specification/g)).toHaveLength(1);
+    expect(out).toContain(source);
+  });
 });
 
 describe('naming the file', () => {

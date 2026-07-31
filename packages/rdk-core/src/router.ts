@@ -23,6 +23,10 @@ export interface RouterConfig {
   domain?: string;
   vaultKey?: VaultKey;
   sharedVaultKeys?: Record<string, VaultKey>;
+  /** Rank network metadata without fetching content or settling tips. */
+  networkPreviewOnly?: boolean;
+  /** Retrieve only the candidate explicitly selected from a prior preview. */
+  selectedNetworkChunkId?: string;
 }
 
 export interface NetworkChunk {
@@ -33,6 +37,7 @@ export interface NetworkChunk {
   chunkHash?: string;
   /** Stable identity of the complete source document. */
   documentHash?: string;
+  chunkCount?: number;
   nodeId: string;
   providerNodeMcpEndpoint?: string;
   title: string;
@@ -60,6 +65,7 @@ export interface NetworkChunk {
   isOwn?: boolean;
   domain?: string;
   categories: string[];
+  preview?: boolean;
 }
 
 export interface TipRecord {
@@ -229,7 +235,7 @@ export class RDKRouter {
     // Central never got the chance to return the exact Slack spec. Only a
     // genuinely confident local result or an exact document-name match wins
     // before the network step.
-    if (bestPrivate && bestPrivate.score >= minSim
+    if (!cfg.selectedNetworkChunkId && bestPrivate && bestPrivate.score >= minSim
       && (bestPrivate.score >= CONFIDENT_MATCH || exactPrivateTitle)) {
       const matched = privateResults.filter(r => r.score >= minSim);
       const context = assembleContext(matched);
@@ -303,7 +309,7 @@ export class RDKRouter {
           // settle the tips server-side via RetroDeck credits — enqueueing
           // those too would double-pay.
           const tipsPaid: TipRecord[] = [];
-          for (const chunk of matchedNetwork) {
+          for (const chunk of cfg.networkPreviewOnly ? [] : matchedNetwork) {
             const isOwn = chunk.isOwn === true || (cfg.nodeId != null && chunk.nodeId === cfg.nodeId);
             if (chunk.tipAmountUsdc > 0 && !isOwn) {
               tipsPaid.push({ chunkId: chunk.chunkId, providerNodeId: chunk.nodeId, amountUsdc: chunk.tipAmountUsdc });
@@ -447,6 +453,8 @@ export class RDKRouter {
         // offline owner reports as such instead of looking like "no match".
         // Older centrals ignore the flag.
         includeUnavailable: true,
+        previewOnly: cfg.networkPreviewOnly ?? false,
+        ...(cfg.selectedNetworkChunkId ? { selectedChunkId: cfg.selectedNetworkChunkId } : {}),
       }),
     });
 
@@ -471,6 +479,10 @@ export class RDKRouter {
     };
 
     // Fetch chunk content from provider MCP endpoints where available
+    if (cfg.networkPreviewOnly) {
+      return { results, settledByCentral, message };
+    }
+
     const enriched = await Promise.allSettled(
       results.map(r => this.fetchChunkContent(r)),
     );

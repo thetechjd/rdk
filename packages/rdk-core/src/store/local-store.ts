@@ -821,11 +821,15 @@ export class LocalStore {
    * still be unqueryable because Central thinks it is private, which is exactly
    * the failure an id-only check cannot see.
    */
-  getSyncedChunks(): { id: string; isPublic: boolean }[] {
+  getSyncedChunks(): { id: string; isPublic: boolean; documentHash?: string }[] {
     const rows = this.db.prepare(
-      'SELECT id, is_public FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND superseded_at IS NULL',
-    ).all() as { id: string; is_public: number }[];
-    return rows.map(r => ({ id: r.id, isPublic: r.is_public === 1 }));
+      'SELECT id, is_public, document_hash FROM chunks WHERE synced_at IS NOT NULL AND local_only = 0 AND superseded_at IS NULL',
+    ).all() as { id: string; is_public: number; document_hash: string | null }[];
+    return rows.map(r => ({
+      id: r.id,
+      isPublic: r.is_public === 1,
+      ...(r.document_hash ? { documentHash: r.document_hash } : {}),
+    }));
   }
 
   /**

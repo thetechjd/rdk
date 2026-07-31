@@ -79,6 +79,33 @@ describe('RDKRouter network results', () => {
     expect(requestBody?.queryText).toBe('instagram clone');
   });
 
+  it('requests metadata-only previews without fetching peer content or reporting a tip', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/nodes/auth')) {
+        return new Response(JSON.stringify({ jwtToken: 'jwt' }), { status: 200 });
+      }
+      requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({
+        results: [networkChunk({
+          title: 'Instagram Clone',
+          summary: 'Candidate metadata only.',
+          preview: true,
+          tipAmountUsdc: 0,
+        })],
+        queryId: 'q',
+        settledByCentral: true,
+      }), { status: 200 });
+    }) as never;
+
+    const result = await router(fakeStore([])).query('instgram clone', { networkPreviewOnly: true });
+
+    expect(requestBody?.previewOnly).toBe(true);
+    expect(result.source).toBe('network');
+    expect(result.chunks[0]).toMatchObject({ title: 'Instagram Clone', preview: true });
+    expect(result.tipsPaid).toEqual([]);
+  });
+
   it('reports matched-but-unretrievable chunks instead of hiding them', async () => {
     globalThis.fetch = mockCentral(200, {
       results: [networkChunk({ available: false, unavailableReason: 'owner_offline' })],

@@ -81,7 +81,7 @@ export class SyncService {
 
     try {
       // Public AND private chunks sync (embedding + metadata); only content stays on-node.
-      const unsynced = this.store.getUnsyncedChunks(100);
+      let unsynced = this.store.getUnsyncedChunks(100);
       if (unsynced.length === 0) {
         // "Nothing to push" is precisely the state drift hides in: a chunk that
         // is marked synced here but stored with the wrong visibility on Central
@@ -90,7 +90,11 @@ export class SyncService {
         // be told to run `vault:sync --force`. Anything found is re-queued and
         // pushed on the next tick.
         await this.reconcileIfDue();
-        return { synced: 0, errors: 0 };
+        // Reconciliation may have discovered metadata drift (notably missing
+        // documentHash) and re-queued rows. Push those repairs in this same
+        // cycle; waiting for the next timer leaves retrieval fragmented.
+        unsynced = this.store.getUnsyncedChunks(100);
+        if (unsynced.length === 0) return { synced: 0, errors: 0 };
       }
 
       this.log(`[sync] ${unsynced.length} unsynced chunk(s) found`);
@@ -104,6 +108,11 @@ export class SyncService {
         payload.push({
           chunkHash: chunk.id,
           title: chunk.title,                                  // sent for public AND private
+          docTitle: chunk.docTitle,
+          documentHash: chunk.documentHash,
+          chunkIndex: chunk.chunkIndex,
+          chunkCount: chunk.chunkCount,
+          documentTokens: chunk.documentTokens,
           summary: chunk.isPublic ? chunk.summary : undefined, // private summary stays on-node
           domain: chunk.domain,
           categories: chunk.categories,
@@ -215,7 +224,7 @@ export class SyncService {
     const jwt = await this.getJwt();
     const existing = new Set<string>();
     /** Central's visibility per hash — absent on old centrals, which omit `chunks`. */
-    const remoteVisibility = new Map<string, boolean>();
+    const remoteMetadata = new Map<string, { isPublic: boolean; documentHash?: string }>();
     const batchSize = 200;
     for (let i = 0; i < hashes.length; i += batchSize) {
       const batch = hashes.slice(i, i + batchSize);
@@ -232,10 +241,10 @@ export class SyncService {
       }
       const { existing: present, chunks } = await res.json() as {
         existing: string[];
-        chunks?: { chunkHash: string; isPublic: boolean }[];
+        chunks?: { chunkHash: string; isPublic: boolean; documentHash?: string }[];
       };
       for (const h of present) existing.add(h);
-      for (const c of chunks ?? []) remoteVisibility.set(c.chunkHash, c.isPublic);
+      for (const c of chunks ?? []) remoteMetadata.set(c.chunkHash, c);
     }
 
     const missing = hashes.filter((h) => !existing.has(h));
@@ -246,7 +255,16 @@ export class SyncService {
     // reports an error. Re-queueing pushes the current visibility, which is why
     // publishing now self-heals instead of needing `vault:sync --force`.
     const drifted = local
-      .filter((c) => remoteVisibility.has(c.id) && remoteVisibility.get(c.id) !== c.isPublic)
+      .filter((c) => {
+        const remote = remoteMetadata.get(c.id);
+        return !!remote && (
+          remote.isPublic !== c.isPublic
+          // This is the exact drift that turned a complete document into five
+          // unordered fragments: SyncService used to omit documentHash even
+          // though the local index had it.
+          || (!!c.documentHash && remote.documentHash !== c.documentHash)
+        );
+      })
       .map((c) => c.id);
 
     const repush = [...new Set([...missing, ...drifted])];

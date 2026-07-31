@@ -26,7 +26,23 @@ export function QueryBar() {
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  const openDocument = (doc: QueryDocument) => {
+  const openDocument = async (doc: QueryDocument) => {
+    if (doc.previewOnly && doc.chunkId) {
+      setLoading(true);
+      try {
+        const retrieved = await window.rdk.retrieveQueryDocument(q.trim(), doc.chunkId);
+        if (!retrieved) {
+          app.toast(`"${doc.name}" could not be retrieved. Its node may have gone offline.`, true);
+          return;
+        }
+        await openDocument(retrieved);
+      } catch (err) {
+        app.toast(err instanceof Error ? err.message : `"${doc.name}" could not be retrieved`, true);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     if (!doc.filePath) {
       app.toast(doc.contentAvailable
         ? `"${doc.name}" could not be saved to your vault`
@@ -45,10 +61,6 @@ export function QueryBar() {
     const r = await window.rdk.query(q.trim());
     setLoading(false);
 
-    // Exactly one document answered the question — opening a chooser with a
-    // single entry is just an extra click before the only possible outcome.
-    const docs = r.documents ?? [];
-    if (docs.length === 1 && docs[0].filePath) { openDocument(docs[0]); return; }
     setRes(r);
   };
 
@@ -118,7 +130,7 @@ export function QueryBar() {
 
               {/* Network results: whole documents, click to open as markdown. */}
               {docs.map((doc, i) => (
-                <div key={`d${i}`} className="palette-hit" onClick={() => openDocument(doc)}>
+                <div key={`d${i}`} className="palette-hit" onClick={() => void openDocument(doc)}>
                   <div className="title">
                     <span>{doc.name}</span>
                     <span style={{ color: 'var(--muted)' }}>{(doc.score * 100).toFixed(0)}%</span>
@@ -134,6 +146,8 @@ export function QueryBar() {
                     {doc.tipUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tip ${doc.tipUsdc.toFixed(3)}</span>}
                     {!doc.contentAvailable
                       ? <span style={{ color: 'var(--cassette)' }}>summary only</span>
+                      : doc.previewOnly
+                        ? <span style={{ color: 'var(--phosphor)' }}>select to retrieve</span>
                       : !doc.filePath && !doc.isOwn
                         ? <span style={{ color: 'var(--cassette)' }}>not saved</span>
                         : null}

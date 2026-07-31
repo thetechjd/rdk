@@ -36,6 +36,9 @@ export interface RetrievedDocument {
    * document it claims to be.
    */
   contentAvailable: boolean;
+  /** True when the provider served the immutable authoritative source version,
+   *  rather than search fragments that would need reconstruction. */
+  completeDocument: boolean;
   sections: RetrievedSection[];
 }
 
@@ -89,7 +92,8 @@ export function groupIntoDocuments(chunks: NetworkChunk[]): RetrievedDocument[] 
     if (!content) continue;
 
     const name = documentName(chunk);
-    let doc = byName.get(name);
+    const key = `${chunk.nodeId}:${chunk.documentHash ?? name}`;
+    let doc = byName.get(key);
     if (!doc) {
       doc = {
         name,
@@ -99,9 +103,10 @@ export function groupIntoDocuments(chunks: NetworkChunk[]): RetrievedDocument[] 
         tipUsdc: 0,
         domain: chunk.domain,
         contentAvailable: chunk.available !== false,
+        completeDocument: !!chunk.documentHash,
         sections: [],
       };
-      byName.set(name, doc);
+      byName.set(key, doc);
     }
 
     const heading = sectionHeading(name, chunk.title);
@@ -121,6 +126,7 @@ export function groupIntoDocuments(chunks: NetworkChunk[]): RetrievedDocument[] 
     // One unserved section makes the whole document partial — it is not the
     // document the user asked for.
     if (chunk.available === false) doc.contentAvailable = false;
+    if (!chunk.documentHash) doc.completeDocument = false;
     doc.tipUsdc += chunk.tipAmountUsdc ?? 0;
   }
 
@@ -169,7 +175,7 @@ export function renderDocument(doc: RetrievedDocument, opts: RenderOptions): str
     '',
   ];
 
-  const body: string[] = [`# ${doc.name}`, ''];
+  const body: string[] = [];
 
   // Say so IN the file. A summary that looks like the document is how someone
   // ends up quoting a one-line gist as if it were the spec.
@@ -183,13 +189,21 @@ export function renderDocument(doc: RetrievedDocument, opts: RenderOptions): str
       '',
     );
   }
-  for (const s of doc.sections) {
-    // A section whose text already opens with its own heading must not get a
-    // second one stacked above it.
-    const startsWithHeading = new RegExp(`^#{1,6}\\s*${escapeRegExp(s.heading)}\\s*$`, 'im')
-      .test(s.content.split('\n', 1)[0] ?? '');
-    if (!startsWithHeading && s.heading && s.heading !== doc.name) body.push(`## ${s.heading}`, '');
-    body.push(s.content.trim(), '');
+  if (doc.completeDocument && doc.sections.length === 1) {
+    // Preserve the publisher's source byte-for-byte apart from outer trailing
+    // whitespace. Adding our own title/section wrappers duplicated headings and
+    // made a canonical document look reconstructed even when it was not.
+    body.push(doc.sections[0].content.trim(), '');
+  } else {
+    body.push(`# ${doc.name}`, '');
+    for (const s of doc.sections) {
+      // A section whose text already opens with its own heading must not get a
+      // second one stacked above it.
+      const startsWithHeading = new RegExp(`^#{1,6}\\s*${escapeRegExp(s.heading)}\\s*$`, 'im')
+        .test(s.content.split('\n', 1)[0] ?? '');
+      if (!startsWithHeading && s.heading && s.heading !== doc.name) body.push(`## ${s.heading}`, '');
+      body.push(s.content.trim(), '');
+    }
   }
 
   return `${yaml.join('\n')}${body.join('\n').trimEnd()}\n`;

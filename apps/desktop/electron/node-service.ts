@@ -763,7 +763,9 @@ export class NodeService {
       return { query: q, source: 'llm_fallback', hits: [], tokenEstimate: 0, tipsPaidUsdc: 0, latencyMs: 0 };
     }
     const cfg = this.getConfig();
-    const result = await this.getRouter().query(q);
+    // Network search is phase one only: titles/summaries for a chooser. Central
+    // does not fetch provider content or settle a tip until the user clicks one.
+    const result = await this.getRouter().query(q, { networkPreviewOnly: true });
     const nodeId = cfg?.nodeId;
     const rawHits = result.chunks.map((c) => {
       const isNetwork = 'chunkId' in c;
@@ -808,8 +810,23 @@ export class NodeService {
     // outlives the query that fetched it. Previously the desktop fetched the
     // content, paid the tip, and then discarded it: clicking a network result
     // did nothing at all (openHit only acted on own content).
+    const previewOnly = result.source === 'network'
+      && result.chunks.some((chunk) => (chunk as NetworkChunk).preview === true);
     const documents = result.source === 'network'
-      ? await this.saveRetrievedDocuments(result.chunks as NetworkChunk[], q)
+      ? previewOnly
+        ? (result.chunks as NetworkChunk[]).map((chunk) => ({
+            chunkId: chunk.chunkId,
+            previewOnly: true,
+            name: chunk.docTitle ?? chunk.title,
+            score: chunk.score,
+            sectionCount: chunk.chunkCount ?? 1,
+            isOwn: chunk.isOwn === true,
+            tipUsdc: chunk.isOwn ? 0 : chunk.tipAmountUsdc,
+            originNode: chunk.nodeId,
+            contentAvailable: true,
+            preview: chunk.summary ?? 'Select to retrieve the complete document.',
+          }))
+        : await this.saveRetrievedDocuments(result.chunks as NetworkChunk[], q)
       : undefined;
 
     return {
@@ -828,6 +845,14 @@ export class NodeService {
         ? [...new Set(result.unavailableChunks.map((c) => c.reason ?? 'unknown'))]
         : undefined,
     };
+  }
+
+  /** Phase two: retrieve, charge, save, and return only what was selected. */
+  async retrieveQueryDocument(q: string, chunkId: string): Promise<QueryDocument | null> {
+    const result = await this.getRouter().query(q, { selectedNetworkChunkId: chunkId });
+    if (result.source !== 'network' || result.chunks.length === 0) return null;
+    const documents = await this.saveRetrievedDocuments(result.chunks as NetworkChunk[], q);
+    return documents[0] ?? null;
   }
 
   /**

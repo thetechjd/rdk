@@ -170,6 +170,9 @@ export interface QueryHit {
  * answer. A document is the unit a question is actually about.
  */
 export interface QueryDocument {
+  /** Candidate selected in phase two. Present on network previews. */
+  chunkId?: string;
+  previewOnly?: boolean;
   name: string;
   score: number;
   sectionCount: number;
@@ -396,6 +399,7 @@ export interface RdkApi {
   // Graph + query
   getGraphData(): Promise<GraphData>;
   query(q: string): Promise<QueryResponse>;
+  retrieveQueryDocument(q: string, chunkId: string): Promise<QueryDocument | null>;
 
   // Node lifecycle
   getStatus(): Promise<NodeStatus>;
@@ -464,7 +468,7 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'getVaultTree', 'getIndexedDocuments', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
   'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
   'deleteChunk', 'getRetrievedFor', 'getVersions',
-  'getGraphData', 'query',
+  'getGraphData', 'query', 'retrieveQueryDocument',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
   'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',
   'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
