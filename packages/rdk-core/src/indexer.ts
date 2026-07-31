@@ -301,8 +301,11 @@ export class RDKIndexer {
     if (!auth.ok) {
       throw new Error(`Central authentication failed (HTTP ${auth.status})`);
     }
-    const { token } = await auth.json() as { token?: string };
-    if (!token) throw new Error('Central authentication returned no token');
+    const authBody = await auth.json() as { jwtToken?: string; token?: string };
+    // Current Central returns `jwtToken`; accept the earlier generic name too
+    // so independently deployed Centrals remain compatible.
+    const token = authBody.jwtToken ?? authBody.token;
+    if (!token) throw new Error('Central authentication returned no JWT token');
 
     const response = await fetch(`${this.config.centralApiUrl}/api/v1/chunks/sync`, {
       method: 'POST',
