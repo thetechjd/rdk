@@ -25,7 +25,7 @@
     "@rdk/core": "workspace:*",
     "@rdk/node": "workspace:*",
     "@retrodeck/mcp": "workspace:*",
-    "@retrodeck/payments-contract": "^0.1.0",
+    "@retrodeck/payments-contract": "^0.2.0",
     "@types/node": "^22.15.21",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.0",

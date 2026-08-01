@@ -256,6 +256,9 @@ export interface Account {
    *  exactly one owner, and a client that guesses will eventually offer a
    *  withdrawal the server rejects (or worse, accepts). */
   withdrawable?: number;
+  /** Fraction withheld on withdrawal, from the server. Absent on an older API,
+   *  in which case no fee line is shown rather than a guessed one. */
+  withdrawalTaxRate?: number;
   walletAddress?: string;
   nodeId?: string;
   centralApiUrl?: string;

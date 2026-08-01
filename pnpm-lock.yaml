@@ -123,9 +123,6 @@ importers:
       better-sqlite3:
         specifier: ^12.0.0
         version: 12.10.0
-      onnxruntime-node:
-        specifier: 1.14.0
-        version: 1.14.0
       d3-force:
         specifier: ^3.0.0
         version: 3.0.0
@@ -149,8 +146,8 @@ importers:
         specifier: ^3.7.0
         version: 3.7.2
       '@retrodeck/payments-contract':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@testing-library/jest-dom':
         specifier: ^7.0.0
         version: 7.0.0(@testing-library/dom@10.4.1)
@@ -295,8 +292,8 @@ importers:
         specifier: workspace:*
         version: link:../rdk-mcp
       '@retrodeck/payments-contract':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@types/node':
         specifier: ^22.15.21
         version: 22.19.19
@@ -315,6 +312,9 @@ importers:
       better-sqlite3:
         specifier: ^12.0.0
         version: 12.10.0
+      onnxruntime-node:
+        specifier: 1.14.0
+        version: 1.14.0
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.10
@@ -1136,8 +1136,8 @@ packages:
   '@protobufjs/utf8@1.1.1':
     resolution: {integrity: sha512-oOAWABowe8EAbMyWKM0tYDKi8Yaox52D+HWZhAIJqQXbqe0xI/GV7FhLWqlEKreMkfDjshR5FKgi3mnle0h6Eg==}
 
-  '@retrodeck/payments-contract@0.1.0':
-    resolution: {integrity: sha512-5XmnRyzOp4H6YzjjKTDoKLIUghi9GG+d6FnB+lAK+byGBp+A1d5TbEjpYrKmaLhAVGVE49UtBeujG3b3k3O92g==}
+  '@retrodeck/payments-contract@0.2.0':
+    resolution: {integrity: sha512-Wa1INmMkq8zesSxDI3Ukhq51CAHwMv+wcxjediEuaK8FJUTt85s8RuHdlem1WyMEL8CpTsnAwdPFMYEr0bvABw==}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
@@ -5159,7 +5159,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.1': {}
 
-  '@retrodeck/payments-contract@0.1.0':
+  '@retrodeck/payments-contract@0.2.0':
     dependencies:
       zod: 4.4.3
 

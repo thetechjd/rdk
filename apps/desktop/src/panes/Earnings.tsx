@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Account, AccountWallet, EarningsSummary, WithdrawalView } from '../../shared/ipc';
 import { useApp } from '../store';
+import { computeWithdrawalBreakdown } from '@retrodeck/payments-contract';
 
 export function Earnings() {
   const app = useApp();
@@ -36,6 +37,14 @@ export function Earnings() {
       ? { id: 'legacy', address: account.walletAddress, chain: payout?.chain ?? 'base', isPrimary: true }
       : undefined);
 
+  // Fee preview, using the SAME function the server records with and the rate
+  // the server published. A locally-invented 15% here could quote a payout we
+  // do not send.
+  const breakdown =
+    withdrawable > 0 && account?.withdrawalTaxRate != null
+      ? computeWithdrawalBreakdown(withdrawable, account.withdrawalTaxRate)
+      : null;
+
   const withdraw = useCallback(async () => {
     if (!wallet || withdrawable <= 0 || !payout?.enabled) return;
     setBusy(true);
@@ -43,13 +52,14 @@ export function Earnings() {
     setBusy(false);
     if (r.ok) {
       // "Requested", not "sent" — settlement happens on-chain afterwards.
-      app.toast(`Withdrawal requested — $${withdrawable.toFixed(2)} to ${wallet.address.slice(0, 10)}…`);
+      const received = breakdown?.net ?? withdrawable;
+      app.toast(`Withdrawal requested — $${received.toFixed(2)} to ${wallet.address.slice(0, 10)}…`);
       app.refreshData();
       refresh();
     } else {
       app.toast(r.error ?? 'Withdrawal failed', true);
     }
-  }, [app, refresh, wallet, withdrawable, payout]);
+  }, [app, refresh, wallet, withdrawable, payout, breakdown]);
 
   if (!data) return <div className="empty">loading earnings…</div>;
 
@@ -86,11 +96,24 @@ export function Earnings() {
               !wallet ? 'Add a wallet address in Settings → Account first.'
                 : !payout?.enabled ? (payout?.reason ?? 'Payouts are unavailable right now.')
                 : withdrawable <= 0 ? 'Nothing withdrawable yet.'
-                : `Send $${withdrawable.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain}`
+                : breakdown
+                  ? `Send $${breakdown.net.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain} `
+                    + `(a ${(breakdown.taxRate * 100).toFixed(0)}% fee of $${breakdown.tax.toFixed(2)} is withheld)`
+                  : `Send $${withdrawable.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain}`
             }
             onClick={withdraw}
           >{busy ? 'requesting…' : 'withdraw →'}</button>
         </div>
+
+        {/* The fee, before the button is pressed. A withdrawal debits at once,
+            so the net must not first appear in the confirmation toast. */}
+        {breakdown && (
+          <div className="hint" style={{ marginTop: 6 }}>
+            ${breakdown.gross.toFixed(2)} withdrawn · {(breakdown.taxRate * 100).toFixed(0)}% fee
+            −${breakdown.tax.toFixed(2)} · you receive{' '}
+            <strong style={{ color: 'var(--phosphor)' }}>${breakdown.net.toFixed(2)}</strong>
+          </div>
+        )}
         {/* Say why it's unavailable rather than showing a dead button. */}
         {!payout?.enabled && (
           <div className="hint">{payout?.reason ?? 'Payouts are unavailable on this server right now.'}</div>

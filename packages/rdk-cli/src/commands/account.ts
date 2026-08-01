@@ -8,6 +8,7 @@ import {
   pollPlanActivation,
   selectPlan,
   fetchBalance,
+  fetchWithdrawable,
   fetchWithdrawalStatus,
   fetchWithdrawals,
   requestWithdrawal,
@@ -17,6 +18,7 @@ import { LocalStore } from '@rdk/core';
 import { t, mark, divider } from '../theme.js';
 import { grantCryptocadetSubscription, type CryptoCadetPlanOffer } from './cryptocadet.js';
 import { printBalanceWarning } from './balance.js';
+import { computeWithdrawalBreakdown } from '@retrodeck/payments-contract';
 
 export async function showAccount(): Promise<void> {
   const config = loadConfig();
@@ -453,9 +455,12 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
   const spinner = ora('Checking withdrawal availability...').start();
 
   try {
-    const [status, balance] = await Promise.all([
+    const [status, balance, withdrawable] = await Promise.all([
       fetchWithdrawalStatus(session),
       fetchBalance(session),
+      // Carries the fee rate. Read from the server rather than assumed — a
+      // hardcoded rate here would quote a payout the server does not send.
+      fetchWithdrawable(session).catch(() => null),
     ]);
 
     // Say so BEFORE taking the money. Requesting a withdrawal debits the balance
@@ -482,9 +487,26 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
     }
     spinner.stop();
 
+    // Show the fee split BEFORE asking. A withdrawal debits immediately and
+    // settles asynchronously, so the net must never be a surprise afterwards.
+    const breakdown =
+      withdrawable?.taxRate != null
+        ? computeWithdrawalBreakdown(amount, withdrawable.taxRate)
+        : null;
+
+    if (breakdown) {
+      console.log('');
+      console.log(`  ${t.dim('withdrawing:')}  $${breakdown.gross.toFixed(4)} USDC`);
+      console.log(`  ${t.dim(`fee (${(breakdown.taxRate * 100).toFixed(0)}%):`)}     ${t.warn(`-$${breakdown.tax.toFixed(4)}`)}`);
+      console.log(`  ${t.dim('you receive:')}  ${t.green(`$${breakdown.net.toFixed(4)} USDC`)}`);
+      console.log('');
+    }
+
     const { confirm } = await import('../prompts.js');
     const ok = await confirm({
-      message: `Withdraw $${amount.toFixed(4)} USDC to ${config.walletAddress} on ${status.network ?? status.chain}?`,
+      message: breakdown
+        ? `Send $${breakdown.net.toFixed(4)} USDC to ${config.walletAddress} on ${status.network ?? status.chain}?`
+        : `Withdraw $${amount.toFixed(4)} USDC to ${config.walletAddress} on ${status.network ?? status.chain}?`,
       default: false,
     });
     if (!ok) { console.log(t.dim('  Cancelled.')); return; }
@@ -495,7 +517,12 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
       walletAddress: config.walletAddress,
       walletChain: status.chain,
     });
-    sending.succeed(`Withdrawal requested — $${amount.toFixed(4)} USDC to ${config.walletAddress}`);
+    // Report the server's figures, not the requested ones.
+    const net = result.netUsdc ?? breakdown?.net ?? amount;
+    sending.succeed(`Withdrawal requested — $${net.toFixed(4)} USDC to ${config.walletAddress}`);
+    if (result.taxUsdc != null) {
+      console.log(t.dim(`  $${Number(result.grossUsdc ?? amount).toFixed(4)} debited, $${Number(result.taxUsdc).toFixed(4)} fee withheld.`));
+    }
     // Deliberately not "sent": settlement is asynchronous, and claiming
     // otherwise is the exact thing that made this command lie before.
     console.log(t.dim(`  ${result.withdrawalId} · ${result.status} on ${result.chain}`));

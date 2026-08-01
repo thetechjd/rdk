@@ -232,6 +232,17 @@ export async function getMe(): Promise<{ id?: string; email?: string; emailVerif
   return data.user ?? null;
 }
 
+/** Withdrawable amount plus the server's withdrawal fee rate. */
+export async function getWithdrawable(): Promise<{
+  balance: number; creditLimit: number; withdrawable: number; taxRate?: number;
+} | null> {
+  const res = await retrodeckFetch('/api/v1/balances/withdrawable');
+  if (!res.ok) return null;
+  return (await res.json()) as {
+    balance: number; creditLimit: number; withdrawable: number; taxRate?: number;
+  };
+}
+
 export async function getBalance(): Promise<BalanceInfo | null> {
   const res = await retrodeckFetch('/api/v1/balances/me');
   if (!res.ok) return null;

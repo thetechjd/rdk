@@ -317,6 +317,21 @@ export async function fetchBalance(session: PaymentsSession): Promise<BalanceInf
 // check `fetchWithdrawalStatus()` before offering it, rather than debiting into
 // a queue that may not be drainable.
 
+/** What `/balances/withdrawable` reports, including the server's fee rate. */
+export interface WithdrawableInfo {
+  balance: number;
+  creditLimit: number;
+  withdrawable: number;
+  /** Fraction withheld. Absent on an API older than the withdrawal fee. */
+  taxRate?: number;
+}
+
+export async function fetchWithdrawable(session: PaymentsSession): Promise<WithdrawableInfo> {
+  const res = await session.fetch('/api/v1/balances/withdrawable');
+  if (!res.ok) throw await toError(res, 'Could not read your withdrawable balance');
+  return (await res.json()) as WithdrawableInfo;
+}
+
 export interface WithdrawalStatus {
   /** False when the server cannot settle payouts right now. */
   enabled: boolean;
@@ -352,7 +367,15 @@ export async function fetchWithdrawalStatus(session: PaymentsSession): Promise<W
 export async function requestWithdrawal(
   session: PaymentsSession,
   opts: { amountUsdc: number; walletAddress: string; walletChain: string },
-): Promise<{ withdrawalId: string; status: string; chain: string }> {
+): Promise<{
+  withdrawalId: string;
+  status: string;
+  chain: string;
+  grossUsdc?: number;
+  taxUsdc?: number;
+  netUsdc?: number;
+  taxRate?: number;
+}> {
   const res = await session.fetch('/api/v1/balances/withdraw', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -367,7 +390,12 @@ export async function requestWithdrawal(
     }),
   });
   if (!res.ok) throw await toError(res, 'Withdrawal failed');
-  return (await res.json()) as { withdrawalId: string; status: string; chain: string };
+  // The response carries the split the server actually recorded — report that
+  // rather than the figure we asked for.
+  return (await res.json()) as {
+    withdrawalId: string; status: string; chain: string;
+    grossUsdc?: number; taxUsdc?: number; netUsdc?: number; taxRate?: number;
+  };
 }
 
 export async function fetchWithdrawals(session: PaymentsSession): Promise<WithdrawalRecord[]> {

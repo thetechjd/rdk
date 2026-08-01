@@ -29,5 +29,14 @@ neverBuiltDependencies:
 overrides:
   '@modelcontextprotocol/sdk': '1.12.1'
 
+# Our own first-party package, published from Ascendant-Finance alongside this
+# repo. The minimumReleaseAge policy exists to blunt supply-chain attacks via
+# freshly-published third-party dependencies; without an exclusion here every
+# contract release would block RDK's build for a day.
+#
+# Excluded by NAME, not name@version: `pnpm add` writes the pinned form but the
+# lockfile verifier does not honour it, so a pinned entry still fails the check.
+# The tradeoff is real — this waives the age check for any future version of this
+# package — and it is acceptable only because we publish it ourselves.
 minimumReleaseAgeExclude:
-  - '@retrodeck/payments-contract@0.1.0'
+  - '@retrodeck/payments-contract'

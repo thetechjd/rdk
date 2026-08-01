@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
-    "@retrodeck/payments-contract": "^0.1.0",
+    "@retrodeck/payments-contract": "^0.2.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
