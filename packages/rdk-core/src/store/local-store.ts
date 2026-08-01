@@ -7,6 +7,11 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import crypto from 'crypto';
+import { queryCache } from '../query/cache.js';
+
+/** Bump when `migrateQueryPipelineV*` gains a step. Migrations are additive and
+ *  idempotent; each runs only when the stored version is below it. */
+const QUERY_PIPELINE_SCHEMA_VERSION = 2;
 
 export interface StoredChunk {
   id: string;
@@ -33,6 +38,7 @@ export interface StoredChunk {
   isLocalOnly?: boolean;
   syncedAt?: Date;
   qualityScore: number;
+  riskScore?: number;
   sourcePath?: string;
   sourceAdapter?: string;
   // ── Versioning (metadata lineage) ────────────────────────────────────────
@@ -114,6 +120,72 @@ export class LocalStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.init();
+    this.initQueryPipeline();
+  }
+
+  private initQueryPipeline(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_versions (
+        component TEXT PRIMARY KEY,
+        version INTEGER NOT NULL
+      );
+    `);
+    const row = this.db.prepare(
+      `SELECT version FROM schema_versions WHERE component = 'query_pipeline'`,
+    ).get() as { version: number } | undefined;
+    const version = row?.version ?? 0;
+    if (version >= QUERY_PIPELINE_SCHEMA_VERSION) return;
+
+    if (version < 1) this.migrateQueryPipelineV1();
+    if (version < 2) this.migrateQueryPipelineV2();
+
+    this.db.prepare(`
+      INSERT INTO schema_versions(component, version) VALUES ('query_pipeline', ?)
+      ON CONFLICT(component) DO UPDATE SET version = excluded.version
+    `).run(QUERY_PIPELINE_SCHEMA_VERSION);
+  }
+
+  private migrateQueryPipelineV1(): void {
+    try { this.db.exec(`ALTER TABLE chunks ADD COLUMN risk_score REAL DEFAULT 0`); } catch { /* exists */ }
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+        title, doc_title, content, summary,
+        content='chunks', content_rowid='rowid'
+      );
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON chunks BEGIN
+        INSERT INTO chunks_fts(rowid, title, doc_title, content, summary)
+        VALUES (new.rowid, new.title, new.doc_title, new.content, new.summary);
+      END;
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, title, doc_title, content, summary)
+        VALUES ('delete', old.rowid, old.title, old.doc_title, old.content, old.summary);
+      END;
+      CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE OF title, doc_title, content, summary ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, title, doc_title, content, summary)
+        VALUES ('delete', old.rowid, old.title, old.doc_title, old.content, old.summary);
+        INSERT INTO chunks_fts(rowid, title, doc_title, content, summary)
+        VALUES (new.rowid, new.title, new.doc_title, new.content, new.summary);
+      END;
+      CREATE TABLE IF NOT EXISTS chunk_minhash (
+        chunk_id TEXT PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
+        signature BLOB NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS index_rate_buckets (
+        node_id TEXT PRIMARY KEY,
+        tokens REAL NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild');
+    `);
+  }
+
+  /** v2: indexes backing the composite-score authority lookups and the
+   *  domain-filtered retrieval legs. */
+  private migrateQueryPipelineV2(): void {
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tip_queue_chunk ON tip_queue(chunk_id);
+      CREATE INDEX IF NOT EXISTS idx_chunks_domain_live ON chunks(domain, superseded_at);
+    `);
   }
 
   private ensureDir() {
@@ -393,6 +465,7 @@ export class LocalStore {
   /** Deletes a chunk; returns whether a row actually existed and was removed. */
   deleteChunk(id: string): boolean {
     const result = this.db.prepare('DELETE FROM chunks WHERE id = ?').run(id);
+    if (result.changes > 0) queryCache.clear();
     return result.changes > 0;
   }
 
@@ -481,19 +554,19 @@ export class LocalStore {
 
   // ── Vector Search ──────────────────────────────────────────────
 
-  search(queryEmbedding: Float32Array, topK = 5, privateOnly = true): SearchResult[] {
+  search(queryEmbedding: Float32Array, topK = 5, privateOnly = true, domain?: string): SearchResult[] {
     // Pure JS cosine similarity — no sqlite-vec dependency needed.
     // Superseded chunks (an edit replaced them, or they were retired) never
     // appear in search — only the live version of a document answers.
-    const filter = privateOnly
-      ? 'WHERE c.is_public = 0 AND c.superseded_at IS NULL'
-      : 'WHERE c.superseded_at IS NULL';
+    const conditions = ['c.superseded_at IS NULL'];
+    if (privateOnly) conditions.push('c.is_public = 0');
+    if (domain) conditions.push('c.domain = ?');
     const rows = this.db.prepare(`
       SELECT c.*, e.embedding
       FROM chunks c
       JOIN chunk_embeddings e ON e.chunk_id = c.id
-      ${filter}
-    `).all() as (Record<string, unknown> & { embedding: Buffer })[];
+      WHERE ${conditions.join(' AND ')}
+    `).all(...(domain ? [domain] : [])) as (Record<string, unknown> & { embedding: Buffer })[];
 
     const scored = rows.map(row => {
       const stored = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
@@ -521,6 +594,7 @@ export class LocalStore {
               content: document.content,
               isPublic: document.isPublic,
               isEncrypted: document.isEncrypted,
+              riskScore: this.getDocumentRisk(chunk.documentHash!),
             }
           : {}),
         score: similarity,
@@ -534,6 +608,98 @@ export class LocalStore {
     const row = this.db.prepare('SELECT embedding FROM chunk_embeddings WHERE chunk_id = ?').get(chunkId) as { embedding: Buffer } | undefined;
     if (!row) return null;
     return new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+  }
+
+  lexicalSearch(query: string, topK: number, domain?: string): Array<StoredChunk & { lexicalScore: number }> {
+    const terms = query.match(/[\p{L}\p{N}.\-]+/gu) ?? [];
+    if (terms.length === 0) return [];
+    const ftsQuery = terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' OR ');
+    const rows = this.db.prepare(`
+      SELECT c.*, bm25(chunks_fts) AS lexical_rank
+      FROM chunks_fts
+      JOIN chunks c ON c.rowid = chunks_fts.rowid
+      WHERE chunks_fts MATCH ? AND c.superseded_at IS NULL${domain ? ' AND c.domain = ?' : ''}
+      ORDER BY lexical_rank ASC
+      LIMIT ?
+    `).all(...(domain ? [ftsQuery, domain, topK] : [ftsQuery, topK])) as Record<string, unknown>[];
+    const results: Array<StoredChunk & { lexicalScore: number }> = [];
+    const seenDocuments = new Set<string>();
+    for (const row of rows) {
+      const chunk = this.rowToChunk(row);
+      const identity = chunk.documentHash ?? chunk.id;
+      if (seenDocuments.has(identity)) continue;
+      seenDocuments.add(identity);
+      const document = chunk.documentHash ? this.getDocument(chunk.documentHash) : null;
+      results.push({
+        ...chunk,
+        ...(document ? { title: document.title, docTitle: document.title, content: document.content } : {}),
+        riskScore: chunk.documentHash ? this.getDocumentRisk(chunk.documentHash) : chunk.riskScore,
+        lexicalScore: 1 / (1 + Math.max(0, Number(row.lexical_rank))),
+      });
+      if (results.length >= topK) break;
+    }
+    return results;
+  }
+
+  getDocumentRisk(documentHash: string): number {
+    const row = this.db.prepare(`SELECT MAX(risk_score) AS risk FROM chunks WHERE document_hash = ?`)
+      .get(documentHash) as { risk: number | null } | undefined;
+    return Number(row?.risk ?? 0);
+  }
+
+  getVocabulary(): { words: string[]; chunkCount: number } {
+    const rows = this.db.prepare(`
+      SELECT title, doc_title, summary FROM chunks WHERE superseded_at IS NULL
+    `).all() as Array<{ title: string; doc_title: string | null; summary: string | null }>;
+    const words = rows.flatMap((row) => [row.title, row.doc_title ?? '', row.summary ?? '']);
+    return { words, chunkCount: rows.length };
+  }
+
+  /** Authority inputs for one chunk: total retrieval edges and non-failed tips.
+   *  Two indexed COUNT(*)s — the composite score needs both counts, not the
+   *  per-query grouping `getRetrievalsForChunk` returns. */
+  getAuthorityCounts(chunkId: string): { retrievalCount: number; tipCount: number } {
+    const retrievals = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM retrieval_edges WHERE chunk_id = ?`,
+    ).get(chunkId) as { n: number } | undefined;
+    const tips = this.db.prepare(
+      `SELECT COUNT(*) AS n FROM tip_queue WHERE chunk_id = ? AND status != 'failed'`,
+    ).get(chunkId) as { n: number } | undefined;
+    return { retrievalCount: Number(retrievals?.n ?? 0), tipCount: Number(tips?.n ?? 0) };
+  }
+
+  setChunkRisk(id: string, riskScore: number): void {
+    this.db.prepare(`UPDATE chunks SET risk_score = ? WHERE id = ?`).run(riskScore, id);
+  }
+
+  setChunkMinHash(id: string, signature: Uint32Array): void {
+    this.db.prepare(`INSERT OR REPLACE INTO chunk_minhash(chunk_id, signature) VALUES (?, ?)`)
+      .run(id, Buffer.from(signature.buffer, signature.byteOffset, signature.byteLength));
+  }
+
+  getDedupCandidates(): Array<{ chunkId: string; signature: Uint32Array; embedding: Float32Array }> {
+    const rows = this.db.prepare(`
+      SELECT m.chunk_id, m.signature, e.embedding
+      FROM chunk_minhash m JOIN chunk_embeddings e ON e.chunk_id = m.chunk_id
+    `).all() as Array<{ chunk_id: string; signature: Buffer; embedding: Buffer }>;
+    return rows.map((row) => ({
+      chunkId: row.chunk_id,
+      signature: new Uint32Array(row.signature.buffer, row.signature.byteOffset, row.signature.byteLength / 4),
+      embedding: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4),
+    }));
+  }
+
+  getIndexRateState(nodeId: string): { tokens: number; updatedAt: number } | undefined {
+    const row = this.db.prepare(`SELECT tokens, updated_at FROM index_rate_buckets WHERE node_id = ?`)
+      .get(nodeId) as { tokens: number; updated_at: number } | undefined;
+    return row ? { tokens: row.tokens, updatedAt: row.updated_at } : undefined;
+  }
+
+  setIndexRateState(nodeId: string, state: { tokens: number; updatedAt: number }): void {
+    this.db.prepare(`
+      INSERT INTO index_rate_buckets(node_id, tokens, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET tokens = excluded.tokens, updated_at = excluded.updated_at
+    `).run(nodeId, state.tokens, state.updatedAt);
   }
 
   /** All chunks (no embeddings). For the desktop graph / vault views. */
@@ -730,6 +896,7 @@ export class LocalStore {
       isLocalOnly: (row.local_only as number) === 1,
       syncedAt: row.synced_at ? new Date(row.synced_at as string) : undefined,
       qualityScore: row.quality_score as number,
+      riskScore: Number(row.risk_score ?? 0),
       sourcePath: row.source_path as string | undefined,
       sourceAdapter: row.source_adapter as string | undefined,
       supersedes: (row.supersedes as string | null) ?? undefined,

@@ -12,6 +12,10 @@ import { categorizeChunk, scoreInformationDensity } from './taxonomy.js';
 import { extractiveSummary } from './summarize.js';
 import { buildChunkTitle, extractDocTitle } from './title.js';
 import type { IndexResult } from './adapters/interface.js';
+import { assertNotDuplicate, minHash } from './index/dedup.js';
+import { consumeIndexToken } from './index/rate-limit.js';
+import { scanChunk } from './index/scan.js';
+import { queryCache } from './query/cache.js';
 
 export interface Document {
   content: string;
@@ -52,6 +56,7 @@ export interface IndexerConfig {
   // Called immediately after each chunk is stored locally, before network sync.
   // Used by rdk-cli to push real-time WebSocket events to RDK Central.
   onChunkIndexed?: (chunk: { id: string; title: string; isPublic: boolean }) => void;
+  nodeId?: string;
 }
 
 export type { IndexResult };
@@ -155,6 +160,29 @@ export class RDKIndexer {
           const embedText = `${chunkTitle}\n\n${chunk.text}`;
           const embedding = await this.config.embeddingModel.embed(embedText);
 
+          // Security and abuse controls run before the chunk can enter either
+          // local retrieval or the network sync queue.
+          const riskScore = scanChunk(chunk.text);
+          const pipelineStore = this.config.localStore as LocalStore & {
+            getDedupCandidates?: LocalStore['getDedupCandidates'];
+            getIndexRateState?: LocalStore['getIndexRateState'];
+            setIndexRateState?: LocalStore['setIndexRateState'];
+            setChunkRisk?: LocalStore['setChunkRisk'];
+            setChunkMinHash?: LocalStore['setChunkMinHash'];
+          };
+          assertNotDuplicate({
+            chunkId,
+            text: chunk.text,
+            embedding,
+            existing: pipelineStore.getDedupCandidates?.() ?? [],
+          });
+          if (pipelineStore.getIndexRateState && pipelineStore.setIndexRateState) {
+            consumeIndexToken(this.config.nodeId ?? 'local', {
+              get: (nodeId) => pipelineStore.getIndexRateState!(nodeId),
+              set: (nodeId, state) => pipelineStore.setIndexRateState!(nodeId, state),
+            });
+          }
+
           // 5. Categorize
           const domain = doc.domain ?? this.config.domain;
           const categories = doc.categories ?? categorizeChunk(chunk.text, domain);
@@ -206,6 +234,9 @@ export class RDKIndexer {
             version: doc.version ?? 1,
             derivedFrom,
           }, embedding);
+          pipelineStore.setChunkRisk?.(chunkId, riskScore);
+          pipelineStore.setChunkMinHash?.(chunkId, minHash(chunk.text));
+          queryCache.clear();
 
           this.config.onChunkIndexed?.({ id: chunkId, title: chunkTitle, isPublic });
           indexedChunkIds.push(chunkId);
@@ -284,6 +315,7 @@ export class RDKIndexer {
         sourceAdapter: chunk.sourceAdapter,
         supersedesHash: chunk.supersedes,
         version: chunk.version ?? 1,
+        riskScore: chunk.riskScore ?? 0,
         // NO content field — content is served on demand, never synced.
       };
     }).filter(c => c.embedding.length > 0);

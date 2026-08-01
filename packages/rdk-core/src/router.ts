@@ -66,6 +66,7 @@ export interface NetworkChunk {
   domain?: string;
   categories: string[];
   preview?: boolean;
+  riskScore?: number;
 }
 
 export interface TipRecord {
@@ -195,6 +196,18 @@ function rerank<T extends { title: string; score: number }>(query: string, items
 
 export class RDKRouter {
   constructor(private config: RouterConfig) {}
+
+  /** Metadata-only network candidates for pipeline-v2 fusion. */
+  async previewNetworkCandidates(query: string, topK: number): Promise<NetworkChunk[]> {
+    if (!this.config.centralApiUrl || !this.config.centralApiKey) return [];
+    const embedding = await this.config.embeddingModel.embed(query);
+    const response = await this.queryNetwork(query, embedding, {
+      ...this.config,
+      topK,
+      networkPreviewOnly: true,
+    });
+    return response.results.filter((candidate) => candidate.available !== false);
+  }
 
   async query(userQuery: string, overrides?: Partial<RouterConfig>): Promise<QueryResult> {
     const cfg = { ...this.config, ...overrides };
