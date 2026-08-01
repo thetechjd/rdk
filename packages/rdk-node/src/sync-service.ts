@@ -143,6 +143,7 @@ export class SyncService {
           // ranking. See StoredChunk.derivedFrom.
           derivedFromHash: chunk.derivedFrom,
           version: chunk.version ?? 1,
+          riskScore: chunk.riskScore ?? 0,
         });
       }
 

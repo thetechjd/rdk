@@ -6,7 +6,10 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
-import { LocalStore, RDKRouter, RDKIndexer, LocalEmbeddingModel, keyFromHex, type VaultKey } from '@rdk/core';
+import {
+  LocalStore, RDKRouter, RDKIndexer, LocalEmbeddingModel, QueryPipeline, HaikuRerankModel,
+  keyFromHex, type NetworkChunk, type RetrievalHit, type VaultKey,
+} from '@rdk/core';
 import { SyncService } from './sync-service.js';
 
 export interface NodeConfig {
@@ -25,6 +28,8 @@ export interface NodeConfig {
   publicFolders?: string[];
   vaultKeyHex?: string;
   sharedVaultKeys?: Record<string, string>;
+  rerankFallback?: 'haiku';
+  anthropicApiKey?: string;
 }
 
 interface McpToolResult {
@@ -40,6 +45,7 @@ export class RDKNode {
   private indexer!: RDKIndexer;
   private embeddingModel!: LocalEmbeddingModel;
   private syncService!: SyncService;
+  private queryPipeline!: QueryPipeline;
   private vaultLastIndexed?: Date;
   private vaultWatchUnsubscribe?: () => void;
   private jwtToken?: string;
@@ -86,6 +92,45 @@ export class RDKNode {
       sharedVaultKeys,
     });
 
+    const reranker = this.config.rerankFallback === 'haiku' && this.config.anthropicApiKey
+      ? new HaikuRerankModel(this.config.anthropicApiKey)
+      : undefined;
+    this.queryPipeline = new QueryPipeline(this.store, this.embeddingModel, reranker, {
+      preview: async (query, limit, domain): Promise<RetrievalHit[]> => {
+        const chunks = await this.router.previewNetworkCandidates(query, limit);
+        // Central has no domain parameter, so the filter is applied here.
+        // Chunks Central did not label are kept — absent is not "other domain".
+        const scoped = domain
+          ? chunks.filter((chunk) => chunk.domain === undefined || chunk.domain === domain)
+          : chunks;
+        return scoped.map((chunk) => ({
+          chunkId: chunk.chunkId,
+          title: chunk.docTitle ?? chunk.title,
+          text: chunk.summary ?? '',
+          summary: chunk.summary,
+          riskScore: chunk.riskScore ?? 0,
+          createdAt: new Date(),
+          retrievalCount: 0,
+          tipCount: 0,
+          nodeId: chunk.nodeId,
+        }));
+      },
+      resolve: async (candidate, corrected) => {
+        const retrieved = await this.router.query(corrected, { selectedNetworkChunkId: candidate.chunkId });
+        const chunks = retrieved.chunks as NetworkChunk[];
+        if (retrieved.source !== 'network' || chunks.length === 0) return candidate;
+        return {
+          ...candidate,
+          text: retrieved.context || chunks.map((chunk) => chunk.content ?? chunk.summary ?? '').join('\n\n'),
+          riskScore: Math.max(candidate.riskScore, ...chunks.map((chunk) => chunk.riskScore ?? 0)),
+        };
+      },
+    }, vaultKey);
+
+    // Fire-and-forget: the ~18s cold load would otherwise land on the first
+    // query, exceed the rerank budget, and silently degrade it to RRF order.
+    void this.queryPipeline.warm();
+
     this.indexer = new RDKIndexer({
       embeddingModel: this.embeddingModel,
       localStore: this.store,
@@ -93,6 +138,7 @@ export class RDKNode {
       syncToNetwork: true,
       centralApiUrl: this.config.centralApiUrl,
       centralApiKey: this.config.apiKey,
+      nodeId: this.config.nodeId,
       vaultKey,
     });
 
@@ -220,38 +266,22 @@ export class RDKNode {
     query: string,
     opts: { domain?: string; includePrivate?: boolean; includeNetwork?: boolean; topK?: number },
   ): Promise<McpToolResult> {
-    if (!query?.trim()) {
-      return this.errorResult('query is required');
-    }
+    if (!query?.trim()) return this.errorResult('query is required');
 
-    const result = await this.router.query(query, {
-      domain: opts.domain ?? this.config.domain,
-      topK: opts.topK ?? 5,
+    const result = await this.queryPipeline.query(query, {
+      includePrivate: opts.includePrivate,
+      includeNetwork: opts.includeNetwork,
+      domain: opts.domain,
+      topK: opts.topK,
     });
-
-    if (result.source === 'llm_fallback' || result.chunks.length === 0) {
+    if (result.candidates === 0 && !result.cacheHit) {
       return this.textResult(
         `No relevant knowledge found in ${opts.includeNetwork !== false ? 'your indexed chunks or the public network' : 'your indexed chunks'}.\n` +
         `Source: llm_fallback — proceed with your training data or request more context.\n` +
-        `Latency: ${result.latencyMs}ms`,
+        `Latency: ${result.totalMs}ms`,
       );
     }
-
-    const sourceLabel = result.source === 'private' ? 'Private Vault' : 'Knowledge Network';
-    const tipsNote = result.tipsPaid.length > 0
-      ? `\n\n💡 ${result.tipsPaid.length} tip(s) queued ($${result.tipsPaid.reduce((s, t) => s + t.amountUsdc, 0).toFixed(4)} USDC total)`
-      : '';
-
-    const contextText = result.context ||
-      result.chunks.map((c, i) => {
-        const chunk = c as { title?: string; content?: string; summary?: string; score?: number };
-        return `[${i + 1}] ${chunk.title ?? 'Untitled'}\n${chunk.content ?? chunk.summary ?? ''}`;
-      }).join('\n\n---\n\n');
-
-    return this.textResult(
-      `Source: ${sourceLabel} | Chunks: ${result.chunks.length} | Tokens: ~${result.tokenEstimate} | Latency: ${result.latencyMs}ms${tipsNote}\n\n` +
-      `---\n\n${contextText}`,
-    );
+    return this.textResult(result.text);
   }
 
   async handleIndex(opts: {
