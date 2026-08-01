@@ -77,6 +77,20 @@ describe('rerank timeout', () => {
     expect(seen[2]).toBe('body behind blank summary'); // whitespace-only is not a summary
   });
 
+  it('never scores an empty document', async () => {
+    // Central holds no summary for private chunks, and node.ts maps a network
+    // candidate to `text: chunk.summary ?? ''`. Scoring that empty string is a
+    // guaranteed ~0 the chunk can never recover from, so the title stands in.
+    const seen: string[] = [];
+    await rerankCandidates(
+      { original: 'q', normalized: 'q', corrected: 'q', variants: [] },
+      [{ ...CANDIDATES[0], title: 'Wallet architecture', text: '', summary: undefined }],
+      { score: async (batch) => { seen.push(...batch.map((p) => p.text)); return batch.map(() => 0.5); } },
+    );
+
+    expect(seen).toEqual(['Wallet architecture']);
+  });
+
   it('reports an unloadable model as an error, not a routine warning', async () => {
     // A model that cannot load means the rerank weight is silently inert on
     // every query — the failure mode that let a model with no ONNX weights ship.

@@ -19,7 +19,11 @@ export interface Candidate {
 }
 
 export interface RerankedCandidate extends Candidate {
+  /** Raw model output, kept as-is for logs and debugging. */
   rerankScore: number;
+  /** rerankScore min-max normalized across the candidate pool. Set by
+   *  scoreCandidates; this is what the composite score actually uses. */
+  rerankNormalized?: number;
   authorityScore?: number;
   freshnessScore?: number;
   finalScore?: number;

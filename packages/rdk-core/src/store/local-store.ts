@@ -668,6 +668,30 @@ export class LocalStore {
     return { retrievalCount: Number(retrievals?.n ?? 0), tipCount: Number(tips?.n ?? 0) };
   }
 
+  /** Writes only the summary. Deliberately leaves synced_at alone: a backfill is
+   *  not an edit, and re-queueing every chunk would push private content's
+   *  freshly-written summary at Central on the next sync. */
+  setChunkSummary(id: string, summary: string): void {
+    this.db.prepare(`UPDATE chunks SET summary = ? WHERE id = ?`).run(summary, id);
+    queryCache.clear();
+  }
+
+  /** Live chunks with no usable summary, for the backfill script. */
+  getChunksMissingSummary(): Array<{ id: string; content: string; isEncrypted: boolean; title: string }> {
+    return this.db.prepare(`
+      SELECT id, content, is_encrypted, title FROM chunks
+      WHERE superseded_at IS NULL AND (summary IS NULL OR trim(summary) = '')
+    `).all().map((row) => {
+      const r = row as Record<string, unknown>;
+      return {
+        id: r.id as string,
+        content: r.content as string,
+        isEncrypted: Boolean(r.is_encrypted),
+        title: r.title as string,
+      };
+    });
+  }
+
   setChunkRisk(id: string, riskScore: number): void {
     this.db.prepare(`UPDATE chunks SET risk_score = ? WHERE id = ?`).run(riskScore, id);
   }

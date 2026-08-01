@@ -69,7 +69,11 @@ function normalizeRrf(candidates: Candidate[]): RerankedCandidate[] {
  * Only ranking is affected — serve.ts still returns the full stored text.
  */
 function rerankText(candidate: Candidate): string {
-  return candidate.summary?.trim() || candidate.text;
+  // Network candidates arrive as `text: chunk.summary ?? ''`, so a chunk Central
+  // holds no summary for would otherwise be scored as an EMPTY document — a
+  // guaranteed ~0 that no amount of relevance could overcome. Title is a poor
+  // substitute for a body, but it is real signal; an empty string is none.
+  return candidate.summary?.trim() || candidate.text?.trim() || candidate.title;
 }
 
 function yieldToEventLoop(): Promise<void> {
