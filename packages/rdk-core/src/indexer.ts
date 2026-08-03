@@ -101,6 +101,23 @@ export class RDKIndexer {
       const derivedFrom = doc.derivedFrom
         ?? (doc.sourcePath ? this.config.localStore.getDerivedFromForSource(doc.sourcePath) : undefined);
 
+      // Abuse control is per INDEXED DOCUMENT, not per chunk. Charging a token
+      // per chunk turned INDEX_RATE_LIMIT_BURST into a document-size cap: any
+      // spec long enough to produce more than 20 chunks failed partway through
+      // with "Index rate limit exceeded", which is what a user hit on v1.9.0.
+      // The limit exists to bound how often a node indexes, not how large a
+      // document may be.
+      const rateLimitStore = this.config.localStore as LocalStore & {
+        getIndexRateState?: LocalStore['getIndexRateState'];
+        setIndexRateState?: LocalStore['setIndexRateState'];
+      };
+      if (rateLimitStore.getIndexRateState && rateLimitStore.setIndexRateState) {
+        consumeIndexToken(this.config.nodeId ?? 'local', {
+          get: (nodeId) => rateLimitStore.getIndexRateState!(nodeId),
+          set: (nodeId, state) => rateLimitStore.setIndexRateState!(nodeId, state),
+        });
+      }
+
       // 1. Clean
       const cleaned = cleanText(doc.content);
       if (cleaned.length < 50) {
@@ -176,13 +193,6 @@ export class RDKIndexer {
             embedding,
             existing: pipelineStore.getDedupCandidates?.() ?? [],
           });
-          if (pipelineStore.getIndexRateState && pipelineStore.setIndexRateState) {
-            consumeIndexToken(this.config.nodeId ?? 'local', {
-              get: (nodeId) => pipelineStore.getIndexRateState!(nodeId),
-              set: (nodeId, state) => pipelineStore.setIndexRateState!(nodeId, state),
-            });
-          }
-
           // 5. Categorize
           const domain = doc.domain ?? this.config.domain;
           const categories = doc.categories ?? categorizeChunk(chunk.text, domain);
