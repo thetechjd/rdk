@@ -62,7 +62,16 @@ export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | n
   const ensureOwner = (): void => {
     if (stopped) return;
     if (owner) {
-      claimWs(client.isConnected());
+      // Ownership is re-verified, never assumed. Two processes can both claim a
+      // free lock at startup; the loser must stand down instead of continuing to
+      // reconnect, or the two supersede each other forever (Central permits one
+      // session per node and closes the older with 4001).
+      if (!claimWs(client.isConnected())) {
+        owner = false;
+        log('another RDK process took the Central connection — standing down');
+        client.disconnect();
+        return;
+      }
       // Keep trying while we hold the lock. A 4001 ("another instance took
       // over") permanently disables this client's automatic reconnect, so if
       // that other instance later dies, nothing would ever reopen the socket
@@ -72,8 +81,9 @@ export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | n
       return;
     }
     if (wsHeldByOther()) return;             // another instance owns it
+    // Only drive the socket if the claim actually succeeded.
+    if (!claimWs(false)) return;
     owner = true;
-    claimWs(false);
     log('holding the RDK Central connection for this node');
     void client.connect();
   };

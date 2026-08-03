@@ -83,3 +83,56 @@ describe('deferring to another process', () => {
     expect(await heldByOther()).toBe(true);
   });
 });
+
+/**
+ * claimWs used to overwrite the lock unconditionally, so every contender
+ * "succeeded" and they all drove sockets at once. Central permits one session
+ * per node and closes the older with 4001, so the survivors' next tick
+ * reconnected and superseded each other — 208 connections in five minutes from
+ * a single node, with Central's CPU pinned. Claiming must be able to FAIL.
+ */
+describe('claiming ownership', () => {
+  async function lockApi() {
+    vi.resetModules();
+    return import('../src/ws/ws-lock.js');
+  }
+
+  it('refuses to steal the lock from a live, connected owner', async () => {
+    writeLock({ ts: Date.now(), connected: true, since: Date.now() });
+    const { claimWs, weOwnWs } = await lockApi();
+
+    expect(claimWs(false)).toBe(false);
+    expect(weOwnWs()).toBe(false);
+    // The incumbent's claim must survive untouched.
+    expect(JSON.parse(fs.readFileSync(LOCK(), 'utf8')).pid).toBe(OTHER_PID);
+  });
+
+  it('claims a free lock and reports ownership', async () => {
+    const { claimWs, weOwnWs } = await lockApi();
+
+    expect(claimWs(false)).toBe(true);
+    expect(weOwnWs()).toBe(true);
+    expect(JSON.parse(fs.readFileSync(LOCK(), 'utf8')).pid).toBe(process.pid);
+  });
+
+  it('takes over from a dead owner', async () => {
+    writeLock({ pid: 999_999_999, ts: Date.now(), connected: true, since: Date.now() });
+    const { claimWs, weOwnWs } = await lockApi();
+
+    expect(claimWs(false)).toBe(true);
+    expect(weOwnWs()).toBe(true);
+  });
+
+  it('reports loss of ownership once another process takes the lock', async () => {
+    const { claimWs, weOwnWs } = await lockApi();
+    expect(claimWs(true)).toBe(true);
+    expect(weOwnWs()).toBe(true);
+
+    // Another process wins the race and writes after us.
+    writeLock({ ts: Date.now(), connected: true, since: Date.now() });
+
+    // The owner must notice rather than carrying on and superseding it forever.
+    expect(weOwnWs()).toBe(false);
+    expect(claimWs(true)).toBe(false);
+  });
+});

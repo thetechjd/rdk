@@ -85,9 +85,35 @@ export function wsConnectionHeldByOther(): boolean {
     && Date.now() - lock.ts < STALE_MS;
 }
 
-/** Claim/refresh ownership for this process. */
-export function claimWs(connected = false): void {
+/**
+ * True when the lock on disk currently belongs to THIS process.
+ *
+ * Ownership must be re-checked, not remembered. Two processes starting together
+ * can both find the lock free and both claim it; whoever writes last owns it,
+ * and the other has to notice it lost rather than carrying on as owner.
+ */
+export function weOwnWs(): boolean {
+  const lock = readLock();
+  return lock !== null && lock.pid === process.pid && Date.now() - lock.ts < STALE_MS;
+}
+
+/**
+ * Claim or refresh ownership. Returns true only if this process holds the lock
+ * afterwards.
+ *
+ * Refuses to take it from a live owner that is still within its grace period —
+ * previously this overwrote the lock unconditionally, so every contender
+ * "succeeded" and they all drove sockets at once. Central allows one session per
+ * node, so each connect kicked the others with 4001, and the survivors' next
+ * tick reconnected: a supersede loop that saturated Central at 208 connections
+ * per five minutes from a single node.
+ *
+ * The write is still last-writer-wins, so it is verified by reading back.
+ */
+export function claimWs(connected = false): boolean {
   try {
+    if (wsHeldByOther()) return false;
+
     const now = Date.now();
     const prev = readLock();
     // `since` marks when this process last had a socket, or first started trying
@@ -100,8 +126,11 @@ export function claimWs(connected = false): void {
       JSON.stringify({ pid: process.pid, ts: now, connected, since }),
       { mode: 0o600 },
     );
+    // Read back: if a racing process wrote after us, we do not own it.
+    return weOwnWs();
   } catch {
     // Non-fatal — worst case we fall back to the unmanaged behavior.
+    return false;
   }
 }
 
