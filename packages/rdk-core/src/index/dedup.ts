@@ -38,11 +38,26 @@ export function assertNotDuplicate(input: {
   chunkId?: string;
   text: string;
   embedding: Float32Array;
-  existing: Array<{ chunkId: string; signature: Uint32Array; embedding: Float32Array }>;
+  /** Lineage of the incoming chunk — see the exclusions below. */
+  documentHash?: string;
+  sourcePath?: string;
+  existing: Array<{
+    chunkId: string;
+    signature: Uint32Array;
+    embedding: Float32Array;
+    documentHash?: string;
+    sourcePath?: string;
+  }>;
 }): void {
   const signature = minHash(input.text);
   for (const candidate of input.existing) {
     if (candidate.chunkId === input.chunkId) continue;
+    // Dedup stops the same CONTENT being indexed twice; it must not stop a node
+    // re-indexing its own file. Editing a document mints new chunk ids, so
+    // without these the new version is rejected as a near-duplicate of the very
+    // version it replaces — and the edit can never be indexed or synced.
+    if (input.documentHash && candidate.documentHash === input.documentHash) continue;
+    if (input.sourcePath && candidate.sourcePath === input.sourcePath) continue;
     const jaccard = estimatedJaccard(signature, candidate.signature);
     const cosine = dedupCosineSimilarity(input.embedding, candidate.embedding);
     if (jaccard >= DEDUP_JACCARD_THRESHOLD || cosine >= DEDUP_EMBEDDING_COSINE_THRESHOLD) {

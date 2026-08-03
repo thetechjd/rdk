@@ -191,6 +191,9 @@ export class RDKIndexer {
             chunkId,
             text: chunk.text,
             embedding,
+            // Lineage, so re-indexing this document does not read as duplication.
+            documentHash,
+            sourcePath: doc.sourcePath,
             existing: pipelineStore.getDedupCandidates?.() ?? [],
           });
           // 5. Categorize

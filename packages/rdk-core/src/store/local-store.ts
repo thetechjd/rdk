@@ -701,15 +701,31 @@ export class LocalStore {
       .run(id, Buffer.from(signature.buffer, signature.byteOffset, signature.byteLength));
   }
 
-  getDedupCandidates(): Array<{ chunkId: string; signature: Uint32Array; embedding: Float32Array }> {
+  /** Carries document_hash and source_path so dedup can tell a genuine duplicate
+   *  from a node re-indexing its own file — an edit mints new chunk ids, so
+   *  without lineage the new version looks like a duplicate of the old one. */
+  getDedupCandidates(): Array<{
+    chunkId: string;
+    signature: Uint32Array;
+    embedding: Float32Array;
+    documentHash?: string;
+    sourcePath?: string;
+  }> {
     const rows = this.db.prepare(`
-      SELECT m.chunk_id, m.signature, e.embedding
-      FROM chunk_minhash m JOIN chunk_embeddings e ON e.chunk_id = m.chunk_id
-    `).all() as Array<{ chunk_id: string; signature: Buffer; embedding: Buffer }>;
+      SELECT m.chunk_id, m.signature, e.embedding, c.document_hash, c.source_path
+      FROM chunk_minhash m
+      JOIN chunk_embeddings e ON e.chunk_id = m.chunk_id
+      JOIN chunks c ON c.id = m.chunk_id
+    `).all() as Array<{
+      chunk_id: string; signature: Buffer; embedding: Buffer;
+      document_hash: string | null; source_path: string | null;
+    }>;
     return rows.map((row) => ({
       chunkId: row.chunk_id,
       signature: new Uint32Array(row.signature.buffer, row.signature.byteOffset, row.signature.byteLength / 4),
       embedding: new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4),
+      ...(row.document_hash ? { documentHash: row.document_hash } : {}),
+      ...(row.source_path ? { sourcePath: row.source_path } : {}),
     }));
   }
 
