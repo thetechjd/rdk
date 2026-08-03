@@ -15,6 +15,7 @@ export class RdkWebSocketClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private stabilityTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private shouldReconnect = true;
   private jwt: string | null = null;
@@ -75,7 +76,12 @@ export class RdkWebSocketClient extends EventEmitter {
     }
 
     this.ws.on('open', () => {
-      this.reconnectAttempt = 0;
+      // Resetting the backoff the instant the socket opens means a connection
+      // that opens and immediately drops — exactly what an overloaded Central
+      // does — restarts at 2s forever and never escalates. Only a connection
+      // that SURVIVES counts as success.
+      if (this.stabilityTimer) clearTimeout(this.stabilityTimer);
+      this.stabilityTimer = setTimeout(() => { this.reconnectAttempt = 0; }, 30_000);
       this.startHeartbeat();
       this.emit('connected');
       console.error(dim('  ✓ connected to RDK Central'));
@@ -87,6 +93,9 @@ export class RdkWebSocketClient extends EventEmitter {
 
     this.ws.on('close', (code, reason) => {
       this.stopHeartbeat();
+      // The socket did not survive its probation, so the pending reset must not
+      // fire — this close is what escalates the backoff instead of restarting it.
+      if (this.stabilityTimer) { clearTimeout(this.stabilityTimer); this.stabilityTimer = null; }
       this.ws = null;
       this.emit('disconnected', { code, reason: reason.toString() });
       // 4001 = "replaced": another rdk instance took over this nodeId (e.g. Claude
@@ -110,6 +119,7 @@ export class RdkWebSocketClient extends EventEmitter {
   disconnect(): void {
     this.shouldReconnect = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.stabilityTimer) { clearTimeout(this.stabilityTimer); this.stabilityTimer = null; }
     this.stopHeartbeat();
     if (this.ws) {
       this.ws.close(1000, 'shutdown');
@@ -127,7 +137,17 @@ export class RdkWebSocketClient extends EventEmitter {
   }
 
   private scheduleReconnect(): void {
-    const delayMs = Math.min(60_000, 2_000 * Math.pow(2, this.reconnectAttempt));
+    // Both the auth-failure path and the close handler call this, so without
+    // clearing first a single failed attempt can leave two live timers — and the
+    // overwritten handle can never be cancelled. Each extra timer is another
+    // full auth on Central, whose cost is O(nodes) in bcrypt, so duplicates
+    // multiply into a storm the fleet cannot recover from.
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+
+    const backoffMs = Math.min(60_000, 2_000 * Math.pow(2, this.reconnectAttempt));
+    // Jitter: without it every node in the fleet retries on the same schedule
+    // after a shared outage and they arrive as one thundering herd.
+    const delayMs = Math.round(backoffMs * (0.5 + Math.random() / 2));
     this.reconnectAttempt++;
     this.reconnectTimer = setTimeout(() => {
       console.error(dim(`  reconnecting to RDK Central (attempt ${this.reconnectAttempt})...`));

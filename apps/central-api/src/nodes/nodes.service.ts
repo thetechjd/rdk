@@ -21,13 +21,51 @@ export const PLANS: Record<string, {
   enterprise: { maxChunks: 1000000, maxQueriesDay: 50000, maxTeamNodes: 9, canContribute: true,  canConsume: true,  hasOverage: true  },
 };
 
+/**
+ * Authentication is O(active nodes) in bcrypt comparisons, and bcrypt is
+ * deliberately expensive (~100ms at cost 10). Every WebSocket connect calls it,
+ * and every failed connect schedules a reconnect that calls it again — so a
+ * fleet that loses its sockets generates a storm that saturates the CPU, which
+ * makes auth slower, which times out more clients. It does not converge.
+ *
+ * A short-lived cache breaks that loop: repeat auths cost one SHA-256 instead of
+ * N bcrypts. Kept deliberately short so a deactivated node stops working
+ * promptly; it exists to absorb bursts, not to be a session store.
+ */
+const AUTH_CACHE_TTL_MS = 60_000;
+/** Wrong keys pay the full scan every time, so a bad client is a DoS. Cached
+ *  briefly too, but separately — a rejection must never outlive a real fix. */
+const AUTH_NEGATIVE_TTL_MS = 15_000;
+
+interface CachedAuth {
+  nodeId: string;
+  plan: string;
+  planStatus: string;
+  expiresAt: number;
+}
+
 @Injectable()
 export class NodesService {
+  /** key: sha256(apiKey) — never the key itself. */
+  private readonly authCache = new Map<string, CachedAuth>();
+  private readonly authRejects = new Map<string, number>();
+
   constructor(
     @InjectRepository(Node)
     private nodeRepo: Repository<Node>,
     private jwtService: JwtService,
   ) {}
+
+  private static cacheKey(apiKey: string): string {
+    return crypto.createHash('sha256').update(apiKey).digest('hex');
+  }
+
+  /** Drops any cached grant for a node, so deactivation takes effect at once. */
+  invalidateAuthCache(nodeId: string): void {
+    for (const [key, entry] of this.authCache) {
+      if (entry.nodeId === nodeId) this.authCache.delete(key);
+    }
+  }
 
   async register(data: {
     email: string;
@@ -62,22 +100,55 @@ export class NodesService {
       throw new UnauthorizedException('Invalid API key format');
     }
 
-    // Must check all active nodes — bcrypt.compare is per-record
-    // Optimization: store first 8 chars as lookup prefix to avoid full table scan
-    const prefix = apiKey.slice(0, 12);
+    const cacheKey = NodesService.cacheKey(apiKey);
+    const now = Date.now();
+
+    const cached = this.authCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      // last_seen is best-effort presence, not an audit trail — do not await it,
+      // and never let it drag the auth path back onto the database.
+      void this.nodeRepo.update(cached.nodeId, { lastSeen: new Date() }).catch(() => undefined);
+      return {
+        nodeId: cached.nodeId,
+        plan: cached.plan,
+        planStatus: cached.planStatus,
+        jwtToken: this.jwtService.sign({ sub: cached.nodeId, plan: cached.plan }),
+      };
+    }
+    if (cached) this.authCache.delete(cacheKey);
+
+    const rejectedAt = this.authRejects.get(cacheKey);
+    if (rejectedAt !== undefined && rejectedAt > now) {
+      throw new UnauthorizedException('Invalid API key');
+    }
+
+    // Cache miss: the unavoidable scan. bcrypt.compare is per-record, so this is
+    // O(active nodes) — see AUTH_CACHE_TTL_MS above for why it must stay rare.
     const nodes = await this.nodeRepo.find({ where: { isActive: true } });
 
     for (const node of nodes) {
       const match = await bcrypt.compare(apiKey, node.apiKeyHash);
       if (match) {
-        // Update last_seen
         await this.nodeRepo.update(node.id, { lastSeen: new Date() });
+
+        this.authCache.set(cacheKey, {
+          nodeId: node.id,
+          plan: node.plan,
+          planStatus: node.planStatus,
+          expiresAt: now + AUTH_CACHE_TTL_MS,
+        });
 
         const jwtToken = this.jwtService.sign({ sub: node.id, plan: node.plan });
         return { nodeId: node.id, plan: node.plan, planStatus: node.planStatus, jwtToken };
       }
     }
 
+    this.authRejects.set(cacheKey, now + AUTH_NEGATIVE_TTL_MS);
+    if (this.authRejects.size > 10_000) {
+      for (const [key, expiry] of this.authRejects) {
+        if (expiry <= now) this.authRejects.delete(key);
+      }
+    }
     throw new UnauthorizedException('Invalid API key');
   }
 
