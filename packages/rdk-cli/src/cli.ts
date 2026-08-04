@@ -136,9 +136,50 @@ program
   .option('-d, --domain <domain>')
   .option('-k, --top-k <n>', 'Results', '5')
   .option('--no-save', "Don't keep retrieved documents in your vault")
+  .option('--json', 'Machine-readable output. Without a selection, lists matches only — nothing is charged.')
+  .option('--select <chunkId>', 'Retrieve this document instead of asking')
+  .option('--auto', 'Retrieve the best match without asking')
+  .option('--max-tip <usd>', 'Refuse an unattended retrieval costing more than this')
   .action(async (query, opts) => {
     const { unifiedQuery } = await import('./commands/query.js');
-    await unifiedQuery(query, { domain: opts.domain, topK: parseInt(opts.topK, 10), save: opts.save });
+    await unifiedQuery(query, {
+      domain: opts.domain,
+      topK: parseInt(opts.topK, 10),
+      save: opts.save,
+      json: !!opts.json,
+      select: opts.select,
+      auto: !!opts.auto,
+      maxTip: opts.maxTip === undefined ? undefined : parseFloat(opts.maxTip),
+    });
+  });
+
+// ── Config ───────────────────────────────────────────────────────────────────
+// Only settings a user should be able to change by hand. Secrets (api keys,
+// vault keys, tokens) are deliberately absent: they are managed by init, login
+// and rotate, and printing them here would put them in shell history and logs.
+
+program
+  .command('config')
+  .description('Show the settings you can change')
+  .action(async () => {
+    const { showConfig } = await import('./commands/config.js');
+    await showConfig();
+  });
+
+program
+  .command('config:get <key>')
+  .description('Read one setting')
+  .action(async (key) => {
+    const { getConfigValue } = await import('./commands/config.js');
+    await getConfigValue(key);
+  });
+
+program
+  .command('config:set <key> <value>')
+  .description('Change one setting (e.g. query.autoRetrieve true, query.maxTip 0.01)')
+  .action(async (key, value) => {
+    const { setConfigValue } = await import('./commands/config.js');
+    await setConfigValue(key, value);
   });
 
 // ── Network ──────────────────────────────────────────────────────────────────

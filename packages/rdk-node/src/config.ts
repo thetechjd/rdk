@@ -43,6 +43,16 @@ export interface RDKConfig {
    *  per-action choices (drag-drop dialog, publish commands) always win. */
   defaultVisibility?: 'private' | 'public';
 
+  /** Standing authorization for `rdk query` to retrieve without a human choosing.
+   *  Off by default: retrieval settles a tip, so spending is opt-in. An agent
+   *  operating under standing authorization sets this once instead of passing
+   *  --auto on every call. Per-invocation flags always win. */
+  queryAutoRetrieve?: boolean;
+  /** Ceiling, in USDC, on a tip that may be settled without a human choosing.
+   *  Applies to non-interactive retrieval only — an interactive picker shows the
+   *  tip next to every choice, so the human has already seen the price. */
+  queryMaxTipUsdc?: number;
+
   // Encryption
   vaultKeyHex?: string;                      // own vault key (encrypted at rest)
   sharedVaultKeys?: Record<string, string>;  // ownerNodeId → hex key (encrypted at rest)
