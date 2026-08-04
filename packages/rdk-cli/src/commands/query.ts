@@ -21,9 +21,55 @@ import type { NetworkChunk, QueryResult, RetrievedDocument } from '@rdk/core';
 import type { SearchResult } from '@rdk/core';
 import { select } from '../prompts.js';
 
+/** How a document got chosen — reported in JSON so a caller can audit spend. */
+type SelectionMode = 'interactive' | 'explicit' | 'auto';
+
+/** Machine-readable preview of one candidate document. Free: nothing is fetched
+ *  and no tip settles until a selection is made. */
+interface DocumentPreview {
+  chunkId: string;
+  name: string;
+  score: number;
+  sections: number;
+  tipUsdc: number;
+  isOwn: boolean;
+  preview: string;
+}
+
+function previewsAsJson(docs: ReturnType<typeof import('@rdk/core').groupIntoDocuments>): DocumentPreview[] {
+  return docs.map((doc) => {
+    const representative = [...doc.sections].sort((a, b) => b.score - a.score)[0]!;
+    return {
+      chunkId: representative.chunkId,
+      name: doc.name,
+      score: Number(doc.score.toFixed(4)),
+      sections: doc.sections.length,
+      tipUsdc: doc.tipUsdc,
+      isOwn: doc.isOwn,
+      preview: (representative.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 240),
+    };
+  });
+}
+
+function emit(payload: unknown): void {
+  console.log(JSON.stringify(payload, null, 2));
+}
+
 export async function unifiedQuery(
   query: string,
-  opts: { domain?: string; topK?: number; save?: boolean },
+  opts: {
+    domain?: string;
+    topK?: number;
+    save?: boolean;
+    /** Machine-readable output. Without a selection this lists previews only. */
+    json?: boolean;
+    /** Retrieve this chunk id directly, skipping the picker. */
+    select?: string;
+    /** Retrieve the top-ranked document without asking. */
+    auto?: boolean;
+    /** Refuse any non-interactive retrieval whose tip exceeds this, in USDC. */
+    maxTip?: number;
+  } = {},
 ): Promise<void> {
   const ora = (await import('ora')).default;
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
@@ -70,7 +116,21 @@ export async function unifiedQuery(
     if (result.chunks.length === 0) {
       // Distinguish "nothing matched" from "we couldn't ask" — a credit gate, an
       // expired key or an unreachable Central used to print the same line as a
-      // genuine miss, which made the failure invisible.
+      // genuine miss, which made the failure invisible. The same distinction has
+      // to survive into JSON, or a caller cannot tell a miss from an outage.
+      if (opts.json) {
+        emit({
+          ok: !result.networkError,
+          retrieved: false,
+          reason: result.networkError ? 'network_error' : 'no_match',
+          message: result.networkError ?? result.networkMessage
+            ?? 'No confident match in your vault or on the network.',
+          documents: [],
+          unavailable: result.unavailableChunks?.length ?? 0,
+        });
+        if (result.networkError) process.exitCode = 1;
+        return;
+      }
       if (result.networkError) {
         console.log(t.warn(`Couldn't search the network: ${result.networkError}`));
         console.log(t.dim('Nothing in your local vault matched either.'));
@@ -90,6 +150,27 @@ export async function unifiedQuery(
     // telegram" happens — the answer existed, and the footnote explaining why it
     // was missing came after the wrong answers.
     if (fromLocal) {
+      // Own content: already on disk, always free, nothing to choose. This path
+      // never prompts, so it needs no authorization either way.
+      if (opts.json) {
+        emit({
+          ok: true,
+          retrieved: true,
+          source: 'vault',
+          selection: 'not_required',
+          tipsPaidUsdc: 0,
+          documents: (result.chunks as (SearchResult & NetworkChunk)[]).map(c => ({
+            chunkId: c.chunkId,
+            name: c.title ?? 'Untitled',
+            score: Number((c.score ?? 0).toFixed(4)),
+            isOwn: true,
+            state: c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private',
+            sourcePath: c.sourcePath,
+            content: (c.content ?? c.summary ?? '').trim(),
+          })),
+        });
+        return;
+      }
       printLocal(result, query, config.nodeId);
       return;
     }
@@ -97,25 +178,100 @@ export async function unifiedQuery(
     const previews = groupIntoDocuments(result.chunks as NetworkChunk[]);
     if (previews.length === 0) { reportUnavailable(result); return; }
 
-    console.log(t.heading(`\n${previews.length} documents matched "${query}"\n`));
-    const selectedChunkId = await select({
-      message: 'Choose a document to retrieve:',
-      choices: previews.map((doc) => {
-        const representative = [...doc.sections].sort((a, b) => b.score - a.score)[0];
-        const ownership = doc.isOwn ? 'yours · free' : doc.tipUsdc > 0
-          ? `tip $${doc.tipUsdc.toFixed(4)}`
-          : 'free';
-        const preview = representative?.content?.trim() || 'No preview available';
-        return {
-          name: doc.name,
-          value: representative.chunkId,
-          hint: `${(doc.score * 100).toFixed(0)}% · ${doc.sections.length} section(s) · ${ownership}\n` +
-            `      ${preview.replace(/\s+/g, ' ').slice(0, 140)}${preview.length > 140 ? '…' : ''}`,
+    // ── Selection ────────────────────────────────────────────────────────────
+    // Retrieval settles a tip, so it never happens without someone choosing:
+    // a human at the picker, an explicit --select, or standing authorization.
+    // Per-invocation flags override config.
+    const json = opts.json === true;
+    const autoAuthorized = opts.auto ?? config.queryAutoRetrieve ?? false;
+    const maxTip = opts.maxTip ?? config.queryMaxTipUsdc;
+    const interactive = process.stdin.isTTY === true;
+    const ranked = previewsAsJson(previews);
+
+    let selectedChunkId: string;
+    let selectionMode: SelectionMode;
+
+    if (opts.select) {
+      const hit = ranked.find(d => d.chunkId === opts.select);
+      if (!hit) {
+        const payload = {
+          ok: false, retrieved: false, error: 'unknown_chunk_id',
+          message: `No document in these results has chunkId "${opts.select}".`,
+          documents: ranked,
         };
-      }),
-      default: previews[0].sections[0]!.chunkId,
-      footer: 'Content is retrieved and any tip is charged only after you select.',
-    });
+        if (json) emit(payload);
+        else console.log(t.error(payload.message));
+        process.exitCode = 1;
+        return;
+      }
+      selectedChunkId = hit.chunkId;
+      selectionMode = 'explicit';
+    } else if (autoAuthorized) {
+      selectedChunkId = ranked[0]!.chunkId;
+      selectionMode = 'auto';
+    } else if (interactive) {
+      console.log(t.heading(`\n${previews.length} documents matched "${query}"\n`));
+      selectedChunkId = await select({
+        message: 'Choose a document to retrieve:',
+        choices: previews.map((doc) => {
+          const representative = [...doc.sections].sort((a, b) => b.score - a.score)[0];
+          const ownership = doc.isOwn ? 'yours · free' : doc.tipUsdc > 0
+            ? `tip $${doc.tipUsdc.toFixed(4)}`
+            : 'free';
+          const preview = representative?.content?.trim() || 'No preview available';
+          return {
+            name: doc.name,
+            value: representative.chunkId,
+            hint: `${(doc.score * 100).toFixed(0)}% · ${doc.sections.length} section(s) · ${ownership}\n` +
+              `      ${preview.replace(/\s+/g, ' ').slice(0, 140)}${preview.length > 140 ? '…' : ''}`,
+          };
+        }),
+        default: previews[0].sections[0]!.chunkId,
+        footer: 'Content is retrieved and any tip is charged only after you select.',
+      });
+      selectionMode = 'interactive';
+    } else {
+      // No terminal and no authorization. Previously this fell through to a
+      // prompt that could never be answered: the command printed a list, exited
+      // 0, and retrieved nothing — indistinguishable from success. Hand back the
+      // previews as data instead, and name the call that completes the job.
+      emit({
+        ok: true,
+        retrieved: false,
+        reason: 'selection_required',
+        message: 'Retrieval settles a tip, so it needs an explicit choice. Nothing was charged.',
+        next: {
+          select: `rdk query ${JSON.stringify(query)} --select <chunkId>`,
+          auto: `rdk query ${JSON.stringify(query)} --auto --max-tip <usd>`,
+          standing: 'rdk config:set query.autoRetrieve true',
+        },
+        documents: ranked,
+      });
+      return;
+    }
+
+    // A ceiling only means anything where no human saw the price. The picker
+    // shows the tip beside every choice, so an interactive pick is consent.
+    if (selectionMode !== 'interactive' && maxTip !== undefined) {
+      const chosen = ranked.find(d => d.chunkId === selectedChunkId)!;
+      if (!chosen.isOwn && chosen.tipUsdc > maxTip) {
+        const payload = {
+          ok: false, retrieved: false, error: 'tip_exceeds_max',
+          message: `"${chosen.name}" costs $${chosen.tipUsdc.toFixed(4)} USDC, ` +
+            `above the --max-tip ceiling of $${maxTip.toFixed(4)}. Nothing was charged.`,
+          document: chosen,
+          documents: ranked,
+        };
+        if (json) emit(payload);
+        else console.log(t.warn(payload.message));
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    if (!json && selectionMode !== 'interactive') {
+      console.log(t.dim(`Retrieving "${ranked.find(d => d.chunkId === selectedChunkId)!.name}"…`));
+    }
 
     const retrieveSpinner = ora('Retrieving the selected document...').start();
     result = await withWsConnection(() =>
@@ -124,6 +280,15 @@ export async function unifiedQuery(
     retrieveSpinner.stop();
 
     if (result.chunks.length === 0) {
+      if (opts.json) {
+        emit({
+          ok: false, retrieved: false, reason: 'retrieval_failed',
+          message: result.networkError ?? 'That document could not be retrieved.',
+          selection: selectionMode, chunkId: selectedChunkId,
+        });
+        process.exitCode = 1;
+        return;
+      }
       if (result.networkError) console.log(t.warn(`Couldn't retrieve that document: ${result.networkError}`));
       else console.log(t.warn('That document could not be retrieved.'));
       reportUnavailable(result);
@@ -131,31 +296,80 @@ export async function unifiedQuery(
     }
 
     const documents = groupIntoDocuments(result.chunks as NetworkChunk[]);
-    if (documents.length === 0) { reportUnavailable(result); printLocal(result, query, config.nodeId); return; }
+    if (documents.length === 0) {
+      if (opts.json) {
+        emit({
+          ok: false, retrieved: false, reason: 'no_document_resolved',
+          message: 'The selected chunk did not resolve to a document.',
+          selection: selectionMode, chunkId: selectedChunkId,
+        });
+        process.exitCode = 1;
+        return;
+      }
+      reportUnavailable(result); printLocal(result, query, config.nodeId); return;
+    }
 
     // Report only what we could NOT answer with. Naming a document as
     // unretrievable and then printing it — which happened whenever some of its
     // sections were served and some weren't — reads as a straight contradiction.
-    reportUnavailable(result, new Set(documents.filter(d => d.contentAvailable).map(d => d.name)));
+    // Under --json this travels in the payload instead, so stdout stays parseable.
+    if (!opts.json) {
+      reportUnavailable(result, new Set(documents.filter(d => d.contentAvailable).map(d => d.name)));
 
-    if (result.lowConfidence) {
-      console.log(t.warn('Loose matches — nothing scored as a strong match for this query.\n'));
+      if (result.lowConfidence) {
+        console.log(t.warn('Loose matches — nothing scored as a strong match for this query.\n'));
+      }
     }
 
     const saved = opts.save === false
       ? documents.map(() => undefined)
       : await saveDocuments(documents, query, config, localStore, embeddingModel);
 
+    const tipsPaidUsdc = result.tipsPaid.reduce((s, p) => s + p.amountUsdc, 0);
+
     // A selected result resolves to one complete document. If an older Central
     // returns more than one, print only the selected document group.
-    printDocument(documents[0], query, saved[0]);
+    const doc = documents[0];
+
+    if (opts.json) {
+      // Report what was actually spent and how the choice was made — a caller
+      // running unattended has to be able to audit both.
+      emit({
+        ok: true,
+        retrieved: true,
+        source: 'network',
+        selection: selectionMode,
+        tipsPaidUsdc: Number(tipsPaidUsdc.toFixed(6)),
+        lowConfidence: result.lowConfidence === true,
+        document: {
+          chunkId: selectedChunkId,
+          name: doc.name,
+          score: Number(doc.score.toFixed(4)),
+          isOwn: doc.isOwn,
+          originNodeId: doc.originNodeId,
+          contentAvailable: doc.contentAvailable,
+          savedPath: saved[0],
+          sections: doc.sections.map(s => ({
+            heading: s.heading,
+            content: s.content.trim(),
+          })),
+        },
+        unavailable: (result.unavailableChunks ?? []).map(c => ({
+          name: c.title.split(' — ')[0], reason: c.reason,
+        })),
+      });
+      return;
+    }
+
+    printDocument(doc, query, saved[0]);
 
     if (result.tipsPaid.length > 0) {
-      const total = result.tipsPaid.reduce((s, p) => s + p.amountUsdc, 0);
-      console.log(t.dim(`\ntips: $${total.toFixed(4)} USDC across ${result.tipsPaid.length} chunk(s)`));
+      console.log(t.dim(`\ntips: $${tipsPaidUsdc.toFixed(4)} USDC across ${result.tipsPaid.length} chunk(s)`));
     }
   } catch (e) {
-    spinner.fail((e as Error).message);
+    spinner.stop();
+    if (opts.json) emit({ ok: false, retrieved: false, error: 'query_failed', message: (e as Error).message });
+    else console.log(t.error((e as Error).message));
     process.exitCode = 1;
   }
 }
