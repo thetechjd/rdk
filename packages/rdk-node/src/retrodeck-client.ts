@@ -243,6 +243,22 @@ export async function getWithdrawable(): Promise<{
   };
 }
 
+/** Why a crypto subscription is or is not collecting, plus how to pay. */
+export interface SubscriptionHealthInfo {
+  status: string;
+  remedy: string;
+  message: string;
+  /** Server-supplied hosted checkout; absent on an older API. */
+  payUrl?: string | null;
+}
+
+export async function getSubscriptionHealth(): Promise<SubscriptionHealthInfo | null> {
+  const res = await retrodeckFetch('/api/v1/plans/subscription/health');
+  // Older API, or no subscription — nothing to surface either way.
+  if (!res.ok) return null;
+  return (await res.json()) as SubscriptionHealthInfo;
+}
+
 export async function getBalance(): Promise<BalanceInfo | null> {
   const res = await retrodeckFetch('/api/v1/balances/me');
   if (!res.ok) return null;

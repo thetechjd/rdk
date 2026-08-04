@@ -1120,10 +1120,11 @@ export class NodeService {
       // Self-heal: credit any top-up that completed but was never verified
       // (crediting happens on verification — there's no async Stripe webhook).
       await retrodeck.verifyTopup().catch(tolerate(undefined));
-      const [me, bal, wd] = await Promise.all([
+      const [me, bal, wd, subHealth] = await Promise.all([
         retrodeck.getMe().catch(tolerate(null)),
         retrodeck.getBalance().catch(tolerate(null)),
         retrodeck.getWithdrawable().catch(tolerate(null)),
+        retrodeck.getSubscriptionHealth().catch(tolerate(null)),
       ]);
 
       // Refresh token rejected → the user genuinely has to sign in again.
@@ -1140,6 +1141,10 @@ export class NodeService {
         // Passed through untouched: the desktop must not decide for itself what
         // counts as "low", or it will disagree with the dashboard and the CLI.
         balanceStatus: bal?.balanceStatus,
+        // Passed through untouched for the same reason as balanceStatus: the
+        // server decides the remedy and writes the copy, so all three surfaces
+        // say the same thing.
+        subscriptionHealth: subHealth ?? undefined,
         // Only the fee RATE is new here — `withdrawable` already comes from the
         // balance response above, and duplicating the key would silently let the
         // second one win.

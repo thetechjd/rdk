@@ -275,6 +275,16 @@ export interface Account {
     message: string;
     action: 'none' | 'topup';
   };
+  /** Server-computed subscription state. Rendered verbatim, like balanceStatus,
+   *  so the desktop never disagrees with the CLI or the dashboard. */
+  subscriptionHealth?: {
+    status: string;
+    remedy: string;
+    message: string;
+    /** Hosted checkout — present even when healthy, so paying in the browser is
+     *  a standing option rather than only a recovery path. */
+    payUrl?: string | null;
+  };
 }
 
 /** A subscription plan as served by the RetroDeck API (never hardcoded). */
@@ -426,6 +436,9 @@ export interface RdkApi {
   /** Browser handoff for account creation / password reset. */
   openSignup(): Promise<void>;
   openUpgrade(): Promise<void>;                          // browser handoff (dashboard billing)
+  /** Opens the server-supplied billing URL, validated against the dashboard
+   *  origin in the main process. Falls back to the billing page. */
+  openBillingPortal(url?: string | null): Promise<void>;
   openTopUp(): Promise<void>;                            // browser handoff (dashboard balance)
   getEarnings(): Promise<EarningsSummary>;
 
@@ -473,7 +486,7 @@ export const RDK_CHANNELS: RdkChannel[] = [
   'deleteChunk', 'getRetrievedFor', 'getVersions',
   'getGraphData', 'query', 'retrieveQueryDocument',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
-  'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openTopUp', 'getEarnings',
+  'getAccount', 'login', 'signOut', 'openSignup', 'openUpgrade', 'openBillingPortal', 'openTopUp', 'getEarnings',
   'getPlans', 'selectPlan', 'verifySubscription', 'createTopup', 'verifyTopup',
   'getWithdrawalStatus', 'getWallets', 'requestWithdrawal', 'getWithdrawals',
   'getMcpInfo', 'getPreferences', 'setPreferences', 'openExternal',

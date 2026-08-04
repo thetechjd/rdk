@@ -302,6 +302,40 @@ function AccountSection() {
             {acct.balanceStatus.message}
           </div>
         )}
+        {/* Subscription state, rendered verbatim like balanceStatus. payUrl is
+            offered whenever the server supplies one — including while healthy —
+            so paying in the browser is a standing option and never depends on a
+            failure being classified correctly. */}
+        {acct?.subscriptionHealth && acct.subscriptionHealth.remedy !== 'none' && (
+          <div
+            role="alert"
+            className="hint"
+            style={{
+              color: acct.subscriptionHealth.status === 'lapsed'
+                ? 'var(--tape, #E8521A)'
+                : 'var(--cassette, #e8b61a)',
+              marginBottom: 6,
+            }}
+          >
+            {acct.subscriptionHealth.message}
+            {acct.subscriptionHealth.payUrl && (
+              <>
+                {' '}
+                <a
+                  href={acct.subscriptionHealth.payUrl}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (acct.subscriptionHealth?.payUrl) {
+                      void window.rdk.openBillingPortal(acct.subscriptionHealth.payUrl);
+                    }
+                  }}
+                >
+                  Pay in your browser
+                </a>
+              </>
+            )}
+          </div>
+        )}
         <div className="row">
           <span
             className="balance"

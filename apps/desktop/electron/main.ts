@@ -172,6 +172,21 @@ function registerHandlers(): void {
     // Account creation / password reset still belong on the web.
     openSignup: async () => { await shell.openExternal(`${service.getDashboardUrl()}/signup`); },
     openUpgrade: async () => { await shell.openExternal(`${service.getDashboardUrl()}/billing`); },
+    // The server supplies the pay URL so all surfaces agree, but the renderer is
+    // not trusted to name an arbitrary destination: anything off the dashboard
+    // origin falls back to the known billing page.
+    openBillingPortal: async (url: never) => {
+      const fallback = `${service.getDashboardUrl()}/billing`;
+      let target = fallback;
+      try {
+        const candidate = new URL(String(url ?? ''));
+        const dashboard = new URL(service.getDashboardUrl());
+        if (candidate.protocol === 'https:' && candidate.origin === dashboard.origin) {
+          target = candidate.toString();
+        }
+      } catch { /* unparseable → fallback */ }
+      await shell.openExternal(target);
+    },
     openTopUp: async () => { await shell.openExternal(`${service.getDashboardUrl()}/balance`); },
     getEarnings: () => service.getEarnings(),
     // Billing (RetroDeck API). selectPlan/createTopup open the web checkout
