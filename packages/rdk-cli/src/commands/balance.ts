@@ -63,6 +63,12 @@ export function printSubscriptionWarning(health?: SubscriptionHealth | null): vo
   if (health.remedy === 'increase_approval' || health.remedy === 'reapprove') {
     console.log(t.dim('  Fix it with: rdk account:upgrade  (choose crypto again)'));
   }
+  // The portal is offered whenever the server supplies one — repairing the agent
+  // is never the only way out. A user whose agent has failed, or who never set
+  // one up, previously got advice they could not act on.
+  if (health.payUrl) {
+    console.log(t.dim(`  Or pay in your browser: ${health.payUrl}`));
+  }
   console.log('');
 }
 
@@ -76,8 +82,13 @@ export async function showSubscriptionStatus(opts: { json?: boolean } = {}): Pro
       console.log(JSON.stringify({ ok: true, health }, null, 2));
       return;
     }
-    if (!health || health.status === 'none') {
+    if (!health) {
       console.log(t.dim('  No crypto subscription.'));
+      return;
+    }
+    if (health.status === 'none') {
+      console.log(t.dim(`  ${health.message}`));
+      if (health.payUrl) console.log(t.dim(`  Pay in your browser: ${health.payUrl}`));
       return;
     }
     console.log(t.heading('\n  Crypto subscription\n'));

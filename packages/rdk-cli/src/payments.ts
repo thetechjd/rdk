@@ -244,7 +244,14 @@ export async function pollPlanActivation(
   return { paid: false };
 }
 
-export type SubscriptionRemedy = 'none' | 'fund_wallet' | 'increase_approval' | 'reapprove';
+/** `pay_portal` = pay in the browser instead of repairing the on-chain agent.
+ *  Every other remedy assumes the agent is the only rail. */
+export type SubscriptionRemedy =
+  | 'none'
+  | 'fund_wallet'
+  | 'increase_approval'
+  | 'reapprove'
+  | 'pay_portal';
 
 /** Why a crypto subscription is or isn't collecting, plus the fix. */
 export interface SubscriptionHealth {
@@ -256,6 +263,10 @@ export interface SubscriptionHealth {
   buyerWallet: string | null;
   collector: string | null;
   remedy: SubscriptionRemedy;
+  /** Server-provided hosted checkout. Present even when healthy, so the portal
+   *  is a standing second option rather than a break-glass. Absent on an API
+   *  older than this field. */
+  payUrl?: string | null;
   message: string;
 }
 
