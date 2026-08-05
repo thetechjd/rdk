@@ -13,6 +13,9 @@ export function Earnings() {
   const [wallets, setWallets] = useState<AccountWallet[]>([]);
   const [selectedWalletId, setSelectedWalletId] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Blank means "everything withdrawable" — the previous behaviour, which was
+   *  also the ONLY behaviour: there was no way to take out part of a balance. */
+  const [amountInput, setAmountInput] = useState('');
 
   const refresh = useCallback(() => {
     window.rdk.getEarnings().then(setData);
@@ -37,29 +40,39 @@ export function Earnings() {
       ? { id: 'legacy', address: account.walletAddress, chain: payout?.chain ?? 'base', isPrimary: true }
       : undefined);
 
+  // What will actually be withdrawn: the typed amount, or everything.
+  const typed = amountInput.trim() === '' ? null : Number(amountInput);
+  const amountValid = typed === null || (Number.isFinite(typed) && typed > 0 && typed <= withdrawable);
+  const amount = typed !== null && amountValid ? typed : withdrawable;
+  const amountError = !amountValid
+    ? (Number.isFinite(typed) && (typed as number) > withdrawable
+        ? `Only $${withdrawable.toFixed(2)} is withdrawable.`
+        : 'Enter an amount greater than zero.')
+    : null;
+
   // Fee preview, using the SAME function the server records with and the rate
   // the server published. A locally-invented 15% here could quote a payout we
   // do not send.
   const breakdown =
-    withdrawable > 0 && account?.withdrawalTaxRate != null
-      ? computeWithdrawalBreakdown(withdrawable, account.withdrawalTaxRate)
+    amount > 0 && account?.withdrawalTaxRate != null
+      ? computeWithdrawalBreakdown(amount, account.withdrawalTaxRate)
       : null;
 
   const withdraw = useCallback(async () => {
-    if (!wallet || withdrawable <= 0 || !payout?.enabled) return;
+    if (!wallet || amount <= 0 || !amountValid || !payout?.enabled) return;
     setBusy(true);
-    const r = await window.rdk.requestWithdrawal(withdrawable, wallet.address, wallet.chain);
+    const r = await window.rdk.requestWithdrawal(amount, wallet.address, wallet.chain);
     setBusy(false);
     if (r.ok) {
       // "Requested", not "sent" — settlement happens on-chain afterwards.
-      const received = breakdown?.net ?? withdrawable;
+      const received = breakdown?.net ?? amount;
       app.toast(`Withdrawal requested — $${received.toFixed(2)} to ${wallet.address.slice(0, 10)}…`);
       app.refreshData();
       refresh();
     } else {
       app.toast(r.error ?? 'Withdrawal failed', true);
     }
-  }, [app, refresh, wallet, withdrawable, payout, breakdown]);
+  }, [app, refresh, wallet, amount, amountValid, payout, breakdown]);
 
   if (!data) return <div className="empty">loading earnings…</div>;
 
@@ -76,6 +89,19 @@ export function Earnings() {
         <div className="section-label" style={{ marginBottom: 6 }}>withdraw</div>
         <div className="row" style={{ alignItems: 'center', gap: 10 }}>
           <span className="earn">${withdrawable.toFixed(2)} withdrawable</span>
+          <input
+            className="amount-input"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            max={withdrawable || undefined}
+            placeholder="all"
+            aria-label="Amount to withdraw in USDC"
+            value={amountInput}
+            disabled={withdrawable <= 0}
+            onChange={(event) => setAmountInput(event.target.value)}
+          />
           {wallets.length > 0 && (
             <select
               aria-label="Destination wallet"
@@ -91,23 +117,27 @@ export function Earnings() {
           )}
           <button
             className="cassette"
-            disabled={busy || !payout?.enabled || !wallet || withdrawable <= 0}
+            disabled={busy || !payout?.enabled || !wallet || withdrawable <= 0 || !amountValid}
             title={
               !wallet ? 'Add a wallet address in Settings → Account first.'
                 : !payout?.enabled ? (payout?.reason ?? 'Payouts are unavailable right now.')
                 : withdrawable <= 0 ? 'Nothing withdrawable yet.'
+                : amountError ? amountError
                 : breakdown
                   ? `Send $${breakdown.net.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain} `
                     + `(a ${(breakdown.taxRate * 100).toFixed(0)}% fee of $${breakdown.tax.toFixed(2)} is withheld)`
-                  : `Send $${withdrawable.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain}`
+                  : `Send $${amount.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain}`
             }
             onClick={withdraw}
           >{busy ? 'requesting…' : 'withdraw →'}</button>
         </div>
 
+        {/* Say why the button is dead rather than leaving it inert. */}
+        {amountError && <div className="hint" style={{ marginTop: 6, color: 'var(--tape, #E8521A)' }}>{amountError}</div>}
+
         {/* The fee, before the button is pressed. A withdrawal debits at once,
             so the net must not first appear in the confirmation toast. */}
-        {breakdown && (
+        {!amountError && breakdown && (
           <div className="hint" style={{ marginTop: 6 }}>
             ${breakdown.gross.toFixed(2)} withdrawn · {(breakdown.taxRate * 100).toFixed(0)}% fee
             −${breakdown.tax.toFixed(2)} · you receive{' '}

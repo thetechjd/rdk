@@ -94,7 +94,7 @@ button.cassette { border-color: var(--cassette); color: var(--cassette); }
 button.cassette:hover:not(:disabled) { background: rgba(232, 82, 26, 0.1); box-shadow: var(--glow-cassette); }
 button.ghost { border-color: transparent; }
 
-input, textarea {
+input, textarea, select {
   font-family: var(--font-mono);
   font-size: var(--fs-md);
   color: var(--text-bright);
@@ -103,7 +103,46 @@ input, textarea {
   padding: 6px 9px;
   outline: none;
 }
-input:focus, textarea:focus { border-color: var(--phosphor); box-shadow: var(--glow-phosphor); }
+input:focus, textarea:focus, select:focus { border-color: var(--phosphor); box-shadow: var(--glow-phosphor); }
+
+/* `select` was left out of the rule above, so it rendered as the OS default —
+   a white control on a black terminal theme. `appearance: none` removes the
+   native chrome; without it the platform paints its own background regardless
+   of the colours set here. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  /* Caret drawn as a background image, since the native one goes with the
+     native chrome. Colour matches --phosphor-dim. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--phosphor-dim) 50%),
+                    linear-gradient(135deg, var(--phosphor-dim) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 52%, calc(100% - 9px) 52%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+select:hover:not(:disabled) { border-color: var(--phosphor); }
+select:disabled { opacity: 0.5; cursor: default; }
+
+/* The open dropdown list is painted by the OS, which does not inherit the
+   control's colours — on Linux and Windows the options stay white unless they
+   are styled explicitly. */
+select option {
+  background: var(--bg-deep);
+  color: var(--text-bright);
+}
+
+/* Withdrawal amount: narrow, so it reads as a field beside the balance rather
+   than a text box that has taken over the row. */
+.amount-input {
+  width: 92px;
+  text-align: right;
+}
+/* The spinners crowd a 92px field and the value is typed, not stepped. */
+.amount-input::-webkit-outer-spin-button,
+.amount-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.amount-input { -moz-appearance: textfield; }
 
 /* ── App shell ─────────────────────────────────────────────────────────────── */
 .app {

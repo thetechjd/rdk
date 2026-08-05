@@ -480,12 +480,40 @@ export async function withdrawEarnings(opts: { amount?: number } = {}): Promise<
       return;
     }
 
-    const amount = opts.amount ?? balance.withdrawable;
-    if (amount > balance.withdrawable) {
+    if (opts.amount != null && opts.amount > balance.withdrawable) {
       spinner.fail(`Only $${balance.withdrawable.toFixed(4)} USDC is withdrawable.`);
       return;
     }
     spinner.stop();
+
+    // Without --amount this used to withdraw EVERYTHING with no way to choose,
+    // so taking part of a balance meant knowing the flag existed. Ask, defaulting
+    // to the whole amount so the previous behaviour is still one Enter away.
+    let amount = opts.amount ?? balance.withdrawable;
+    // Only ask when someone is there to answer. `input()` has no non-TTY guard,
+    // so prompting in a script would hang forever instead of doing what it did
+    // before — withdraw everything.
+    const interactive = process.stdin.isTTY && process.stdout.isTTY;
+    if (opts.amount == null && interactive) {
+      const { input } = await import('../prompts.js');
+      const answer = await input({
+        message: `Amount in USDC (Enter for all $${balance.withdrawable.toFixed(4)}):`,
+        default: '',
+      });
+      const typed = answer.trim();
+      if (typed !== '') {
+        const parsed = Number(typed.replace(/^\$/, ''));
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          console.log(t.warn('  Enter an amount greater than zero.'));
+          return;
+        }
+        if (parsed > balance.withdrawable) {
+          console.log(t.warn(`  Only $${balance.withdrawable.toFixed(4)} USDC is withdrawable.`));
+          return;
+        }
+        amount = parsed;
+      }
+    }
 
     // Show the fee split BEFORE asking. A withdrawal debits immediately and
     // settles asynchronously, so the net must never be a surprise afterwards.

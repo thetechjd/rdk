@@ -27,7 +27,7 @@ export interface CryptoCadetTopup {
   chainId: number;
 }
 
-interface WalletShow {
+export interface WalletShow {
   agentAddress: string;
   chainId: number;
   tokens: Array<{ token: string; symbol: string; balance: string; reserve: string; spendable: string }>;
@@ -254,8 +254,22 @@ function walletShow(bin: string): WalletShow | null {
 
 /** The wallet's USDC entry, or null. Deliberately does NOT fall back to
  *  `tokens[0]`: quoting in USDC and then funding/paying with whatever token
- *  happened to be listed first is worse than stopping with a clear message. */
-function usdcEntry(w: WalletShow) {
+ *  happened to be listed first is worse than stopping with a clear message.
+ *
+ *  Matched by ADDRESS when the offer names one. A wallet whose allowlist holds
+ *  both the old and the new USDC contract has two entries with the symbol
+ *  "USDC", and matching on symbol alone returned whichever was listed first —
+ *  so the balance shown, and checked against, could be the wrong token's. The
+ *  server tells us which contract the payment will actually use; believe it. */
+export function usdcEntry(w: WalletShow, tokenAddress?: string) {
+  if (tokenAddress) {
+    const want = tokenAddress.toLowerCase();
+    const exact = w.tokens.find((x) => x.token.toLowerCase() === want);
+    if (exact) return exact;
+    // The offer names a contract this wallet does not hold. Falling back to the
+    // symbol here would report a balance for a token the payment cannot use.
+    return null;
+  }
   return w.tokens.find((x) => x.symbol.toUpperCase() === 'USDC') ?? null;
 }
 
@@ -313,6 +327,7 @@ async function ensureFunded(
   bin: string,
   amountBaseUnits: string,
   field: 'spendable' | 'balance' = 'spendable',
+  tokenAddress?: string,
 ): Promise<boolean> {
   const need = BigInt(amountBaseUnits);
   for (;;) {
@@ -321,10 +336,16 @@ async function ensureFunded(
       warning('Could not read the agent wallet balance (`cryptocadet wallet:show`).');
       return false;
     }
-    const usdc = usdcEntry(w);
+    const usdc = usdcEntry(w, tokenAddress);
     if (!usdc) {
-      warning(`Your agent wallet has no USDC token configured on chain ${w.chainId}.`);
-      note('  Add it to the policy allowlist, or re-run `cryptocadet init` for the right network.');
+      if (tokenAddress) {
+        warning(`Your agent wallet does not hold the USDC contract this payment uses on chain ${w.chainId}.`);
+        note(`  Expected token: ${tokenAddress}`);
+        note('  Add it to the policy allowlist, or re-run `cryptocadet init` for the right network.');
+      } else {
+        warning(`Your agent wallet has no USDC token configured on chain ${w.chainId}.`);
+        note('  Add it to the policy allowlist, or re-run `cryptocadet init` for the right network.');
+      }
       return false;
     }
     const have = BigInt((field === 'balance' ? usdc.balance : usdc.spendable) ?? '0');
@@ -452,6 +473,14 @@ export async function payTopupWithCryptocadet(opts: {
   const topup = await opts.mintQuote();
   if (!topup || !topup.quote) return { status: 'failed', detail: 'could not obtain a payment quote' };
 
+  // The funding check above ran before the quote existed, so it matched USDC by
+  // symbol. Now the quote names the exact contract — re-check against it, since
+  // a wallet holding both the old and the new USDC would otherwise have been
+  // measured against the wrong one and fail at broadcast instead of here.
+  if (!(await ensureFunded(bin, topup.amount, 'spendable', topup.token))) {
+    return { status: 'skipped', detail: 'wallet not funded for the quoted token' };
+  }
+
   note(`Paying ${fmtUsdc(BigInt(topup.amount))} USDC on chain ${topup.chainId} → ${topup.recipient}`);
   return payQuote(bin, topup);
 }
@@ -486,7 +515,7 @@ export async function grantCryptocadetSubscription(offer: CryptoCadetPlanOffer):
   if (!(await ensureInitialized(bin))) return { status: 'skipped', detail: 'signer not initialized' };
 
   // Need at least one period's worth of USDC in the wallet for the first pull.
-  if (!(await ensureFunded(bin, offer.amountPerPeriod, 'balance'))) {
+  if (!(await ensureFunded(bin, offer.amountPerPeriod, 'balance', offer.token))) {
     return { status: 'skipped', detail: 'wallet not funded for the first period' };
   }
 
