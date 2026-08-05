@@ -1,0 +1,36 @@
+npm warn config optional Use `--omit=optional` to exclude optional dependencies, or
+npm warn config `--include=optional` to include them.
+npm warn config
+npm warn config       Default value does install optional deps unless otherwise omitted.
+npm warn Unknown project config "block-exotic-subdeps". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> @retrodeck/rdk@1.9.4 prepublishOnly
+> ./node_modules/esbuild/bin/esbuild src/cli.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/cli.js --external:@xenova/transformers --external:ethers --external:@retrodeck/adapter-obsidian --external:@retrodeck/adapter-filesystem --external:@retrodeck/adapter-logseq --external:@retrodeck/adapter-notion --external:@retrodeck/x402 --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:chokidar --external:ws --banner:js="#!/usr/bin/env node" && chmod +x dist/cli.js
+
+
+  dist/cli.js  2.8mb ⚠️
+
+⚡ Done in 105ms
+
+> @retrodeck/rdk@1.9.4 prepare
+> chmod +x dist/cli.js 2>/dev/null || true
+
+npm notice
+npm notice 📦  @retrodeck/rdk@1.9.4
+npm notice Tarball Contents
+npm notice 1.2kB README.md
+npm notice 3.0MB dist/cli.js
+npm notice 2.1kB package.json
+npm notice Tarball Details
+npm notice name: @retrodeck/rdk
+npm notice version: 1.9.4
+npm notice filename: retrodeck-rdk-1.9.4.tgz
+npm notice package size: 602.8 kB
+npm notice unpacked size: 3.0 MB
+npm notice shasum: c922fa35f57bdbf9e188ced18b57f5dda403adf0
+npm notice integrity: sha512-3WV2yHpIzw1Oc[...]K63yOc7WjEy4Q==
+npm notice total files: 3
+npm notice
+npm notice npm tokens that bypass 2FA are being restricted for account changes and direct publishing. Learn how to prepare: https://gh.io/npm-gat-bypass2fa-deprecation
+npm error Cannot implicitly apply the "latest" tag because previously published version 1.10.0 is higher than the new version 1.9.4. You must specify a tag using --tag.
+npm error A complete log of this run can be found in: /home/runner/.npm/_logs/2026-08-05T23_42_23_191Z-debug-0.log
