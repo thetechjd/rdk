@@ -224,7 +224,7 @@ export function VaultTree() {
                   aria-expanded={isOpen}
                 >
                   <span className="location-chevron">{isOpen ? '⌄' : '›'}</span>
-                  <span className="location-icon">📌</span>
+                  <span className="location-icon">⚲</span>
                   <span className="location-label">Pinned</span>
                   <span className="location-count">{pinnedDocs.length}</span>
                 </button>
@@ -239,7 +239,7 @@ export function VaultTree() {
                       >
                         <span className={`dot ${doc.state}`} />
                         <span className="name">{doc.title}</span>
-                        <span className="pin-badge" aria-label="pinned">📌</span>
+                        <span className="pin-badge" aria-label="pinned">⚲</span>
                       </div>
                     ))}
                   </div>
@@ -303,7 +303,7 @@ export function VaultTree() {
                         <span className={`dot ${doc.state}`} />
                         <span className="name">{doc.title}</span>
                         {doc.documentHash && pinnedHashes.has(doc.documentHash) && (
-                          <span className="pin-badge" title="Pinned — stays available while this node is offline">📌</span>
+                          <span className="pin-badge" title="Pinned — stays available while this node is offline">⚲</span>
                         )}
                         <span className="ct">{doc.chunkCount}</span>
                       </div>
@@ -454,7 +454,7 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
       <span className={`dot ${node.state}`} />
       <span className="name">{node.name}</span>
       {node.documentHash && pinnedHashes.has(node.documentHash) && (
-        <span className="pin-badge" title="Pinned — stays available while this node is offline">📌</span>
+        <span className="pin-badge" title="Pinned — stays available while this node is offline">⚲</span>
       )}
     </div>
   );
