@@ -8,16 +8,24 @@ export function Inspector() {
   const [chunk, setChunk] = useState<ChunkView | null>(null);
   const [retrieved, setRetrieved] = useState<RetrievedFor[]>([]);
   const [versions, setVersions] = useState<VersionView[]>([]);
+  const [pinned, setPinned] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!id) { setChunk(null); setRetrieved([]); setVersions([]); return; }
     let alive = true;
+    setPinned(false);
     window.rdk.getChunk(id).then(c => {
       if (!alive) return;
       setChunk(c);
       if (c?.sourcePath) window.rdk.getVersions(c.sourcePath).then(v => alive && setVersions(v));
       else setVersions([]);
+      // Pin state lives on Central, not in the local store, so it is fetched
+      // per selection rather than carried on the chunk.
+      if (c?.documentHash) {
+        window.rdk.pinnedDocuments([c.documentHash])
+          .then(hashes => alive && setPinned(hashes.includes(c.documentHash!)));
+      }
     });
     window.rdk.getRetrievedFor(id).then(r => alive && setRetrieved(r));
     return () => { alive = false; };
@@ -101,9 +109,25 @@ export function Inspector() {
                   : 'Only public chunks can be unpublished'}
                 onClick={() => act(() => window.rdk.unpublishChunk(chunk.id), 'Unpublished (retired from the network)')}>unpublish</button>
               <button
-                disabled={!caps?.pinSupported}
-                title={caps?.pinSupported ? '' : 'Pinning is not supported yet'}
-                onClick={() => act(() => window.rdk.pinChunk(chunk.id, true), 'Pinned')}>pin</button>
+                className={pinned ? 'cassette' : ''}
+                disabled={busy || !caps?.pinSupported || !chunk.documentHash}
+                title={
+                  !caps?.pinSupported
+                    ? 'Pinning needs a node connected to the network'
+                    : !chunk.documentHash
+                      ? 'Indexed before RDK recorded documents — re-index this file to pin it'
+                      : pinned
+                        ? 'Stop renting storage for this document. Your copy is untouched.'
+                        : 'Keep this document answerable while this node is offline. Billed monthly per MB.'
+                }
+                onClick={() => act(
+                  async () => {
+                    const r = await window.rdk.pinDocument(chunk.documentHash!, !pinned);
+                    if (r.ok) setPinned(!pinned);
+                    return r;
+                  },
+                  pinned ? 'Unpinned' : 'Pinned — stays available while this node is offline',
+                )}>{pinned ? 'unpin' : 'pin'}</button>
               <button className="ghost" disabled={busy} style={{ color: 'var(--danger)' }}
                 onClick={() => act(async () => window.rdk.deleteChunk(chunk.id), 'Deleted from index')}>delete</button>
             </div>

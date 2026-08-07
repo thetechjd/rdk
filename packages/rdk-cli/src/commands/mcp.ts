@@ -66,8 +66,12 @@ export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: b
   // node is offline. Ownership handling (only ONE session per node; Central kicks
   // duplicates with 4001) lives in @rdk/node so mcp:serve and the desktop app
   // behave identically.
-  const { startWsOwnership } = await import('@rdk/node/ws/ownership');
-  const ownership = startWsOwnership({ log: msg => console.error(t.dim(`  · ${msg}`)) });
+  const { startWsSession } = await import('@rdk/node/ws/ownership');
+  const ownership = startWsSession({
+    // Claude Desktop spawns this; RDK_APP_LABEL lets whoever spawns it say so.
+    app: 'mcp',
+    log: msg => console.error(t.dim(`  · ${msg}`)),
+  });
 
   // ── Clean shutdown ───────────────────────────────────────────────────────
   const shutdown = () => {

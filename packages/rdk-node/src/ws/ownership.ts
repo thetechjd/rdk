@@ -1,5 +1,5 @@
 // packages/rdk-node/src/ws/ownership.ts
-// Owning the Central WebSocket, in one place.
+// Holding the Central WebSocket, in one place.
 //
 // A node's content lives on the node. Central can only answer a query with that
 // content while the node holds a live WebSocket session — offline means every
@@ -8,103 +8,82 @@
 // a one-off `rdk query`) has to hold this connection, and they must all do it the
 // same way.
 //
-// Central allows ONE session per node — a second connect kicks the first with
-// close code 4001. `ws-lock` decides which local process owns the socket; the
-// others run without one. This module wraps claim → connect → heartbeat →
-// release so the desktop and the CLI cannot drift apart in how they do it.
+// They no longer compete for it. Central used to keep one session per node and
+// close the previous with 4001, so this module arbitrated between local
+// processes with a file lock; the loser sat idle, and a slipped hand-off turned
+// into a supersede loop. Central now holds every session for a node at once, so
+// each process simply connects and announces itself. An old Central still sends
+// 4001, and the client treats that as "retry in a few minutes" rather than
+// giving up — see REPLACED_RETRY_MS in client.ts.
 
 import { getWsClient, type RdkWebSocketClient } from './client.js';
-import { claimWs, releaseWs, wsHeldByOther } from './ws-lock.js';
+import { announceWs, clearWs, type RdkApp } from './ws-presence.js';
 
-/** How often the owner refreshes the lock (must stay under ws-lock's STALE_MS). */
-const OWNER_TICK_MS = 30_000;
+/** How often presence is refreshed (must stay under ws-presence's STALE_MS). */
+const PRESENCE_TICK_MS = 30_000;
 
-export interface WsOwnershipOptions {
+export interface WsSessionOptions {
+  /** Which surface this is, so other processes can name it. */
+  app?: RdkApp;
+  /** Overrides the default label for `app`. */
+  label?: string;
   /** Diagnostics sink. Defaults to silence — the desktop surfaces state via
    *  getStatus(), the CLI prints to stderr. */
   log?: (message: string) => void;
 }
 
-export interface WsOwnership {
-  /** True when THIS process holds the lock and drives the socket. */
-  isOwner(): boolean;
+export interface WsSession {
   /** True when this process has a live socket to Central right now. */
   isConnected(): boolean;
-  /** Stop the ownership loop, close our socket, and release the lock. */
+  /** Close this process's socket and withdraw its presence. */
   stop(): void;
 }
 
 /**
- * Start contending for the Central WebSocket. Returns null when this machine has
- * no usable node identity (not signed in, or an offline `local-` node).
+ * Open and hold this process's Central connection.
  *
- * Safe to call when another process (e.g. the always-on service) already owns the
- * connection: we simply don't open a competing socket, and take over on a later
- * tick if that process dies.
+ * Returns null when this machine has no usable node identity (not signed in, or
+ * an offline `local-` node).
  */
-export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | null {
+export function startWsSession(opts: WsSessionOptions = {}): WsSession | null {
   const client = getWsClient();
   if (!client) return null;
 
   const log = opts.log ?? (() => {});
-  let owner = false;
+  const app = opts.app ?? 'unknown';
   let stopped = false;
 
+  const announce = (connected: boolean) => announceWs({ app, label: opts.label, connected });
+
   client.on('connected', () => {
-    if (owner) claimWs(true);
+    announce(true);
     log('connected to RDK Central — serving content');
   });
   client.on('disconnected', ({ code, reason }: { code: number; reason: string }) => {
-    if (owner) claimWs(false);
+    announce(false);
     if (code !== 1000) log(`disconnected from RDK Central (${code})${reason ? ': ' + reason : ''}`);
   });
 
-  const ensureOwner = (): void => {
+  announce(false);
+  void client.connect();
+
+  // Refresh presence, and keep trying if we are not connected. The client has
+  // its own backoff; connect() no-ops when a socket already exists, so this is
+  // only a backstop against a client that stopped retrying for any reason.
+  const tick = setInterval(() => {
     if (stopped) return;
-    if (owner) {
-      // Ownership is re-verified, never assumed. Two processes can both claim a
-      // free lock at startup; the loser must stand down instead of continuing to
-      // reconnect, or the two supersede each other forever (Central permits one
-      // session per node and closes the older with 4001).
-      if (!claimWs(client.isConnected())) {
-        owner = false;
-        log('another RDK process took the Central connection — standing down');
-        client.disconnect();
-        return;
-      }
-      // Keep trying while we hold the lock. A 4001 ("another instance took
-      // over") permanently disables this client's automatic reconnect, so if
-      // that other instance later dies, nothing would ever reopen the socket
-      // and the node would sit at "connecting" for the rest of its life.
-      // connect() no-ops when a socket already exists, so this is safe to call.
-      if (!client.isConnected()) void client.connect();
-      return;
-    }
-    if (wsHeldByOther()) return;             // another instance owns it
-    // Only drive the socket if the claim actually succeeded.
-    if (!claimWs(false)) return;
-    owner = true;
-    log('holding the RDK Central connection for this node');
-    void client.connect();
-  };
-
-  ensureOwner();
-  if (!owner) log('another RDK process holds the Central connection');
-
-  const tick = setInterval(ensureOwner, OWNER_TICK_MS);
+    announce(client.isConnected());
+    if (!client.isConnected()) void client.connect();
+  }, PRESENCE_TICK_MS);
   if (typeof tick.unref === 'function') tick.unref();
 
   return {
-    isOwner: () => owner,
     isConnected: () => client.isConnected(),
     stop: () => {
       stopped = true;
       clearInterval(tick);
-      if (owner) {
-        client.disconnect();
-        releaseWs();
-        owner = false;
-      }
+      client.disconnect();
+      clearWs();
     },
   };
 }
@@ -112,32 +91,29 @@ export function startWsOwnership(opts: WsOwnershipOptions = {}): WsOwnership | n
 /**
  * Hold the Central connection for the duration of one short-lived command (e.g.
  * `rdk query`), so a user who hasn't installed the always-on service can still
- * retrieve their own content. No-ops into a plain pass-through when another
- * process already owns the socket — that process serves the fetch instead.
+ * retrieve their own content.
  *
  * Waits (briefly) for the socket to come up before running `fn`, because Central
  * fetches content synchronously while answering the query.
  */
 export async function withWsConnection<T>(
   fn: () => Promise<T>,
-  opts: WsOwnershipOptions & { readyTimeoutMs?: number } = {},
+  opts: WsSessionOptions & { readyTimeoutMs?: number } = {},
 ): Promise<T> {
-  const ownership = startWsOwnership(opts);
-  if (!ownership) return fn();
+  const session = startWsSession({ app: 'cli', ...opts });
+  if (!session) return fn();
 
   try {
-    if (ownership.isOwner()) {
-      await waitForConnection(ownership, opts.readyTimeoutMs ?? 5_000);
-    }
+    await waitForConnection(session, opts.readyTimeoutMs ?? 5_000);
     return await fn();
   } finally {
-    ownership.stop();
+    session.stop();
   }
 }
 
-async function waitForConnection(ownership: WsOwnership, timeoutMs: number): Promise<void> {
+async function waitForConnection(session: WsSession, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (!ownership.isConnected() && Date.now() < deadline) {
+  while (!session.isConnected() && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
 }

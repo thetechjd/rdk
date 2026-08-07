@@ -56,9 +56,22 @@ function NodeSection() {
           <span className={`dot ${status?.contentServing ? 'public' : 'local'}`} />
           <span>{status?.contentServing ? 'serving on the network' : 'not serving'}</span>
           <span style={{ color: 'var(--muted)' }}>
-            · {status?.wsConnected ? 'connected' : status?.contentServing ? 'via background service' : 'disconnected'}
+            {/* Name the app that is actually holding the socket. "via background
+                service" was a guess — it was just as often Claude Desktop. */}
+            · {status?.wsConnected
+                ? 'connected'
+                : status?.contentServing
+                  ? `via ${status?.alsoServedBy ?? 'another RDK app'}`
+                  : 'disconnected'}
           </span>
         </div>
+        {status?.contentServing && !status?.wsConnected && status?.alsoServedBy && (
+          <div className="hint">
+            {status.alsoServedBy} is serving this node right now, so your content
+            is retrievable whether or not this window is open. Both can serve at
+            once — nothing needs to be closed.
+          </div>
+        )}
         {!status?.contentServing && (
           <div className="hint">
             Your content stays on this machine and is served on demand, so nothing

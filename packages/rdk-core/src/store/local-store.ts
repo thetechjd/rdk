@@ -85,6 +85,20 @@ export interface StoredDocument {
   updatedAt: Date;
 }
 
+/** A document without its body — enough to list, name, and pin it. */
+export interface DocumentSummary {
+  hash: string;
+  title: string;
+  isPublic: boolean;
+  isEncrypted: boolean;
+  sourcePath?: string;
+  version: number;
+  /** Byte length of the stored content — ciphertext when encrypted, which is
+   *  what Central would hold and bill for if this document were pinned. */
+  sizeBytes: number;
+  updatedAt: Date;
+}
+
 /** One version of a document — the chunks of a single indexing pass, rolled up. */
 export interface DocumentVersion {
   version: number;
@@ -429,6 +443,57 @@ export class LocalStore {
       version: (row.version as number) ?? 1,
       tokenEstimate: (row.token_estimate as number) ?? 0,
       createdAt: new Date(row.created_at as string),
+      updatedAt: new Date(row.updated_at as string),
+    };
+  }
+
+  /** Indexed documents, most recently updated first. Content is deliberately
+   *  omitted — callers listing documents want to name them, not load them. */
+  listDocuments(limit = 200): DocumentSummary[] {
+    const rows = this.db.prepare(`
+      SELECT hash, title, is_public, is_encrypted, source_path, version,
+             LENGTH(content) AS size_bytes, updated_at
+      FROM documents
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `).all(limit) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToDocumentSummary(row));
+  }
+
+  /**
+   * Resolve what a user typed to indexed documents.
+   *
+   * Accepts a document hash (or unambiguous prefix), a source path, or a
+   * filename/title fragment, because someone pinning a note types its name far
+   * more often than its sha256. Returns every match so the caller can refuse to
+   * guess when a fragment is ambiguous.
+   */
+  findDocuments(target: string): DocumentSummary[] {
+    const needle = target.trim();
+    if (!needle) return [];
+    const rows = this.db.prepare(`
+      SELECT hash, title, is_public, is_encrypted, source_path, version,
+             LENGTH(content) AS size_bytes, updated_at
+      FROM documents
+      WHERE hash = ?
+         OR hash LIKE ? || '%'
+         OR source_path = ?
+         OR source_path LIKE '%' || ?
+         OR title LIKE '%' || ? || '%'
+      ORDER BY updated_at DESC
+    `).all(needle, needle, needle, needle, needle) as Record<string, unknown>[];
+    return rows.map((row) => this.rowToDocumentSummary(row));
+  }
+
+  private rowToDocumentSummary(row: Record<string, unknown>): DocumentSummary {
+    return {
+      hash: row.hash as string,
+      title: row.title as string,
+      isPublic: row.is_public === 1,
+      isEncrypted: row.is_encrypted === 1,
+      sourcePath: (row.source_path as string) ?? undefined,
+      version: (row.version as number) ?? 1,
+      sizeBytes: (row.size_bytes as number) ?? 0,
       updatedAt: new Date(row.updated_at as string),
     };
   }

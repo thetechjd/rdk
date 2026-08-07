@@ -14,7 +14,13 @@ export function StatusBar() {
     <div className="statusbar">
       <span className="item"
         title={status?.contentServing
-          ? 'Connected to the network — your indexed content can be retrieved.'
+          ? status?.wsConnected
+            ? 'Connected to the network — your indexed content can be retrieved.'
+            // Several RDK apps can serve the same node at once, so say which is,
+            // rather than leaving "serving" unexplained while this window shows
+            // no connection of its own.
+            + (status?.alsoServedBy ? ` Also serving: ${status.alsoServedBy}.` : '')
+            : `Your node is reachable through ${status?.alsoServedBy ?? 'another RDK app'} on this machine.`
           : 'Not connected — nothing you have indexed can be retrieved right now.'}>
         <span className={`dot ${status?.contentServing ? 'serving' : 'stopped'}`} />
         {status?.contentServing ? 'serving' : 'not serving'}

@@ -178,6 +178,59 @@ describe.skipIf(!choice.usable)('local store query_pipeline SQL', () => {
     expect(store.getAuthorityCounts('missing')).toEqual({ retrievalCount: 0, tipCount: 0 });
   });
 
+  // Pinning is per document and priced per MB, so `rdk pin <name>` has to
+  // resolve what the user typed to exactly ONE document — resolving to the wrong
+  // one bills them for it every month until someone notices.
+  describe('resolving documents for pinning', () => {
+    function storeWithDocuments() {
+      const store = new LocalStore(newStorePath());
+      store.saveDocument({
+        hash: 'aaa111', title: 'Wallet spec', content: 'x'.repeat(2048),
+        isPublic: true, isEncrypted: false,
+        sourcePath: '/vault/notes/wallet-spec.md', version: 1, tokenEstimate: 512,
+      });
+      store.saveDocument({
+        hash: 'bbb222', title: 'Payments spec', content: 'y'.repeat(1024),
+        isPublic: false, isEncrypted: true,
+        sourcePath: '/vault/notes/payments-spec.md', version: 1, tokenEstimate: 256,
+      });
+      return store;
+    }
+
+    it('finds a document by full hash, hash prefix, path, filename or title', () => {
+      const store = storeWithDocuments();
+      for (const needle of ['aaa111', 'aaa', '/vault/notes/wallet-spec.md', 'wallet-spec.md', 'Wallet']) {
+        expect(store.findDocuments(needle).map((d) => d.hash), needle).toEqual(['aaa111']);
+      }
+    });
+
+    it('returns every match so an ambiguous name is never guessed at', () => {
+      const store = storeWithDocuments();
+      expect(store.findDocuments('spec').map((d) => d.hash).sort()).toEqual(['aaa111', 'bbb222']);
+      expect(store.findDocuments('nothing-like-this')).toEqual([]);
+    });
+
+    it('reports the stored byte length, which is what rent is charged on', () => {
+      const store = storeWithDocuments();
+      const [wallet] = store.findDocuments('aaa111');
+      expect(wallet.sizeBytes).toBe(2048);
+      expect(wallet.isPublic).toBe(true);
+
+      const [payments] = store.findDocuments('bbb222');
+      // Private documents are stored as ciphertext, and it is the ciphertext
+      // Central would hold — so that is the billable size.
+      expect(payments.isEncrypted).toBe(true);
+      expect(payments.sizeBytes).toBe(1024);
+    });
+
+    it('lists documents without loading their bodies', () => {
+      const store = storeWithDocuments();
+      const listed = store.listDocuments();
+      expect(listed.map((d) => d.hash).sort()).toEqual(['aaa111', 'bbb222']);
+      expect(listed.every((d) => !('content' in d))).toBe(true);
+    });
+  });
+
   it('scopes both retrieval legs to the requested domain', () => {
     const store = new LocalStore(newStorePath());
     store.saveChunk(chunkRow({ id: 'eng-1', domain: 'engineering' }), new Float32Array([1, 0, 0]));

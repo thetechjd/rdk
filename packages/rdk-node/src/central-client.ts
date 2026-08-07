@@ -91,4 +91,80 @@ export class CentralClient {
     const r = (await res.json()) as { synced: number; errors: string[] };
     return { synced: r.synced, errors: r.errors.length };
   }
+
+  // ── Pinning ───────────────────────────────────────────────────────────────
+  //
+  // A pin is what makes a document answerable while this node is offline: it is
+  // the only content RDK Central stores, and it is billed monthly per MB. The
+  // node must be online to pin — Central pulls the document over the live
+  // websocket, because it holds no copy of its own.
+
+  async listPins(): Promise<{ pins: PinSummary[]; totalBytes: number }> {
+    const jwt = await this.getJwt();
+    const res = await fetch(`${this.base}/api/v1/pins`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(await centralError(res, 'Could not list pins'));
+    return (await res.json()) as { pins: PinSummary[]; totalBytes: number };
+  }
+
+  /** Which of these documents are already pinned — for rendering pin state. */
+  async pinnedHashes(documentHashes: string[]): Promise<string[]> {
+    if (documentHashes.length === 0) return [];
+    const jwt = await this.getJwt();
+    const res = await fetch(`${this.base}/api/v1/pins/status`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentHashes }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(await centralError(res, 'Could not read pin status'));
+    return ((await res.json()) as { pinned: string[] }).pinned;
+  }
+
+  async pinDocument(documentHash: string): Promise<PinSummary> {
+    const jwt = await this.getJwt();
+    const res = await fetch(`${this.base}/api/v1/pins/${encodeURIComponent(documentHash)}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}` },
+      // Central fetches the document from this node before replying, so allow
+      // for that round trip rather than the usual snappy timeout.
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new Error(await centralError(res, 'Pin failed'));
+    return (await res.json()) as PinSummary;
+  }
+
+  async unpinDocument(documentHash: string): Promise<void> {
+    const jwt = await this.getJwt();
+    const res = await fetch(`${this.base}/api/v1/pins/${encodeURIComponent(documentHash)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${jwt}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(await centralError(res, 'Unpin failed'));
+  }
+}
+
+export interface PinSummary {
+  documentHash: string;
+  title: string | null;
+  isPublic: boolean;
+  sizeBytes: number;
+  pinnedAt: string;
+}
+
+/**
+ * Central's refusals are the useful part here — "node is offline", "private but
+ * not encrypted" — so surface its message instead of a bare status code.
+ */
+async function centralError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: string };
+    if (body?.message) return body.message;
+  } catch {
+    // Non-JSON body; fall through to the status code.
+  }
+  return `${fallback}: HTTP ${res.status}`;
 }

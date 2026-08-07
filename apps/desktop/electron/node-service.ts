@@ -36,9 +36,10 @@ import {
   type RDKConfig,
 } from '@rdk/node/config';
 import { SyncService } from '@rdk/node/sync-service';
-import { startWsOwnership, type WsOwnership } from '@rdk/node/ws/ownership';
+import { CentralClient } from '@rdk/node/central-client';
+import { startWsSession, type WsSession } from '@rdk/node/ws/ownership';
 import { ensureServableNode } from '@rdk/node/register-node';
-import { wsConnectionHeldByOther } from '@rdk/node/ws/ws-lock';
+import { otherWsServers, describeOtherWsServers } from '@rdk/node/ws/ws-presence';
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
 // (and token) from RDK Central; see the note above getAccount().
 import * as retrodeck from '@rdk/node/retrodeck-client';
@@ -85,7 +86,7 @@ export class NodeService {
    *  content stays on this machine, so Central can only answer a query with our
    *  chunks while this socket is up. Without it our content is silently skipped
    *  and our own documents come back unfindable. */
-  private wsOwnership: WsOwnership | null = null;
+  private wsOwnership: WsSession | null = null;
   /** First-run login happens before a vault exists, so there is no valid config
    * to persist into yet. Keep the authenticated session in memory until init. */
   private pendingAccount: {
@@ -177,7 +178,9 @@ export class NodeService {
       autoStart: autoStartSupported(),
       network: !!cfg?.centralApiUrl && !!cfg?.apiKey,
       unpublishSupported: true, // unpublish = retire: stop serving from now on (versioned model)
-      pinSupported: false,       // no pin concept exists in core/central yet
+      // Pinning is a Central operation — it pulls the document from this node
+      // and stores it — so it needs a registered, connected node.
+      pinSupported: !!cfg?.centralApiUrl && !!cfg?.apiKey,
     };
   }
 
@@ -500,6 +503,7 @@ export class NodeService {
       domain: c.domain,
       categories: c.categories,
       sourcePath: c.sourcePath,
+      documentHash: c.documentHash,
       isEncrypted: c.isEncrypted,
       syncedAt: c.syncedAt?.toISOString(),
       qualityScore: c.qualityScore,
@@ -700,9 +704,47 @@ export class NodeService {
     }));
   }
 
-  // No pin concept exists in core/central yet (report §7).
-  pinChunk(): { ok: boolean; error?: string } {
-    return { ok: false, error: 'Pinning is not supported yet.' };
+  // ── pinning ─────────────────────────────────────────────────────────────────
+  //
+  // A pin keeps a document answerable on the network while this node is offline.
+  // It is the only content RDK Central stores, so it carries monthly rent per MB.
+  // Pinning is per DOCUMENT: a chunk is one section of one, and half a document
+  // guarantees nothing.
+
+  /** The plain HTTP client. Distinct from centralClient() above, which hands
+   *  back a SyncService for the chunk-sync endpoints. */
+  private pinApi(): CentralClient | null {
+    const cfg = this.getConfig();
+    if (!cfg?.centralApiUrl || !cfg?.apiKey) return null;
+    return new CentralClient({ centralApiUrl: cfg.centralApiUrl, apiKey: cfg.apiKey });
+  }
+
+  async pinDocument(documentHash: string, pinned: boolean): Promise<{ ok: boolean; error?: string }> {
+    const api = this.pinApi();
+    if (!api) return { ok: false, error: 'This node is not connected to the network.' };
+    if (!documentHash) {
+      return { ok: false, error: 'This chunk was indexed before RDK recorded documents. Re-index the file to pin it.' };
+    }
+    try {
+      if (pinned) await api.pinDocument(documentHash);
+      else await api.unpinDocument(documentHash);
+      return { ok: true };
+    } catch (e) {
+      // Central's refusals carry the useful part ("node is offline", "private
+      // but not encrypted"), so pass the message straight through.
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  async pinnedDocuments(documentHashes: string[]): Promise<string[]> {
+    const api = this.pinApi();
+    if (!api || documentHashes.length === 0) return [];
+    try {
+      return await api.pinnedHashes(documentHashes);
+    } catch {
+      // Pin state is decoration; a network hiccup should not blank the pane.
+      return [];
+    }
   }
 
   async reindex(): Promise<{ ok: boolean; error?: string }> {
@@ -951,15 +993,19 @@ export class NodeService {
     // tells the user their content is retrievable while Central skips every
     // chunk of it.
     const wsConnected = this.wsOwnership?.isConnected() ?? false;
-    // An installed always-on service holding the socket counts as serving —
-    // we deliberately don't open a competing one.
-    const heldByService = !wsConnected && wsConnectionHeldByOther();
+    // Another RDK process on this machine (the always-on service, Claude
+    // Desktop's mcp:serve) serves the same local store, so the node's content is
+    // reachable through it even before our own socket is up.
+    const servedElsewhere = otherWsServers().length > 0;
     return {
       serving: this.serving,
       wsConnected,
-      contentServing: wsConnected || heldByService,
+      contentServing: wsConnected || servedElsewhere,
+      // Name the other processes, so "your node is reachable but not because of
+      // this window" is something the user can actually see and act on.
+      alsoServedBy: describeOtherWsServers() ?? undefined,
       // "node idle" told the user nothing and offered nothing to do about it.
-      notServingReason: wsConnected || heldByService ? undefined : this.notServingReason ?? undefined,
+      notServingReason: wsConnected || servedElsewhere ? undefined : this.notServingReason ?? undefined,
       nodeId: cfg?.nodeId,
       lastSyncAt: this.lastSyncAt,
       chunkCount: stats.totalChunks,
@@ -1031,9 +1077,9 @@ export class NodeService {
       );
       this.syncService.start();
       // Defers to an installed always-on service when one already holds the lock.
-      this.wsOwnership = startWsOwnership();
+      this.wsOwnership = startWsSession({ app: 'desktop' });
       if (!this.wsOwnership) {
-        // startWsOwnership returns null when this machine has no usable node
+        // startWsSession returns null when this machine has no usable node
         // identity. Reporting ok here is what made "start node" appear to do
         // nothing: the button succeeded, the status stayed "not serving", and
         // there was no way to find out why.

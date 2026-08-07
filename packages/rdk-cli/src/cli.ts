@@ -228,6 +228,22 @@ program.command('network:query <query>').option('-d, --domain <d>').option('-k, 
 program.command('save').description('Save the last network:query results to your local knowledge (this machine only)').action(async () => { const { saveLastQuery } = await import('./commands/network.js'); await saveLastQuery(); });
 program.command('network:sync').description('[deprecated] use vault:sync').option('--force').action(async (opts) => { console.error(t.dim('  note: `rdk network:sync` is deprecated — use `rdk vault:sync`')); const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
 
+// ── Pinning ───────────────────────────────────────────────────────────────────
+//
+// Pinned documents are the only content RDK Central stores, which is why they
+// carry monthly rent per MB.
+
+program.command('pin <document>')
+  .description('Keep a document answerable on the network while this node is offline (monthly rent per MB)')
+  .action(async (d) => { const { pin } = await import('./commands/pin.js'); await pin(d); });
+program.command('unpin <document>')
+  .description('Stop paying rent for a pinned document. Your own copy is untouched.')
+  .action(async (d) => { const { unpin } = await import('./commands/pin.js'); await unpin(d); });
+program.command('pins')
+  .description('List pinned documents and the storage they rent')
+  .option('--available', 'List indexed documents instead, marking which are pinned')
+  .action(async (o) => { const { pins } = await import('./commands/pin.js'); await pins({ available: !!o.available }); });
+
 // Top-level shorthand
 program.command('sync').description('[deprecated] use vault:sync').option('--force').action(async (opts) => { console.error(t.dim('  note: `rdk sync` is deprecated — use `rdk vault:sync`')); const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
 
@@ -462,15 +478,17 @@ program.command('status').description('Show full node status').action(async () =
     : mcpRunning ? 'foreground'
     : null;
 
-  // Is anything actually holding the Central WebSocket? This — not the local MCP
+  // Is anything actually holding a Central WebSocket? This — not the local MCP
   // HTTP probe above — is what decides whether this node's chunks can be
   // retrieved: Central fetches content from the owning node at query time and
-  // skips chunks it can't reach. The lock is held by whichever process owns the
-  // socket, so from here "held by another live process" means we're serving.
+  // skips chunks it can't reach. Several processes may be serving at once, so
+  // name them rather than reporting an anonymous "something is".
   let servingContent = false;
+  let servedBy: string | null = null;
   try {
-    const { wsHeldByOther } = await import('@rdk/node/ws/ws-lock');
-    servingContent = wsHeldByOther();
+    const { otherWsServers, describeOtherWsServers } = await import('@rdk/node/ws/ws-presence');
+    servingContent = otherWsServers().length > 0;
+    servedBy = describeOtherWsServers();
   } catch {}
 
   console.log(t.heading('\nRDK Node Status'));
@@ -495,6 +513,10 @@ program.command('status').description('Show full node status').action(async () =
   console.log(`  ${t.dim('live sync:')}      ${mcpRunning ? t.green('● connected') : t.dim('○ offline')}${!mcpRunning ? t.dim('  (start with rdk mcp:serve)') : ''}`);
   console.log(`  ${t.dim('run mode:')}       ${runMode ? t.body(runMode) : t.dim('not running')}${!runMode ? t.dim('  (foreground · --detach · service:install)') : ''}`);
   console.log(`  ${t.dim('serving content:')} ${servingContent ? t.green('● yes') : t.warn('○ no')}`);
+  // Name the processes rather than reporting an anonymous "something is
+  // serving" — a user who sees "Claude Desktop" knows immediately why their
+  // node is reachable without the desktop app open.
+  if (servedBy) console.log(`  ${t.dim('served by:')}       ${t.body(servedBy)}`);
   if (!servingContent && stats.totalChunks > 0) {
     console.log(t.dim('    Your indexed content is only retrievable while RDK is running — content'));
     console.log(t.dim('    stays on this machine and is served on demand. Keep it up with:'));

@@ -6,6 +6,9 @@ interface FetchDocumentResult {
   documentHash: string;
   title?: string;
   isPublic?: boolean;
+  /** True when `content` is ciphertext. Central refuses to store a private
+   *  document in the clear, so it needs to be told which it is receiving. */
+  isEncrypted?: boolean;
   content?: string;
   available: boolean;
 }
@@ -36,6 +39,7 @@ export async function fetchDocumentHandler(
       documentHash,
       title: document.title,
       isPublic: document.isPublic,
+      isEncrypted: document.isEncrypted,
       content: document.content,
       available: true,
     };

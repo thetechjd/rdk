@@ -11,6 +11,19 @@ import type { WsMessage } from './protocol.js';
 // These strings go to stderr (stdout is the MCP JSON-RPC channel).
 const dim = (s: string): string => `\x1b[2m${s}\x1b[0m`;
 
+/**
+ * How long to wait before retrying after Central closes us with 4001.
+ *
+ * 4001 means "another session replaced you" — only an OLD Central sends it;
+ * current Central holds every session for a node at once. So this is the
+ * compatibility path, and it has to satisfy two things at the same time:
+ * never give up (the instance that displaced us may exit, and then somebody has
+ * to serve), and never ping-pong (two instances kicking each other on a short
+ * timer is what once put 208 connections in five minutes onto Central from a
+ * single node). Minutes apart, jittered, does both.
+ */
+const REPLACED_RETRY_MS = 5 * 60_000;
+
 export class RdkWebSocketClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private reconnectAttempt = 0;
@@ -25,6 +38,8 @@ export class RdkWebSocketClient extends EventEmitter {
     private readonly wsUrl: string,
     private readonly apiBaseUrl: string,  // e.g. https://rdk.retrodeck.ai
     private readonly apiKey: string,      // long-lived API key from config
+    /** Overridable so tests can exercise the 4001 path without waiting minutes. */
+    private readonly replacedRetryMs: number = REPLACED_RETRY_MS,
   ) {
     super();
     // Safety net: an EventEmitter that emits 'error' with no listener throws and
@@ -98,12 +113,17 @@ export class RdkWebSocketClient extends EventEmitter {
       if (this.stabilityTimer) { clearTimeout(this.stabilityTimer); this.stabilityTimer = null; }
       this.ws = null;
       this.emit('disconnected', { code, reason: reason.toString() });
-      // 4001 = "replaced": another rdk instance took over this nodeId (e.g. Claude
-      // Desktop spawned a second mcp:serve). Yield to it — reconnecting would just
-      // ping-pong, each instance kicking the other off forever.
+      // 4001 = "replaced": this Central still allows one session per node, so
+      // another rdk instance displaced us. Not reconnecting AT ALL was the old
+      // behaviour, and it stranded the node whenever that other instance later
+      // exited — nothing was left to reopen the socket, so the node stayed
+      // silently unreachable for the rest of its life. Retry, but far enough
+      // apart that two instances cannot ping-pong.
       if (code === 4001) {
-        this.shouldReconnect = false;
-        console.error(dim('  · RDK Central: another instance took over — not reconnecting'));
+        if (this.shouldReconnect) {
+          console.error(dim('  · RDK Central: another instance is serving this node — will retry'));
+          this.scheduleReconnect(this.replacedRetryMs);
+        }
         return;
       }
       if (this.shouldReconnect) this.scheduleReconnect();
@@ -136,7 +156,13 @@ export class RdkWebSocketClient extends EventEmitter {
     return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  private scheduleReconnect(): void {
+  /**
+   * @param fixedDelayMs Use this delay instead of the escalating backoff, and
+   * do not count the attempt. A 4001 is not a failure to connect — escalating
+   * on it would eventually push a healthy standby out to the 60s ceiling and
+   * keep it there.
+   */
+  private scheduleReconnect(fixedDelayMs?: number): void {
     // Both the auth-failure path and the close handler call this, so without
     // clearing first a single failed attempt can leave two live timers — and the
     // overwritten handle can never be cancelled. Each extra timer is another
@@ -144,13 +170,13 @@ export class RdkWebSocketClient extends EventEmitter {
     // multiply into a storm the fleet cannot recover from.
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
 
-    const backoffMs = Math.min(60_000, 2_000 * Math.pow(2, this.reconnectAttempt));
+    const backoffMs = fixedDelayMs ?? Math.min(60_000, 2_000 * Math.pow(2, this.reconnectAttempt));
     // Jitter: without it every node in the fleet retries on the same schedule
     // after a shared outage and they arrive as one thundering herd.
     const delayMs = Math.round(backoffMs * (0.5 + Math.random() / 2));
-    this.reconnectAttempt++;
+    if (fixedDelayMs === undefined) this.reconnectAttempt++;
     this.reconnectTimer = setTimeout(() => {
-      console.error(dim(`  reconnecting to RDK Central (attempt ${this.reconnectAttempt})...`));
+      console.error(dim('  reconnecting to RDK Central...'));
       void this.connect();
     }, delayMs);
   }

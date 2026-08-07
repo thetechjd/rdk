@@ -81,6 +81,9 @@ export interface ChunkView {
   domain?: string;
   categories: string[];
   sourcePath?: string;
+  /** The parent document. Pinning is per document, so this is what the pin
+   *  action acts on — a chunk is one section of it. */
+  documentHash?: string;
   isEncrypted: boolean;
   syncedAt?: string;
   qualityScore: number;
@@ -235,6 +238,13 @@ export interface NodeStatus {
    * This — not `serving` — is what the status indicators must show.
    */
   contentServing: boolean;
+  /**
+   * Other RDK processes on this machine that are serving this node right now,
+   * named — "Claude Desktop", "RDK background service". Absent when nobody else
+   * is. Lets the UI explain WHY the node is reachable when this window is not
+   * the one holding the socket, instead of reporting an anonymous process.
+   */
+  alsoServedBy?: string;
   nodeId?: string;
   lastSyncAt?: string;
   chunkCount: number;
@@ -353,7 +363,7 @@ export interface PlatformCapabilities {
   autoStart: boolean;
   network: boolean;          // false → offline/local-only node
   unpublishSupported: boolean; // false → button disabled + tooltip (public is immutable)
-  pinSupported: boolean;       // false → button disabled + tooltip
+  pinSupported: boolean;       // false → button disabled + tooltip (needs a network connection)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -405,7 +415,11 @@ export interface RdkApi {
   unpublishChunk(id: string): Promise<{ ok: boolean; error?: string }>; // retire: stops serving, history kept
   /** Version history of a document series (live + superseded), newest first. */
   getVersions(sourcePath: string): Promise<VersionView[]>;
-  pinChunk(id: string, pinned: boolean): Promise<{ ok: boolean; error?: string }>; // may be unsupported
+  /** Pin/unpin a DOCUMENT. Pinned documents are the only content RDK Central
+   *  stores, and are billed monthly as rent per MB. */
+  pinDocument(documentHash: string, pinned: boolean): Promise<{ ok: boolean; error?: string }>;
+  /** Which of these documents are pinned, for rendering pin state. */
+  pinnedDocuments(documentHashes: string[]): Promise<string[]>;
   deleteChunk(id: string): Promise<{ ok: boolean; error?: string }>;
   getRetrievedFor(id: string): Promise<RetrievedFor[]>;
 
@@ -482,7 +496,7 @@ export type RdkChannel = Exclude<keyof RdkApi, 'onPush'>;
 export const RDK_CHANNELS: RdkChannel[] = [
   'isInitialized', 'getCapabilities', 'chooseVaultDirectory', 'initNode',
   'getVaultTree', 'getIndexedDocuments', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
-  'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinChunk',
+  'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinDocument', 'pinnedDocuments',
   'deleteChunk', 'getRetrievedFor', 'getVersions',
   'getGraphData', 'query', 'retrieveQueryDocument',
   'getStatus', 'startNode', 'stopNode', 'forceSync', 'installService', 'uninstallService', 'setAutoStart',
