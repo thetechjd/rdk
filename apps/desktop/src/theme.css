@@ -280,6 +280,14 @@ select option {
 .explorer-location.drop-over .location-drop-hint { color: var(--phosphor-dim); }
 .explorer-location .location-drop-hint + .location-count { margin-left: 0; }
 .explorer-location-content { padding: 3px 0 5px; }
+
+/* Pinned: rented storage on RDK Central, and the only content it holds. Marked
+   in amber rather than phosphor because it is the one state that costs money. */
+.explorer-location.pinned .location-icon { color: var(--cassette); }
+.pin-badge { font-size: 10px; line-height: 1; opacity: 0.85; }
+/* .indexed-row .name is flex:1 and already pushes what follows to the right.
+   .tree-row .name is not, so the badge needs to claim the space itself there. */
+.tree-row .pin-badge { margin-left: auto; padding-left: 6px; }
 .explorer-empty {
   padding: 7px 14px 8px 35px; color: var(--muted); font-size: var(--fs-xs);
   line-height: 1.4;

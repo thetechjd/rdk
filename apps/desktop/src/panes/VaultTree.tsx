@@ -33,11 +33,30 @@ export function VaultTree() {
   const [vaultMenu, setVaultMenu] = useState<{ x: number; y: number } | null>(null);
   const [indexing, setIndexing] = useState<{ paths: string[] } | null>(null);
 
+  const [pinnedHashes, setPinnedHashes] = useState<Set<string>>(new Set());
+
   const load = useCallback(() => {
     window.rdk.getVaultTree().then(setTree);
     window.rdk.getIndexedDocuments().then(setIndexedDocs).catch(() => setIndexedDocs([]));
   }, []);
   useEffect(() => { load(); }, [load, app.dataVersion]);
+
+  // Pin state lives on Central, not in the local store, so it is fetched
+  // separately and refreshed whenever the data version bumps (i.e. after a pin).
+  useEffect(() => {
+    const hashes = [...new Set(indexedDocs.map(d => d.documentHash).filter((h): h is string => !!h))];
+    if (hashes.length === 0) { setPinnedHashes(new Set()); return; }
+    let alive = true;
+    window.rdk.pinnedDocuments(hashes)
+      .then(pinned => { if (alive) setPinnedHashes(new Set(pinned)); })
+      .catch(() => { /* offline: leave pins unmarked rather than blanking the tree */ });
+    return () => { alive = false; };
+  }, [indexedDocs, app.dataVersion]);
+
+  // Pinned is a CROSS-CUTTING view, not a fifth mutually-exclusive state: a
+  // pinned document is still public or private and still lives in its own
+  // folder. So this lists alongside those rather than partitioning with them.
+  const pinnedDocs = indexedDocs.filter(d => d.documentHash && pinnedHashes.has(d.documentHash));
 
   // Documents the node has indexed that AREN'T files in the vault folder — the
   // private/public network content the on-disk tree can't show (a page indexed
@@ -189,6 +208,45 @@ export function VaultTree() {
         onClick={() => { setMenu(null); setVaultMenu(null); }}
       >
         <div className="file-explorer" aria-label="Knowledge file explorer">
+          {/* Pinned sits above the state folders and does not partition with
+              them — a pinned document is still public or private and still
+              appears in its own folder below. This is a shortcut to the
+              documents you are paying rent to keep answerable. */}
+          {pinnedDocs.length > 0 && (() => {
+            const pinnedKey = 'location:pinned';
+            const isOpen = expanded.has(pinnedKey);
+            return (
+              <section className="explorer-location pinned" key="pinned">
+                <button
+                  className="explorer-location-head"
+                  onClick={() => toggle(pinnedKey)}
+                  title="Kept available on the network even while this node is offline. Billed monthly per MB."
+                  aria-expanded={isOpen}
+                >
+                  <span className="location-chevron">{isOpen ? '⌄' : '›'}</span>
+                  <span className="location-icon">📌</span>
+                  <span className="location-label">Pinned</span>
+                  <span className="location-count">{pinnedDocs.length}</span>
+                </button>
+                {isOpen && (
+                  <div className="explorer-location-content">
+                    {pinnedDocs.map(doc => (
+                      <div
+                        key={doc.key}
+                        className={`indexed-row${doc.chunkIds[0] === app.selectedChunkId ? ' selected' : ''}`}
+                        onClick={() => openDoc(doc)}
+                        title={`${doc.title} — pinned (${doc.state}); available while this node is offline`}
+                      >
+                        <span className={`dot ${doc.state}`} />
+                        <span className="name">{doc.title}</span>
+                        <span className="pin-badge" aria-label="pinned">📌</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })()}
           {LOCATIONS.map(location => {
             const locationKey = virtualKey(location.id);
             const isOpen = expanded.has(locationKey);
@@ -232,6 +290,7 @@ export function VaultTree() {
                     {nodes.map(node => (
                       <TreeRow key={node.path} node={node} depth={0} expanded={expanded} toggle={toggle}
                         onFileClick={onFileClick} selectedChunk={app.selectedChunkId} selectedFile={app.selectedFilePath}
+                        pinnedHashes={pinnedHashes}
                         onContext={(x, y, item) => setMenu({ x, y, node: item })} />
                     ))}
                     {docs.map(doc => (
@@ -243,6 +302,9 @@ export function VaultTree() {
                       >
                         <span className={`dot ${doc.state}`} />
                         <span className="name">{doc.title}</span>
+                        {doc.documentHash && pinnedHashes.has(doc.documentHash) && (
+                          <span className="pin-badge" title="Pinned — stays available while this node is offline">📌</span>
+                        )}
                         <span className="ct">{doc.chunkCount}</span>
                       </div>
                     ))}
@@ -347,9 +409,10 @@ function countFiles(nodes: VaultNode[]): number {
   );
 }
 
-function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, selectedFile, onContext }: {
+function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, selectedFile, pinnedHashes, onContext }: {
   node: VaultNode; depth: number; expanded: Set<string>; toggle: (p: string) => void;
   onFileClick: (n: VaultNode) => void; selectedChunk: string | null; selectedFile: string | null;
+  pinnedHashes: Set<string>;
   onContext: (x: number, y: number, n: VaultNode) => void;
 }) {
   const isOpen = expanded.has(node.path);
@@ -368,7 +431,8 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
         </div>
         {isOpen && node.children?.map(c => (
           <TreeRow key={c.path} node={c} depth={depth + 1} expanded={expanded} toggle={toggle}
-            onFileClick={onFileClick} selectedChunk={selectedChunk} selectedFile={selectedFile} onContext={onContext} />
+            onFileClick={onFileClick} selectedChunk={selectedChunk} selectedFile={selectedFile}
+            pinnedHashes={pinnedHashes} onContext={onContext} />
         ))}
       </>
     );
@@ -389,6 +453,9 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
     >
       <span className={`dot ${node.state}`} />
       <span className="name">{node.name}</span>
+      {node.documentHash && pinnedHashes.has(node.documentHash) && (
+        <span className="pin-badge" title="Pinned — stays available while this node is offline">📌</span>
+      )}
     </div>
   );
 }

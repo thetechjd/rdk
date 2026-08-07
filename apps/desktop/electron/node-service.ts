@@ -268,6 +268,7 @@ export class NodeService {
           out.push({
             name: e.name, path: abs, relPath, type: 'file', state,
             chunkIds: chunks.map(c => c.id),
+            documentHash: chunks.find(c => c.documentHash)?.documentHash,
           });
         }
       }
@@ -317,6 +318,7 @@ export class NodeService {
         chunkCount: chunks.length,
         chunkIds: chunks.map(c => c.id),
         inVault,
+        documentHash: chunks.find(c => c.documentHash)?.documentHash,
       });
     }
     // Network/indexed-only docs first (the ones the tree can't show), then A–Z.

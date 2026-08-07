@@ -25,6 +25,9 @@ export interface VaultNode {
   state?: FileState;
   /** Chunk ids indexed from this file (files only). */
   chunkIds?: string[];
+  /** The document this file was indexed as (files only). Pinning is per
+   *  document, so this is what pin state is keyed on. */
+  documentHash?: string;
   children?: VaultNode[];
 }
 
@@ -52,6 +55,9 @@ export interface IndexedDoc {
   chunkIds: string[];
   /** True when the source file lives under the current vault root (already in the tree). */
   inVault: boolean;
+  /** Pinning is per document; absent for documents indexed before RDK recorded
+   *  hashes, which cannot be pinned until re-indexed. */
+  documentHash?: string;
 }
 
 /** A chunk as surfaced to the inspector / content pane. */
