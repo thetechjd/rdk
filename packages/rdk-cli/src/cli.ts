@@ -140,6 +140,7 @@ program
   .option('--select <chunkId>', 'Retrieve this document instead of asking')
   .option('--auto', 'Retrieve the best match without asking')
   .option('--max-tip <usd>', 'Refuse an unattended retrieval costing more than this')
+  .option('--for-model', "Apply your org's redaction policy — output is going into a model's context")
   .action(async (query, opts) => {
     const { unifiedQuery } = await import('./commands/query.js');
     await unifiedQuery(query, {
@@ -150,7 +151,23 @@ program
       select: opts.select,
       auto: !!opts.auto,
       maxTip: opts.maxTip === undefined ? undefined : parseFloat(opts.maxTip),
+      forModel: !!opts.forModel,
     });
+  });
+
+// ── Redaction ────────────────────────────────────────────────────────────────
+// Read-only on purpose. The policy is authored by the org admin in the
+// dashboard; a member being able to weaken their own node from the CLI would
+// undo the whole guarantee.
+
+program
+  .command('redaction:status')
+  .description("Show the org redaction policy this node applies to model-facing queries")
+  .option('--test <text>', 'Show exactly what a model would receive for this text')
+  .option('--json', 'Machine-readable output')
+  .action(async (opts) => {
+    const { redactionStatusCommand } = await import('./commands/redaction.js');
+    await redactionStatusCommand({ test: opts.test, json: !!opts.json });
   });
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -505,6 +522,17 @@ program.command('status').description('Show full node status').action(async () =
   if (stats.localChunks > 0) {
     console.log(`    ${t.dim('local-only:')}   ${t.body(stats.localChunks.toLocaleString())}  ${t.dim('(this machine only, not synced)')}`);
   }
+  // Whether an org policy is redacting on model-facing queries. Counts only —
+  // the values, and the tokens they map to, never belong in a status line.
+  let redaction: { enabled: boolean; version: string | null; ruleCount: number } | null = null;
+  try {
+    const { redactionStatus } = await import('@rdk/node/redaction-policy');
+    redaction = redactionStatus();
+  } catch {}
+  if (redaction?.enabled) {
+    console.log(`    ${t.dim('redaction:')}    ${t.green('on')}  ${t.dim(`(${redaction.ruleCount} org rule(s) applied to model queries · policy ${redaction.version})`)}`);
+  }
+
   console.log('');
   console.log(t.body('Components:'));
   console.log(`  Embedding model  ${hasXenova ? mark.ok() + ' ' + t.body('installed') : mark.error() + ' ' + t.muted('run: rdk network:join')}`);

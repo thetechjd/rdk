@@ -20,6 +20,7 @@ import { t } from '../theme.js';
 import type { NetworkChunk, QueryResult, RetrievedDocument } from '@rdk/core';
 import type { SearchResult } from '@rdk/core';
 import { select } from '../prompts.js';
+import { modelEgress, type ModelEgress } from '../model-egress.js';
 
 /** How a document got chosen — reported in JSON so a caller can audit spend. */
 type SelectionMode = 'interactive' | 'explicit' | 'auto';
@@ -36,7 +37,10 @@ interface DocumentPreview {
   preview: string;
 }
 
-function previewsAsJson(docs: ReturnType<typeof import('@rdk/core').groupIntoDocuments>): DocumentPreview[] {
+function previewsAsJson(
+  docs: ReturnType<typeof import('@rdk/core').groupIntoDocuments>,
+  egress: ModelEgress,
+): DocumentPreview[] {
   return docs.map((doc) => {
     const representative = [...doc.sections].sort((a, b) => b.score - a.score)[0]!;
     return {
@@ -46,7 +50,8 @@ function previewsAsJson(docs: ReturnType<typeof import('@rdk/core').groupIntoDoc
       sections: doc.sections.length,
       tipUsdc: doc.tipUsdc,
       isOwn: doc.isOwn,
-      preview: (representative.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      // A preview is content too - 240 characters of an SSN is an SSN.
+      preview: egress.text((representative.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 240)),
     };
   });
 }
@@ -69,8 +74,13 @@ export async function unifiedQuery(
     auto?: boolean;
     /** Refuse any non-interactive retrieval whose tip exceeds this, in USDC. */
     maxTip?: number;
+    /** Force model-facing treatment even at an interactive terminal. */
+    forModel?: boolean;
   } = {},
 ): Promise<void> {
+  // Decided once, before anything is retrieved, and consulted at every point
+  // content leaves this command. See model-egress.ts for the rule.
+  const egress = modelEgress({ json: opts.json, forModel: opts.forModel });
   const ora = (await import('ora')).default;
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
   if (!ready) return;
@@ -166,12 +176,13 @@ export async function unifiedQuery(
             isOwn: true,
             state: c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private',
             sourcePath: c.sourcePath,
-            content: (c.content ?? c.summary ?? '').trim(),
+            content: egress.text((c.content ?? c.summary ?? '').trim()),
           })),
+          ...(egress.notice() ? { _notice: egress.notice() } : {}),
         });
         return;
       }
-      printLocal(result, query, config.nodeId);
+      printLocal(result, query, config.nodeId, egress);
       return;
     }
 
@@ -186,7 +197,7 @@ export async function unifiedQuery(
     const autoAuthorized = opts.auto ?? config.queryAutoRetrieve ?? false;
     const maxTip = opts.maxTip ?? config.queryMaxTipUsdc;
     const interactive = process.stdin.isTTY === true;
-    const ranked = previewsAsJson(previews);
+    const ranked = previewsAsJson(previews, egress);
 
     let selectedChunkId: string;
     let selectionMode: SelectionMode;
@@ -218,7 +229,7 @@ export async function unifiedQuery(
           const ownership = doc.isOwn ? 'yours · free' : doc.tipUsdc > 0
             ? `tip $${doc.tipUsdc.toFixed(4)}`
             : 'free';
-          const preview = representative?.content?.trim() || 'No preview available';
+          const preview = egress.text(representative?.content?.trim() || '') || 'No preview available';
           return {
             name: doc.name,
             value: representative.chunkId,
@@ -306,7 +317,7 @@ export async function unifiedQuery(
         process.exitCode = 1;
         return;
       }
-      reportUnavailable(result); printLocal(result, query, config.nodeId); return;
+      reportUnavailable(result); printLocal(result, query, config.nodeId, egress); return;
     }
 
     // Report only what we could NOT answer with. Naming a document as
@@ -351,17 +362,18 @@ export async function unifiedQuery(
           savedPath: saved[0],
           sections: doc.sections.map(s => ({
             heading: s.heading,
-            content: s.content.trim(),
+            content: egress.text(s.content.trim()),
           })),
         },
         unavailable: (result.unavailableChunks ?? []).map(c => ({
           name: c.title.split(' — ')[0], reason: c.reason,
         })),
+        ...(egress.notice() ? { _notice: egress.notice() } : {}),
       });
       return;
     }
 
-    printDocument(doc, query, saved[0]);
+    printDocument(doc, query, egress, saved[0]);
 
     if (result.tipsPaid.length > 0) {
       console.log(t.dim(`\ntips: $${tipsPaidUsdc.toFixed(4)} USDC across ${result.tipsPaid.length} chunk(s)`));
@@ -444,7 +456,12 @@ function sectionsAsMarkdown(doc: RetrievedDocument): string {
   return out.join('\n');
 }
 
-function printDocument(doc: RetrievedDocument, query: string, savedPath?: string): void {
+function printDocument(
+  doc: RetrievedDocument,
+  query: string,
+  egress: ModelEgress,
+  savedPath?: string,
+): void {
   if (!doc.contentAvailable) {
     console.log(t.warn(`\nOnly a summary of "${doc.name}" is available — ` +
       `the node publishing it isn't serving content right now.`));
@@ -456,15 +473,22 @@ function printDocument(doc: RetrievedDocument, query: string, savedPath?: string
 
   for (const section of doc.sections) {
     if (section.heading && section.heading !== doc.name) console.log(t.bold(`## ${section.heading}`));
-    console.log(t.body(section.content.trim()));
+    console.log(t.body(egress.text(section.content.trim())));
     console.log('');
   }
 
   if (savedPath) console.log(t.dim(`saved → ${savedPath}`));
+  const notice = egress.notice();
+  if (notice) console.log(t.dim(notice));
 }
 
 /** The local-vault path: these are the user's own files, already on disk. */
-function printLocal(result: QueryResult, query: string, nodeId?: string): void {
+function printLocal(
+  result: QueryResult,
+  query: string,
+  nodeId: string | undefined,
+  egress: ModelEgress,
+): void {
   console.log(t.heading(`\nResults from your vault — free — for: "${query}"\n`));
   if (result.lowConfidence) {
     console.log(t.warn('Nothing matched confidently — showing the closest things in your vault.\n'));
@@ -475,10 +499,12 @@ function printLocal(result: QueryResult, query: string, nodeId?: string): void {
     const state = c.isPublic ? 'public' : c.isLocalOnly ? 'local' : 'private';
     console.log(t.bold(`[${i + 1}] ${c.title ?? 'Untitled'}`) + t.dim(`  (${score}% · yours · ${state} · free)`));
     if (c.sourcePath) console.log(t.dim(`    ${c.sourcePath}`));
-    const body = (c.content ?? c.summary ?? '').trim();
+    const body = egress.text((c.content ?? c.summary ?? '').trim());
     if (body) console.log(t.body(body));
     console.log('');
   });
+  const notice = egress.notice();
+  if (notice) console.log(t.dim(notice));
   void nodeId;
 }
 

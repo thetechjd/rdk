@@ -21,6 +21,12 @@ import { loadConfigOrNull, type RDKConfig } from './config.js';
 import { SyncService } from './sync-service.js';
 import { startHttpServer } from './http-server.js';
 import { getWsClient } from './ws/client.js';
+import {
+  redactionStatus,
+  startRedactionPolicySync,
+  installCachedRedactionPolicy,
+  type RedactionPolicySync,
+} from './redaction-policy.js';
 
 export type NodeLogger = (level: 'info' | 'warn' | 'error', message: string) => void;
 
@@ -45,6 +51,8 @@ export interface NodeRuntimeStatus {
   chunks: ReturnType<LocalStore['getStats']>;
   pendingTipsUsdc: number;
   lastSyncAt?: string;
+  /** Org redaction policy in force on model-facing egress. Counts only. */
+  redaction: ReturnType<typeof redactionStatus>;
 }
 
 /**
@@ -62,6 +70,7 @@ export class NodeController {
   private httpPort: number | null = null;
   private serving = false;
   private lastSyncAt?: string;
+  private redaction: RedactionPolicySync | null = null;
 
   constructor(private readonly opts: NodeControllerOptions = {}) {
     this.log = opts.logger ?? ((lvl, m) => console.error(`[node:${lvl}] ${m}`));
@@ -73,6 +82,12 @@ export class NodeController {
   // ── lifecycle ──────────────────────────────────────────────────────────────
 
   init(): void {
+    // Before the router exists. `query()` is usable straight after init() with
+    // no start(), and any host that pipes its result into a model is a
+    // model-facing egress - so the org policy has to already be in force. This
+    // call is synchronous and reads the on-disk cache; start() adds refreshing.
+    installCachedRedactionPolicy();
+
     const store = this.getStore();
     const cfg = this.config;
     this.router = new RDKRouter({
@@ -103,6 +118,10 @@ export class NodeController {
    */
   async start(): Promise<NodeRuntimeStatus> {
     if (!this.router) this.init();
+
+    // Keep the cached policy current. Fail-closed: a failed refresh leaves the
+    // policy installed by init() in force rather than reverting to raw content.
+    this.redaction ??= startRedactionPolicySync({ log: (m) => this.log('info', m) });
 
     // An offline (`local-<hash>`) node can index, publish and query but can
     // NEVER hold the WebSocket Central uses to fetch content — so its chunks
@@ -160,6 +179,10 @@ export class NodeController {
   async stop(): Promise<void> {
     this.sync?.stop();
     this.sync = null;
+    // Stops refreshing, not enforcing: the policy stays installed in @rdk/core
+    // for as long as this process can still serve content to a model.
+    this.redaction?.stop();
+    this.redaction = null;
     getWsClient()?.disconnect();
     this.serving = false;
     // Note: startHttpServer does not currently return a server handle to close;
@@ -213,6 +236,7 @@ export class NodeController {
       chunks: store.getStats(),
       pendingTipsUsdc: store.getPendingTipTotal(),
       lastSyncAt: this.lastSyncAt,
+      redaction: redactionStatus(),
     };
   }
 

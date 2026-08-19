@@ -38,6 +38,7 @@ import {
 import { SyncService } from '@rdk/node/sync-service';
 import { CentralClient } from '@rdk/node/central-client';
 import { startWsSession, type WsSession } from '@rdk/node/ws/ownership';
+import { startRedactionPolicySync, type RedactionPolicySync } from '@rdk/node/redaction-policy';
 import { ensureServableNode } from '@rdk/node/register-node';
 import { otherWsServers, describeOtherWsServers } from '@rdk/node/ws/ws-presence';
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
@@ -79,6 +80,7 @@ export class NodeService {
   private serving = false;
   /** Background sync loop (from @rdk/node) — runs while the node is "serving". */
   private syncService: SyncService | null = null;
+  private redactionSync: RedactionPolicySync | null = null;
   /** Most recent successful Central sync attempt, including a no-op when
    * everything was already current. */
   private lastSyncAt?: string;
@@ -1040,6 +1042,14 @@ export class NodeService {
 
   async startNode(): Promise<{ ok: boolean; error?: string }> {
     try {
+      // The desktop's own reads are HUMAN paths and are never redacted - the
+      // person at the keyboard owns this vault and sees every document whole.
+      // The policy is installed anyway, and kept current, for two reasons: the
+      // status surface needs to say whether an org policy applies, and any
+      // model-facing path added here later (a local-model query, say) inherits
+      // enforcement from @rdk/core rather than having to remember to ask for it.
+      this.redactionSync ??= startRedactionPolicySync({ log: () => {} });
+
       // Registration comes FIRST, because registering is how this machine GETS
       // credentials. Onboarding writes `apiKey: ''` and `nodeId: local-<hash>`,
       // so a "sign in first" guard ahead of this returned early and the node
@@ -1110,8 +1120,12 @@ export class NodeService {
   async stopNode(): Promise<{ ok: boolean }> {
     try { this.syncService?.stop(); } catch { /* ignore */ }
     try { this.wsOwnership?.stop(); } catch { /* ignore */ }
+    // Stops refreshing, not enforcing: the installed policy stays in @rdk/core
+    // for as long as this process could still hand content to a model.
+    try { this.redactionSync?.stop(); } catch { /* ignore */ }
     this.syncService = null;
     this.wsOwnership = null;
+    this.redactionSync = null;
     this.serving = false;
     return { ok: true };
   }

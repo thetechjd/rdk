@@ -6,6 +6,7 @@ import { loadConfig, updateConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
 import { input } from '../prompts.js';
 import { t, mark, divider } from '../theme.js';
+import { modelEgress } from '../model-egress.js';
 
 // Readable results from the last network query, persisted so `rdk save` can
 // index them into the local store without re-querying (and re-paying).
@@ -294,6 +295,10 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     const { decrypt, keyFromHex } = await import('@rdk/core');
     const sharedKeys = config.sharedVaultKeys ?? {};
 
+    // Same rule as `rdk query`: this prints retrieved content, and an agent
+    // shelling out to it is a model-facing egress. See model-egress.ts.
+    const egress = modelEgress();
+
     console.log(t.heading(`\nNetwork results for: "${query}"\n`));
     console.log(t.dim('  note: network-only search — `rdk query` answers from your vault first (free), same as the desktop app\n'));
     // Readable results (content resolved/decrypted) collected for save/--save.
@@ -322,15 +327,22 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
       }
 
       if (content) {
-        console.log(t.body(content.trim()));
+        console.log(t.body(egress.text(content.trim())));
+        // The saved copy is deliberately the RAW content: it goes into the
+        // user's own vault, which is a human artifact they are entitled to read
+        // in full. Redaction belongs on the way to a model, not on the way to
+        // disk - saving tokens would destroy the answer for its owner.
         savable.push({ title: r.title ?? 'Untitled', content: content.trim(), domain: opts.domain ?? config.domain });
       } else if (r.summary) {
-        console.log(t.dim(r.summary.trim()));
+        console.log(t.dim(egress.text(r.summary.trim())));
       } else {
         console.log(t.dim('    (content unavailable — the owning node may be offline or not serving)'));
       }
       console.log('');
     });
+
+    const egressNotice = egress.notice();
+    if (egressNotice) console.log(t.dim(egressNotice));
 
     // Persist readable results so `rdk save` can index them later without
     // re-querying (and re-paying the tip).

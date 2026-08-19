@@ -1,7 +1,7 @@
 {
   "name": "@rdk/node",
   "version": "1.0.0",
-  "description": "RDK node — headless, UI-agnostic orchestration (config, network client, sync, WebSocket, node lifecycle) shared by the CLI and the desktop app",
+  "description": "RDK node \u2014 headless, UI-agnostic orchestration (config, network client, sync, WebSocket, node lifecycle) shared by the CLI and the desktop app",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -49,6 +49,10 @@
     "./node-controller": {
       "import": "./dist/node-controller.js",
       "types": "./dist/node-controller.d.ts"
+    },
+    "./redaction-policy": {
+      "import": "./dist/redaction-policy.js",
+      "types": "./dist/redaction-policy.d.ts"
     }
   },
   "scripts": {

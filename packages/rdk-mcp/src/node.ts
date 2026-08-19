@@ -11,6 +11,7 @@ import {
   keyFromHex, type NetworkChunk, type RetrievalHit, type VaultKey,
 } from '@rdk/core';
 import { SyncService } from './sync-service.js';
+import { startRedactionPolicySync, redactionStatus, type RedactionPolicySync } from '@rdk/node';
 
 export interface NodeConfig {
   nodeId: string;
@@ -50,6 +51,7 @@ export class RDKNode {
   private vaultWatchUnsubscribe?: () => void;
   private jwtToken?: string;
   private jwtExpiry = 0;
+  private redactionSync?: RedactionPolicySync;
 
   private async getJwt(): Promise<string> {
     if (this.jwtToken && Date.now() < this.jwtExpiry) return this.jwtToken;
@@ -66,6 +68,16 @@ export class RDKNode {
 
   async init(): Promise<void> {
     this.config = this.loadConfig();
+
+    // FIRST, before a store, a router or a transport exists. rdk_query is a
+    // model-facing egress path, so the org's redaction policy has to be in force
+    // before this object can answer anything. This installs the on-disk cached
+    // policy synchronously and refreshes in the background - a slow or
+    // unreachable API delays the update, never the enforcement.
+    this.redactionSync = startRedactionPolicySync({
+      log: (message) => console.error(`[rdk] ${message}`),
+    });
+
     this.store = new LocalStore();
     this.embeddingModel = new LocalEmbeddingModel();
 
@@ -434,6 +446,7 @@ export class RDKNode {
     const networkStatus = await this.checkNetworkConnectivity();
 
     const sync = this.syncService.getStatus();
+    const redaction = redactionStatus();
 
     return this.textResult([
       `RDK Node Status`,
@@ -453,6 +466,10 @@ export class RDKNode {
       `Auto-sync:      ${sync.enabled ? 'enabled' : 'disabled'}`,
       `Sync interval:  ${sync.intervalMinutes} minutes`,
       `Sync loop:      ${sync.running ? 'running' : 'stopped'}`,
+      ``,
+      `Redaction:      ${redaction.enabled
+        ? `on - ${redaction.ruleCount} rule(s), policy ${redaction.version}`
+        : 'off (no org policy)'}`,
       ``,
       `Tips pending:   $${pendingTips.toFixed(4)} USDC`,
       `Network:        ${networkStatus}`,

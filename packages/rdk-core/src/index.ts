@@ -25,3 +25,9 @@ export * from './query/pipeline.js';
 export * from './index/scan.js';
 export * from './index/dedup.js';
 export * from './index/rate-limit.js';
+// Model-facing redaction. Every path that puts content into a model's context
+// goes through this - see REDACTION_00_DESIGN.md.
+export * from './redaction/types.js';
+export * from './redaction/patterns.js';
+export * from './redaction/redact.js';
+export * from './redaction/active-policy.js';

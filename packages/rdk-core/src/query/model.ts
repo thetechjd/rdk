@@ -9,6 +9,8 @@ import {
   RERANK_RUNTIME,
 } from './pipeline.constants.js';
 import type { RerankModel } from './rerank.js';
+import { getActiveRedactionPolicy } from '../redaction/active-policy.js';
+import { Redactor } from '../redaction/redact.js';
 
 /** Weight files worth hashing — the rest of a model dir is small metadata. */
 const VERIFIABLE_MODEL_FILE = /\.(onnx|onnx_data|bin|model|safetensors)$/;
@@ -180,13 +182,29 @@ export class LocalOnnxRerankModel implements RerankModel {
   }
 }
 
-/** Explicit opt-in only: this implementation transmits candidate text to Anthropic. */
+/**
+ * Explicit opt-in only: this implementation transmits candidate text to Anthropic.
+ *
+ * That makes it a MODEL-FACING EGRESS PATH in exactly the sense the redaction
+ * design means, even though nothing here is an MCP response - chunk text leaves
+ * the node and lands in a model's context. So it runs through the org policy
+ * first, like every other such path. Ranking on tokenized text costs a little
+ * ordering quality; sending an org's SSNs to a third party to sort five results
+ * is not a trade that was ever available.
+ */
 export class HaikuRerankModel implements RerankModel {
   readonly singleBatch = true;
 
   constructor(private apiKey: string) {}
 
   async score(pairs: Array<{ query: string; text: string }>): Promise<number[]> {
+    // One redactor for the batch, so a value repeated across candidates ranks as
+    // the same token rather than as several unrelated ones.
+    const redactor = new Redactor(getActiveRedactionPolicy());
+    const safePairs = redactor.active
+      ? pairs.map((pair) => ({ query: pair.query, text: redactor.redact(pair.text).content }))
+      : pairs;
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -199,7 +217,7 @@ export class HaikuRerankModel implements RerankModel {
         max_tokens: 1024,
         messages: [{
           role: 'user',
-          content: `Score each reference from 0 to 10 for relevance to the query. Return only a JSON array of numbers in input order.\n${JSON.stringify(pairs)}`,
+          content: `Score each reference from 0 to 10 for relevance to the query. Return only a JSON array of numbers in input order.\n${JSON.stringify(safePairs)}`,
         }],
       }),
     });

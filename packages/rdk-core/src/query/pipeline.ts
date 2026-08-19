@@ -4,7 +4,8 @@ import { decrypt, type VaultKey } from '../crypto.js';
 import { queryCache } from './cache.js';
 import { CANDIDATE_POOL_SIZE, FINAL_RESULT_COUNT } from './pipeline.constants.js';
 import { LocalOnnxRerankModel } from './model.js';
-import { packageResults } from './serve.js';
+import { packageResultsForModel } from './serve.js';
+import { getActiveRedactionPolicy } from '../redaction/active-policy.js';
 import { rerankCandidates, type RerankModel } from './rerank.js';
 import { retrieveCandidates, type RetrievalHit, type RetrievalStats } from './retrieve.js';
 import type { RerankedCandidate } from './types.js';
@@ -20,6 +21,13 @@ export interface PipelineResult {
   rerankMs: number;
   totalMs: number;
   blockedCount: number;
+  /** True when the org redaction policy replaced something on the way out. */
+  redacted: boolean;
+  /** Distinct values replaced. Safe to log; the values themselves are not. */
+  redactedCount: number;
+  /** token -> raw value for this response. On-node only - never served to a
+   *  model, never synced to Central. Empty when nothing was redacted. */
+  tokenMap: ReadonlyMap<string, string>;
 }
 
 export interface QueryPipelineNetwork {
@@ -81,11 +89,20 @@ export class QueryPipeline {
     // Domain and topK both scope the result set, so they must scope the cache
     // key too, or the first caller's answer gets served to everyone else. A
     // normalized query cannot contain a tab, so the parts stay unambiguous.
-    const cacheKey = [resultLimit, opts.domain ?? '', understood.corrected].join('\t');
+    //
+    // The redaction policy version scopes it as well: cached text is ALREADY
+    // redacted, so without this an admin tightening the policy would keep
+    // serving answers redacted under the old rules until the entry aged out.
+    const policy = getActiveRedactionPolicy();
+    const cacheKey = [resultLimit, opts.domain ?? '', policy.version, understood.corrected].join('\t');
     const cacheAllowed = opts.includePrivate !== false && opts.includeNetwork !== false;
     const cached = cacheAllowed ? queryCache.get(cacheKey) : undefined;
     if (cached !== undefined) {
-      const result = { text: cached, corrected: understood.corrected, cacheHit: true, candidates: 0, rerankMs: 0, totalMs: Date.now() - started, blockedCount: 0 };
+      // A cache hit replays text that was redacted when it was stored, under
+      // this same policy version. The token map is not replayed: tokens are a
+      // keyed hash of the value, so a human resolving one re-derives it rather
+      // than reading it out of a cache entry.
+      const result = { text: cached, corrected: understood.corrected, cacheHit: true, candidates: 0, rerankMs: 0, totalMs: Date.now() - started, blockedCount: 0, redacted: false, redactedCount: 0, tokenMap: new Map<string, string>() };
       this.log(result);
       return result;
     }
@@ -120,9 +137,22 @@ export class QueryPipeline {
       final = await Promise.all(final.map((candidate) =>
         candidate.nodeId ? this.network!.resolve(candidate, understood.corrected) : candidate));
     }
-    const text = packageResults(final);
-    if (cacheAllowed && final.length > 0) queryCache.set(cacheKey, text);
-    const result = { text, corrected: understood.corrected, cacheHit: false, candidates: candidates.length, rerankMs, totalMs: Date.now() - started, blockedCount };
+    // The single model-facing egress for this pipeline. Redaction happens here,
+    // before the text is cached, so a cache hit can never replay raw content.
+    const packaged = packageResultsForModel(final, policy);
+    if (cacheAllowed && final.length > 0) queryCache.set(cacheKey, packaged.text);
+    const result = {
+      text: packaged.text,
+      corrected: understood.corrected,
+      cacheHit: false,
+      candidates: candidates.length,
+      rerankMs,
+      totalMs: Date.now() - started,
+      blockedCount,
+      redacted: packaged.redacted,
+      redactedCount: packaged.redactedCount,
+      tokenMap: packaged.tokenMap,
+    };
     this.log(result);
     return result;
   }
@@ -153,6 +183,9 @@ export class QueryPipeline {
       rerank_ms: result.rerankMs,
       total_ms: result.totalMs,
       blocked_count: result.blockedCount,
+      // Counts only. Logging the values, or the tokens they map to, would put
+      // the sensitive data straight back into a file the model's host can read.
+      redacted_count: result.redactedCount,
     }));
   }
 }
