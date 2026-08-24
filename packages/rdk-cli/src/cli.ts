@@ -29,14 +29,20 @@ program
 
 program
   .command('init')
-  .description('Interactive setup wizard')
+  .description('Set up RDK (interactive unless --non-interactive is used)')
   .option('--email <email>')
   .option('--domain <domain>')
   .option('--vault <adapter>')
   .option('--path <path>')
+  .option('--api-key <key>', 'Use an existing RDK API key')
+  .option('--plan <plan>', 'Plan name', 'free')
+  .option('--non-interactive', 'Never prompt')
+  .option('-y, --yes', 'Alias for --non-interactive')
+  .option('--no-autostart', 'Do not start background services')
+  .option('--no-mcp-config', 'Do not configure an MCP host')
   .action(async (opts) => {
     const { runInit } = await import('./commands/init.js');
-    await runInit(opts.email ? opts : undefined);
+    await runInit(opts);
   });
 
 // ── Vault ─────────────────────────────────────────────────────────────────────

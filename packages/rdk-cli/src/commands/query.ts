@@ -21,6 +21,7 @@ import type { NetworkChunk, QueryResult, RetrievedDocument } from '@rdk/core';
 import type { SearchResult } from '@rdk/core';
 import { select } from '../prompts.js';
 import { modelEgress, type ModelEgress } from '../model-egress.js';
+import { isInteractive } from '../interactive.js';
 
 /** How a document got chosen — reported in JSON so a caller can audit spend. */
 type SelectionMode = 'interactive' | 'explicit' | 'auto';
@@ -196,7 +197,7 @@ export async function unifiedQuery(
     const json = opts.json === true;
     const autoAuthorized = opts.auto ?? config.queryAutoRetrieve ?? false;
     const maxTip = opts.maxTip ?? config.queryMaxTipUsdc;
-    const interactive = process.stdin.isTTY === true;
+    const interactive = isInteractive();
     const ranked = previewsAsJson(previews, egress);
 
     let selectedChunkId: string;

@@ -34,3 +34,15 @@ describe('Central production endpoint migration', () => {
     expect(loadConfig().centralApiUrl).toBe('http://127.0.0.1:3000');
   });
 });
+
+describe('headless credentials', () => {
+  it('lets RDK_API_KEY override the key loaded from disk', () => {
+    saveConfig(config('http://127.0.0.1:3000'));
+    process.env.RDK_API_KEY = 'rdk_env_secret';
+    try {
+      expect(loadConfig().apiKey).toBe('rdk_env_secret');
+    } finally {
+      delete process.env.RDK_API_KEY;
+    }
+  });
+});

@@ -58,8 +58,11 @@ export interface RDKConfig {
   sharedVaultKeys?: Record<string, string>;  // ownerNodeId → hex key (encrypted at rest)
 }
 
-const RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
-const CONFIG_PATH = path.join(RDK_DIR, 'config.json');
+const DEFAULT_RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
+const CONFIG_PATH = process.env.RDK_CONFIG_PATH
+  ? path.resolve(process.env.RDK_CONFIG_PATH)
+  : path.join(DEFAULT_RDK_DIR, 'config.json');
+const RDK_DIR = path.dirname(CONFIG_PATH);
 /** Public Central endpoint. `api.rdk.network` was documented but never had DNS;
  * production has always been routed by nginx at rdk.retrodeck.ai. */
 export const DEFAULT_CENTRAL_API_URL = 'https://rdk.retrodeck.ai';
@@ -80,18 +83,33 @@ export function ensureRDKDir(): void {
 }
 
 export function configExists(): boolean {
-  return fs.existsSync(CONFIG_PATH);
+  return fs.existsSync(CONFIG_PATH) || !!process.env.RDK_API_KEY;
 }
 
 export function loadConfig(): RDKConfig {
-  if (!fs.existsSync(CONFIG_PATH)) {
-    throw new Error('RDK not initialized. Run: rdk init');
+  const envApiKey = process.env.RDK_API_KEY?.trim();
+  if (!fs.existsSync(CONFIG_PATH) && !envApiKey) {
+    throw new Error(
+      'No RDK credentials found. Set RDK_API_KEY (dashboard.retrodeck.ai → settings → API key) ' +
+      'or provide RDK_CONFIG_PATH. Interactive setup requires a terminal: rdk init.',
+    );
   }
-  const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as RDKConfig;
+  const raw: RDKConfig = fs.existsSync(CONFIG_PATH)
+    ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) as RDKConfig
+    : {
+        nodeId: process.env.RDK_NODE_ID ?? 'headless',
+        apiKey: envApiKey!,
+        centralApiUrl: process.env.RDK_CENTRAL_URL ?? process.env.RDK_API_URL ?? DEFAULT_CENTRAL_API_URL,
+        plan: 'free', vaultAdapter: 'filesystem',
+        vaultPath: process.env.RDK_VAULT_PATH ?? '',
+        domain: process.env.RDK_DOMAIN ?? 'general', walletChain: 'base',
+        mcpPort: 4242, createdAt: new Date(0).toISOString(),
+      };
   if (DEAD_CENTRAL_API_URLS.has(raw.centralApiUrl?.replace(/\/+$/, ''))) {
     raw.centralApiUrl = DEFAULT_CENTRAL_API_URL;
   }
-  raw.apiKey = decryptValue(raw.apiKey);
+  raw.apiKey = envApiKey ?? decryptValue(raw.apiKey);
+  if (process.env.RDK_VAULT_PATH) raw.vaultPath = process.env.RDK_VAULT_PATH;
   if (raw.retrodeckAccessToken) raw.retrodeckAccessToken = decryptValue(raw.retrodeckAccessToken);
   if (raw.retrodeckRefreshToken) raw.retrodeckRefreshToken = decryptValue(raw.retrodeckRefreshToken);
   if (raw.vaultKeyHex) raw.vaultKeyHex = decryptValue(raw.vaultKeyHex);

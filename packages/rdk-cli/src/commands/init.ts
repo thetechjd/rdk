@@ -28,6 +28,7 @@ import {
   payTopupWithCryptocadet, grantCryptocadetSubscription,
   type CryptoCadetTopup, type CryptoCadetPlanOffer,
 } from './cryptocadet.js';
+import { HEADLESS_CREDENTIAL_ERROR, isInteractive } from '../interactive.js';
 
 const RETRODECK_API_URL = process.env.RETRODECK_API_URL ?? 'https://api.retrodeck.ai';
 
@@ -90,10 +91,40 @@ function countFiles(dir: string): number {
   } catch { return 0; }
 }
 
-export async function runInit(nonInteractive?: {
+export async function runInit(nonInteractive: {
   email?: string; domain?: string; vault?: string; path?: string;
-}): Promise<void> {
+  apiKey?: string; plan?: string; nonInteractive?: boolean; yes?: boolean;
+  autostart?: boolean; mcpConfig?: boolean;
+} = {}): Promise<void> {
   const ora = (await import('ora')).default;
+
+  const headless = nonInteractive.nonInteractive === true
+    || nonInteractive.yes === true
+    || !isInteractive();
+  if (headless && !nonInteractive.email) {
+    const apiKey = nonInteractive.apiKey?.trim() || process.env.RDK_API_KEY?.trim();
+    if (!apiKey) {
+      console.error(HEADLESS_CREDENTIAL_ERROR);
+      process.exitCode = 1;
+      return;
+    }
+    const adapterNames = ['obsidian', 'filesystem', 'logseq', 'notion'];
+    const vaultPath = nonInteractive.path
+      ?? (nonInteractive.vault && !adapterNames.includes(nonInteractive.vault) ? nonInteractive.vault : undefined)
+      ?? process.env.RDK_VAULT_PATH
+      ?? '';
+    const adapter = nonInteractive.vault && adapterNames.includes(nonInteractive.vault)
+      ? nonInteractive.vault : 'filesystem';
+    saveConfig({
+      nodeId: process.env.RDK_NODE_ID ?? 'headless', apiKey,
+      centralApiUrl: CENTRAL_API_URL, plan: nonInteractive.plan ?? 'free',
+      vaultAdapter: adapter, vaultPath,
+      domain: nonInteractive.domain ?? process.env.RDK_DOMAIN ?? 'general',
+      walletChain: 'base', mcpPort: 4242, createdAt: new Date().toISOString(),
+    });
+    console.log('RDK configured for non-interactive use.');
+    return;
+  }
 
   splash();
 
