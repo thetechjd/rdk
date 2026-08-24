@@ -12,10 +12,16 @@
 //
 // So it is treated as model-facing unless a human is demonstrably watching:
 //
-//   --json                 -> machine format, something is parsing it   -> redact
-//   stdout is not a TTY    -> captured by a program, not read on screen -> redact
-//   --for-model            -> the caller says so                        -> redact
-//   an interactive terminal-> a person is reading it                    -> full content
+//   --json                  -> machine format, something is parsing it   -> redact
+//   not isInteractive()     -> no person is watching this output        -> redact
+//   --for-model             -> the caller says so                       -> redact
+//   an interactive terminal -> a person is reading it                   -> full content
+//
+// `isInteractive()` rather than a bare stdout-TTY check, and deliberately so.
+// It also treats CI=true and RDK_NON_INTERACTIVE=1 as "no human", which is
+// exactly what docs/coding-agents.md tells a coding agent to set — and an agent
+// that allocates a pty WOULD pass a stdout-TTY check while being the most
+// model-facing caller there is. Every condition it adds only ever redacts more.
 //
 // A human who wants full content in a pipe reads it in the dashboard or the
 // desktop app, which are unambiguously human paths and are never redacted.
@@ -26,6 +32,7 @@ import {
   getActiveRedactionPolicy,
 } from '@rdk/core';
 import { installCachedRedactionPolicy, refreshRedactionPolicy } from '@rdk/node';
+import { isInteractive } from './interactive.js';
 
 export interface ModelEgress {
   /** True when this invocation is treated as feeding a model. */
@@ -47,7 +54,7 @@ export interface ModelEgress {
  * the network, then kicks a refresh so the NEXT invocation is current.
  */
 export function modelEgress(opts: { json?: boolean; forModel?: boolean } = {}): ModelEgress {
-  const forModel = opts.forModel === true || opts.json === true || process.stdout.isTTY !== true;
+  const forModel = opts.forModel === true || opts.json === true || !isInteractive();
   if (!forModel) return inactive(false);
 
   installCachedRedactionPolicy();

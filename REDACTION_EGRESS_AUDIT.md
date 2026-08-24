@@ -46,9 +46,19 @@ configuring MCP.
 definitional signal available:
 
 - `--json` → machine format, something is parsing it → redact
-- stdout is not a TTY → captured by a program, not read on a screen → redact
+- `!isInteractive()` → no person is watching this output → redact
 - `--for-model` → the caller says so → redact
 - an interactive terminal → a person is reading it → full content
+
+`isInteractive()` (`packages/rdk-cli/src/interactive.ts`) is the project's one
+definition of "a human is present": stdin **and** stdout are TTYs, `CI` is not
+`true`, and `RDK_NON_INTERACTIVE` is not `1`. Using it rather than a bare
+stdout-TTY check matters, because `docs/coding-agents.md` tells coding agents to
+set exactly those two variables — and an agent that allocates a pty passes a
+stdout-TTY check while being the most model-facing caller there is. Every
+condition `isInteractive()` adds can only redact more, never less.
+
+`packages/rdk-cli/test/model-egress.test.ts` pins each case.
 
 **This is an addition beyond the literal build spec**, which listed only MCP and
 future model paths. It is here because the compliance claim ("a member cannot
