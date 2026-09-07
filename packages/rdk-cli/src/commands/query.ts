@@ -92,7 +92,16 @@ export async function unifiedQuery(
   try {
     const { LocalStore, LocalEmbeddingModel, RDKRouter, keyFromHex, groupIntoDocuments } =
       await import('@rdk/core');
-    const localStore = new LocalStore();
+    // A sandbox may receive a valid config/API key while denying writes to the
+    // user's ~/.rdk directory. Network queries must still work in that case;
+    // an in-memory store simply means there is no local-vault phase or cache.
+    let localStore: InstanceType<typeof LocalStore>;
+    try {
+      localStore = new LocalStore();
+    } catch (storeError) {
+      if (isInteractive()) throw storeError;
+      localStore = new LocalStore(':memory:');
+    }
     const embeddingModel = new LocalEmbeddingModel();
 
     // Mirror the desktop's router construction exactly (parity by construction).
