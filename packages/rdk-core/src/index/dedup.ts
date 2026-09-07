@@ -34,7 +34,13 @@ export function dedupCosineSimilarity(a: Float32Array, b: Float32Array): number 
   return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
 }
 
-export function assertNotDuplicate(input: {
+export interface DuplicateMatch {
+  chunkId: string;
+  jaccard: number;
+  cosine: number;
+}
+
+export interface DedupInput {
   chunkId?: string;
   text: string;
   embedding: Float32Array;
@@ -48,7 +54,19 @@ export function assertNotDuplicate(input: {
     documentHash?: string;
     sourcePath?: string;
   }>;
-}): void {
+}
+
+export function describeDuplicate(match: DuplicateMatch): string {
+  return `matches ${match.chunkId}; jaccard=${match.jaccard.toFixed(3)}, cosine=${match.cosine.toFixed(3)}`;
+}
+
+/**
+ * The near-duplicate this chunk collides with, or null. Callers decide what a
+ * collision MEANS — the indexer weighs it across the whole document rather than
+ * per chunk, because one boilerplate section matching someone else's file is
+ * not grounds for dropping that section out of an otherwise novel document.
+ */
+export function findNearDuplicate(input: DedupInput): DuplicateMatch | null {
   const signature = minHash(input.text);
   for (const candidate of input.existing) {
     if (candidate.chunkId === input.chunkId) continue;
@@ -61,8 +79,16 @@ export function assertNotDuplicate(input: {
     const jaccard = estimatedJaccard(signature, candidate.signature);
     const cosine = dedupCosineSimilarity(input.embedding, candidate.embedding);
     if (jaccard >= DEDUP_JACCARD_THRESHOLD || cosine >= DEDUP_EMBEDDING_COSINE_THRESHOLD) {
-      throw new Error(`Near-duplicate chunk rejected (matches ${candidate.chunkId}; jaccard=${jaccard.toFixed(3)}, cosine=${cosine.toFixed(3)})`);
+      return { chunkId: candidate.chunkId, jaccard, cosine };
     }
+  }
+  return null;
+}
+
+export function assertNotDuplicate(input: DedupInput): void {
+  const match = findNearDuplicate(input);
+  if (match) {
+    throw new Error(`Near-duplicate chunk rejected (${describeDuplicate(match)})`);
   }
 }
 

@@ -12,7 +12,7 @@ import { categorizeChunk, scoreInformationDensity } from './taxonomy.js';
 import { extractiveSummary } from './summarize.js';
 import { buildChunkTitle, extractDocTitle } from './title.js';
 import type { IndexResult } from './adapters/interface.js';
-import { assertNotDuplicate, minHash } from './index/dedup.js';
+import { describeDuplicate, findNearDuplicate, minHash, type DuplicateMatch } from './index/dedup.js';
 import { consumeIndexToken } from './index/rate-limit.js';
 import { scanChunk } from './index/scan.js';
 import { queryCache } from './query/cache.js';
@@ -148,7 +148,32 @@ export class RDKIndexer {
         tokenEstimate: estimateTokens(doc.content),
       });
 
-      // 3. Process each chunk
+      const pipelineStore = this.config.localStore as LocalStore & {
+        getDedupCandidates?: LocalStore['getDedupCandidates'];
+        getIndexRateState?: LocalStore['getIndexRateState'];
+        setIndexRateState?: LocalStore['setIndexRateState'];
+        setChunkRisk?: LocalStore['setChunkRisk'];
+        setChunkMinHash?: LocalStore['setChunkMinHash'];
+      };
+      // Read the candidate set ONCE. Re-reading it per chunk also meant chunks
+      // indexed earlier in this same document became candidates for the later
+      // ones, so a document with two similar sections deduplicated against
+      // itself despite the documentHash exclusion covering only stored rows.
+      const dedupCandidates = pipelineStore.getDedupCandidates?.() ?? [];
+
+      // 3. Prepare each chunk: identity, density gate, embedding, risk, and the
+      //    duplicate LOOKUP. Nothing is rejected here — see the document-level
+      //    verdict below.
+      const prepared: Array<{
+        chunk: Chunk;
+        chunkId: string;
+        chunkTitle: string;
+        embedding: Float32Array;
+        density: number;
+        riskScore: number;
+        duplicateOf: DuplicateMatch | null;
+      }> = [];
+
       for (const chunk of chunks) {
         try {
           // A search window belongs to a document. Hashing only its text made
@@ -180,23 +205,49 @@ export class RDKIndexer {
           // Security and abuse controls run before the chunk can enter either
           // local retrieval or the network sync queue.
           const riskScore = scanChunk(chunk.text);
-          const pipelineStore = this.config.localStore as LocalStore & {
-            getDedupCandidates?: LocalStore['getDedupCandidates'];
-            getIndexRateState?: LocalStore['getIndexRateState'];
-            setIndexRateState?: LocalStore['setIndexRateState'];
-            setChunkRisk?: LocalStore['setChunkRisk'];
-            setChunkMinHash?: LocalStore['setChunkMinHash'];
-          };
-          assertNotDuplicate({
+          prepared.push({
+            chunk,
             chunkId,
-            text: chunk.text,
+            chunkTitle,
             embedding,
-            // Lineage, so re-indexing this document does not read as duplication.
-            documentHash,
-            sourcePath: doc.sourcePath,
-            existing: pipelineStore.getDedupCandidates?.() ?? [],
+            density,
+            riskScore,
+            duplicateOf: findNearDuplicate({
+              chunkId,
+              text: chunk.text,
+              embedding,
+              // Lineage, so re-indexing this document does not read as duplication.
+              documentHash,
+              sourcePath: doc.sourcePath,
+              existing: dedupCandidates,
+            }),
           });
-          // 5. Categorize
+        } catch (e) {
+          errors.push(`Chunk ${chunk.index}: ${(e as Error).message}`);
+        }
+      }
+
+      // A DOCUMENT is the unit of deduplication, not a chunk. Deciding per chunk
+      // stored documents with holes in them: a 41-chunk spec whose tech-stack and
+      // schema sections happened to match an older copy was indexed as 39 chunks,
+      // and nothing downstream could tell the document was incomplete. So the
+      // rule is: if every chunk duplicates existing content the document is a
+      // republish and is rejected whole; if any chunk is novel the document is
+      // new work and is indexed whole, shared passages included.
+      if (prepared.length > 0 && prepared.every(p => p.duplicateOf)) {
+        const match = prepared[0].duplicateOf!;
+        return {
+          chunksIndexed: 0,
+          chunksSkipped: chunksSkipped + prepared.length,
+          filesProcessed: 0,
+          categories: [],
+          errors: [...errors, `Document is a near-duplicate of already-indexed content (${describeDuplicate(match)})`],
+        };
+      }
+
+      // 5. Store every prepared chunk.
+      for (const { chunk, chunkId, chunkTitle, embedding, density, riskScore } of prepared) {
+        try {
           const domain = doc.domain ?? this.config.domain;
           const categories = doc.categories ?? categorizeChunk(chunk.text, domain);
           allCategories.push(categories);
