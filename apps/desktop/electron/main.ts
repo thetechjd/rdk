@@ -123,6 +123,19 @@ function registerHandlers(): void {
       push({ type: 'vault-changed' });
       return result;
     },
+    moveToLocation: async (sourcePath: never, target: never) => {
+      push({ type: 'sync-progress', done: 0, total: 1, message: 'Moving…' });
+      const result = await service.moveToLocation(sourcePath, target);
+      push({
+        type: 'sync-progress',
+        done: 1,
+        total: 1,
+        message: result.error ? 'Move failed' : 'Moved',
+      });
+      push({ type: 'status', status: service.getStatus() });
+      push({ type: 'vault-changed' });
+      return result;
+    },
     reindex: () => service.reindex(),
     setFolderPublic: (relPath: never, isPublic: never) => {
       service.setFolderPublic(relPath, isPublic);

@@ -513,6 +513,27 @@ export class LocalStore {
    * would silently stop being credited on the first edit. The file path is the
    * only thing that survives a re-chunk, so lineage is carried across on it.
    */
+  /**
+   * Repoint a document's rows after its file moves on disk.
+   *
+   * `source_path` is how a file finds its chunks in the vault tree, how the
+   * version series is keyed, and how Central's dedup recognises a node
+   * re-indexing its own file. Moving the file without this orphans every chunk
+   * of the document: the tree shows the file as unindexed at its new path while
+   * the chunks linger under the old one. Content is untouched, so ids/hashes
+   * stand; `synced_at` clears so Central learns the new path on the next sync.
+   */
+  updateSourcePath(oldPath: string, newPath: string): number {
+    const now = new Date().toISOString();
+    const result = this.db.prepare(
+      `UPDATE chunks SET source_path = ?, updated_at = ?, synced_at = NULL WHERE source_path = ?`,
+    ).run(newPath, now, oldPath);
+    this.db.prepare(
+      `UPDATE documents SET source_path = ?, updated_at = ? WHERE source_path = ?`,
+    ).run(newPath, now, oldPath);
+    return result.changes;
+  }
+
   getDerivedFromForSource(sourcePath: string): string | undefined {
     const row = this.db.prepare(`
       SELECT derived_from FROM chunks

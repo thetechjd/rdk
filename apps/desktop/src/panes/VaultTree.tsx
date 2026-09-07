@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import type { FileState, IndexedDoc, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
+import type { FileState, IndexedDoc, MoveTarget, VaultNode, VaultTree as VaultTreeData, VisibilityChoice } from '../../shared/ipc';
+import { isRetrievedPath } from '../../shared/ipc';
 import { useApp } from '../store';
 
 export type ExplorerLocation = 'public' | 'private' | 'local' | 'retrieved';
@@ -9,12 +10,14 @@ const LOCATIONS: Array<{
   label: string;
   icon: string;
   description: string;
-  dropVisibility?: VisibilityChoice;
+  /** Where a file dropped here ends up. Absent = not a drop target: Local has no
+   *  folder to move into and no "make local" operation to move it there. */
+  dropTarget?: MoveTarget;
 }> = [
-  { id: 'public', label: 'Public', icon: '◎', description: 'Published for anyone to retrieve', dropVisibility: 'public' },
-  { id: 'private', label: 'Private', icon: '◆', description: 'Encrypted on the network', dropVisibility: 'private' },
+  { id: 'public', label: 'Public', icon: '◎', description: 'Published for anyone to retrieve', dropTarget: 'public' },
+  { id: 'private', label: 'Private', icon: '◆', description: 'Encrypted on the network', dropTarget: 'private' },
   { id: 'local', label: 'Local', icon: '⌂', description: 'Only on this device' },
-  { id: 'retrieved', label: 'Retrieved', icon: '⇣', description: 'Documents saved from queries' },
+  { id: 'retrieved', label: 'Retrieved', icon: '⇣', description: 'Documents saved from queries', dropTarget: 'retrieved' },
 ];
 
 const virtualKey = (location: ExplorerLocation) => `location:${location}`;
@@ -135,18 +138,36 @@ export function VaultTree() {
 
   const onLocationDrop = useCallback(async (
     e: React.DragEvent,
-    visibility?: VisibilityChoice,
+    target?: MoveTarget,
   ) => {
     e.preventDefault();
     e.stopPropagation();
     setLocationDragOver(null);
-    if (!visibility) return;
+    if (!target) return;
+
+    // Dragging a file that is ALREADY in the vault from one folder to another is
+    // a move, and has to behave like one — the previous handler only re-indexed,
+    // so a document dragged out of Retrieved changed visibility and then stayed
+    // exactly where it was, in the folder the user had just dragged it out of.
+    const internal = e.dataTransfer.getData('application/x-rdk-path');
+    if (internal) {
+      app.toast(`Moving to ${target}…`);
+      const result = await window.rdk.moveToLocation(internal, target);
+      app.toast(result.error ?? `Moved to ${target}`, !!result.error);
+      app.refreshData();
+      app.refreshStatus();
+      return;
+    }
+
+    // Files dragged in from the OS have nowhere to move from — indexing them IS
+    // the whole operation, and Retrieved has no visibility to index them at.
+    if (target === 'retrieved') return;
     const paths = pathsFromDrop(e);
     if (!paths.length) return;
-    app.toast(`Indexing ${paths.length} item(s) as ${visibility}…`);
-    const result = await window.rdk.indexPaths(paths, visibility);
+    app.toast(`Indexing ${paths.length} item(s) as ${target}…`);
+    const result = await window.rdk.indexPaths(paths, target);
     app.toast(
-      result.error ? result.error : `Indexed ${result.indexed} chunk(s) — ${visibility}`,
+      result.error ? result.error : `Indexed ${result.indexed} chunk(s) — ${target}`,
       !!result.error,
     );
     app.refreshData();
@@ -253,7 +274,7 @@ export function VaultTree() {
             const nodes = nodesByLocation[location.id];
             const docs = docsByLocation[location.id];
             const itemCount = countFiles(nodes) + docs.length;
-            const acceptsDrop = !!location.dropVisibility;
+            const acceptsDrop = !!location.dropTarget;
             return (
               <section
                 className={`explorer-location ${location.id}${locationDragOver === location.id ? ' drop-over' : ''}`}
@@ -262,13 +283,16 @@ export function VaultTree() {
                   if (!acceptsDrop) return;
                   e.preventDefault();
                   e.stopPropagation();
-                  e.dataTransfer.dropEffect = 'copy';
+                  // A file already in the vault is being MOVED here; one dragged
+                  // in from the OS file manager is copied in and indexed.
+                  e.dataTransfer.dropEffect =
+                    e.dataTransfer.types.includes('application/x-rdk-path') ? 'move' : 'copy';
                   setLocationDragOver(location.id);
                 }}
                 onDragLeave={e => {
                   if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setLocationDragOver(null);
                 }}
-                onDrop={e => onLocationDrop(e, location.dropVisibility)}
+                onDrop={e => onLocationDrop(e, location.dropTarget)}
               >
                 <button
                   className="explorer-location-head"
@@ -276,13 +300,13 @@ export function VaultTree() {
                     if (!isOpen) toggle(locationKey);
                     app.openLocation(location.id, location.label);
                   }}
-                  title={`${location.description}${acceptsDrop ? ` — drop files here to index as ${location.id}` : ''}`}
+                  title={`${location.description}${acceptsDrop ? ` — drop a file here to move it to ${location.id}` : ''}`}
                   aria-expanded={isOpen}
                 >
                   <span className="location-chevron">{isOpen ? '⌄' : '›'}</span>
                   <span className="location-icon">{location.icon}</span>
                   <span className="location-label">{location.label}</span>
-                  {acceptsDrop && <span className="location-drop-hint">drop to index</span>}
+                  {acceptsDrop && <span className="location-drop-hint">drop to move</span>}
                   <span className="location-count">{itemCount}</span>
                 </button>
                 {isOpen && (
@@ -357,12 +381,10 @@ export function VaultTree() {
 
 /** Retrieved is an origin, not a visibility. It gets its own location even when
  * the saved copy is currently local/private/public. */
-export function isRetrievedPath(filePath?: string): boolean {
-  return !!filePath && filePath
-    .replace(/\\/g, '/')
-    .split('/')
-    .some(part => part.toLowerCase() === 'retrieved');
-}
+// Re-exported so the tree's own helpers and its tests keep one import site; the
+// definition lives in the shared contract because the main process needs the
+// same answer when it decides where a dragged file should land.
+export { isRetrievedPath };
 
 export function locationForState(state?: FileState): Exclude<ExplorerLocation, 'retrieved'> {
   if (state === 'public') return 'public';
@@ -445,9 +467,9 @@ function TreeRow({ node, depth, expanded, toggle, onFileClick, selectedChunk, se
       draggable
       onDragStart={e => {
         e.dataTransfer.setData('application/x-rdk-path', node.path);
-        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.effectAllowed = 'move';
       }}
-      title="Drag onto the drop zone below to index (private/public), or right-click for options"
+      title="Drag onto Public, Private or Retrieved to move this file there, or right-click for options"
       onClick={() => onFileClick(node)}
       onContextMenu={e => { e.preventDefault(); onContext(e.clientX, e.clientY, node); }}
     >

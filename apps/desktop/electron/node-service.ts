@@ -52,8 +52,12 @@ import {
 import type {
   Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
   GraphEdge, GraphNode, IndexedDoc, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
-  Preferences, QueryDocument, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
+  MoveTarget, Preferences, QueryDocument, QueryResponse, RetrievedFor, VaultNode, VaultTree, VisibilityChoice,
 } from '../shared/ipc';
+// The renderer and the main process must agree on what counts as the Retrieved
+// folder, so both read it from the shared contract rather than each matching the
+// name themselves.
+import { RETRIEVED_DIR, isRetrievedPath } from '../shared/ipc';
 
 const IGNORE_DIRS = new Set(['.git', '.obsidian', 'node_modules', '.trash', '.rdk']);
 const TEXT_EXTS = new Set(['.md', '.markdown', '.txt', '.mdx']);
@@ -608,6 +612,89 @@ export class NodeService {
       })).indexed;
     }
     return { ok: true, reindexed };
+  }
+
+  /**
+   * Move a vault file to an Explorer location — what dragging it between the
+   * tree's folders means.
+   *
+   * The Explorer's folders are not all the same kind of thing. Public and
+   * Private are VISIBILITY, so a file dropped there keeps its place on disk and
+   * only changes state. Retrieved is a real directory, and `isRetrievedPath`
+   * gives it priority over visibility when the tree decides where to draw a
+   * file — so a document inside it stays filed under Retrieved however often you
+   * publish it. That is why dragging to Public appeared to do nothing: indexing
+   * alone can never move a file out of the folder that is claiming it.
+   */
+  async moveToLocation(
+    sourcePath: string,
+    target: MoveTarget,
+  ): Promise<{ ok: boolean; path?: string; indexed?: number; error?: string }> {
+    const root = this.getConfig()?.vaultPath;
+    const abs = path.resolve(sourcePath);
+    if (!root || !isWithinVault(root, abs)) {
+      return { ok: false, error: 'Refusing to move a file outside the vault.' };
+    }
+    let stat: fs.Stats;
+    try { stat = fs.statSync(abs); }
+    catch { return { ok: false, error: 'That file no longer exists.' }; }
+    if (!stat.isFile()) return { ok: false, error: 'Only files can be moved between locations.' };
+
+    const targetDir = target === 'retrieved'
+      ? this.retrievedDir(root)
+      // Out of Retrieved and into the vault root; a file filed anywhere else
+      // (Projects/, say) keeps its folder and only changes visibility.
+      : isRetrievedPath(toPosix(path.relative(root, abs))) ? root : path.dirname(abs);
+
+    let finalPath = abs;
+    if (path.resolve(targetDir) !== path.resolve(path.dirname(abs))) {
+      const moved = this.moveVaultFile(abs, targetDir);
+      if (!moved.ok || !moved.path) return { ok: false, error: moved.error };
+      finalPath = moved.path;
+      this.getStore().updateSourcePath(abs, finalPath);
+    }
+
+    // Retrieved carries no visibility of its own — filing a document there is
+    // not a statement about who may read it, so leave its chunks alone.
+    if (target === 'retrieved') return { ok: true, path: finalPath };
+
+    const result = await this.indexPaths([finalPath], target);
+    return result.error
+      ? { ok: false, path: finalPath, error: result.error }
+      : { ok: true, path: finalPath, indexed: result.indexed };
+  }
+
+  /** The vault's Retrieved directory, reusing whatever casing already exists on
+   *  disk so a move doesn't create a second folder beside `Retrieved/`. */
+  private retrievedDir(root: string): string {
+    try {
+      const existing = fs.readdirSync(root, { withFileTypes: true })
+        .find(e => e.isDirectory() && e.name.toLowerCase() === RETRIEVED_DIR);
+      if (existing) return path.join(root, existing.name);
+    } catch { /* unreadable vault root — fall through to the default name */ }
+    return path.join(root, RETRIEVED_DIR);
+  }
+
+  private moveVaultFile(abs: string, targetDir: string): { ok: boolean; path?: string; error?: string } {
+    try {
+      fs.mkdirSync(targetDir, { recursive: true });
+      const ext = path.extname(abs);
+      const stem = path.basename(abs, ext);
+      let dest = path.join(targetDir, path.basename(abs));
+      for (let n = 2; fs.existsSync(dest); n++) dest = path.join(targetDir, `${stem} (${n})${ext}`);
+      try {
+        fs.renameSync(abs, dest);
+      } catch (e) {
+        // A vault can span devices (a symlinked folder, an external drive),
+        // where rename(2) fails with EXDEV and only copy-then-unlink works.
+        if ((e as NodeJS.ErrnoException).code !== 'EXDEV') throw e;
+        fs.copyFileSync(abs, dest);
+        fs.unlinkSync(abs);
+      }
+      return { ok: true, path: dest };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
   }
 
   /** Create a new note in the vault. Returns its absolute path. */

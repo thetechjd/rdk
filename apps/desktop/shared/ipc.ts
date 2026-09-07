@@ -123,6 +123,30 @@ export interface RetrievedFor {
 
 export type VisibilityChoice = 'private' | 'public';
 
+/**
+ * Where a file can be dragged in the Explorer. These are two different kinds of
+ * thing deliberately: 'public'/'private' are VISIBILITY and leave the file where
+ * it sits, while 'retrieved' is a real directory under the vault root. Dropping
+ * onto Public therefore moves a file OUT of the Retrieved folder — otherwise the
+ * folder keeps claiming it (see isRetrievedPath) no matter what its visibility is.
+ */
+export type MoveTarget = VisibilityChoice | 'retrieved';
+
+/** Name of the vault's Retrieved directory, as created by saved query results. */
+export const RETRIEVED_DIR = 'retrieved';
+
+/**
+ * Whether a path sits under the vault's Retrieved folder. Matched on any path
+ * segment, case-insensitively, and on both separators — the same file is
+ * `retrieved/x.md` to the main process and `Retrieved\x.md` on Windows.
+ */
+export function isRetrievedPath(filePath?: string): boolean {
+  return !!filePath && filePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .some(part => part.toLowerCase() === RETRIEVED_DIR);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Graph
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +428,10 @@ export interface RdkApi {
    *  ones with no file in the vault folder — the network content the tree omits. */
   getIndexedDocuments(): Promise<IndexedDoc[]>;
   indexPaths(paths: string[], visibility: VisibilityChoice): Promise<{ indexed: number; error?: string }>;
+  /** Move a vault file to an Explorer location: relocates it on disk when the
+   *  Retrieved folder is involved, then re-indexes it at the target visibility.
+   *  Returns the file's new path. */
+  moveToLocation(sourcePath: string, target: MoveTarget): Promise<{ ok: boolean; path?: string; indexed?: number; error?: string }>;
   reindex(): Promise<{ ok: boolean; error?: string }>;
   setFolderPublic(relPath: string, isPublic: boolean): Promise<{ ok: boolean }>;
   revealInFileManager(path: string): Promise<void>;
@@ -501,7 +529,7 @@ export type RdkChannel = Exclude<keyof RdkApi, 'onPush'>;
 
 export const RDK_CHANNELS: RdkChannel[] = [
   'isInitialized', 'getCapabilities', 'chooseVaultDirectory', 'initNode',
-  'getVaultTree', 'getIndexedDocuments', 'indexPaths', 'reindex', 'setFolderPublic', 'revealInFileManager',
+  'getVaultTree', 'getIndexedDocuments', 'indexPaths', 'moveToLocation', 'reindex', 'setFolderPublic', 'revealInFileManager',
   'getChunk', 'readContent', 'readFile', 'writeFile', 'createFile', 'publishChunk', 'unpublishChunk', 'pinDocument', 'pinnedDocuments',
   'deleteChunk', 'getRetrievedFor', 'getVersions',
   'getGraphData', 'query', 'retrieveQueryDocument',
