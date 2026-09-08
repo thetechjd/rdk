@@ -12,6 +12,7 @@ import type { RerankedCandidate } from './types.js';
 import { scoreCandidates } from './score.js';
 import { configureQueryVocabulary, loadBundledEnglishFrequencies, understandQuery } from './understand.js';
 import path from 'path';
+import os from 'os';
 
 export interface PipelineResult {
   text: string;
@@ -48,7 +49,7 @@ export class QueryPipeline {
     const vocabulary = store.getVocabulary();
     configureQueryVocabulary({
       ...vocabulary,
-      dataDir: process.env.RDK_HOME ?? `${process.env.HOME ?? '.'}/.rdk`,
+      dataDir: process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk'),
       baseFrequencies: loadBundledEnglishFrequencies(
         path.join(process.env.RDK_ASSETS_DIR ?? path.join(__dirname, '..', '..', 'assets'), 'frequency_dictionary_en_82_765.txt'),
       ),
@@ -79,6 +80,7 @@ export class QueryPipeline {
     raw: string,
     opts: { includePrivate?: boolean; includeNetwork?: boolean; domain?: string; topK?: number } = {},
   ): Promise<PipelineResult> {
+    if (opts.domain === 'all' || opts.domain === '*') opts = { ...opts, domain: undefined };
     const started = Date.now();
     const understood = understandQuery(raw);
     // A caller asking for more than the pool holds gets the pool; a nonsense

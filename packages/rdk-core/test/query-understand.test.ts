@@ -10,6 +10,16 @@ import {
 } from '../src/query/understand.js';
 
 describe('query understanding', () => {
+  it('keeps the in-memory vocabulary when its cache directory is unwritable', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rdk-dict-readonly-'));
+    const file = path.join(root, 'file');
+    fs.writeFileSync(file, 'not a directory');
+    try {
+      expect(() => configureQueryVocabulary({ words: ['instagram'], chunkCount: 1, dataDir: file })).not.toThrow();
+      expect(understandQuery('instgram').corrected).toBe('instagram');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   beforeEach(() => setQueryVocabularyForTests([['instagram', 100], ['clone', 80]]));
 
   it('corrects instgram when instagram exists in the indexed vocabulary', () => {

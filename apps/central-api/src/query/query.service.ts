@@ -39,7 +39,7 @@ export class QueryService {
       SELECT
         c.id                   AS chunk_id,
         c.node_id,
-        n.mcp_endpoint         AS provider_node_mcp_endpoint,
+        n.mcp_endpoint         AS mcp_endpoint,
         c.title,
         c.summary,
         (1 - (c.embedding <=> $1::vector)) AS score,
@@ -58,7 +58,7 @@ export class QueryService {
     const params: unknown[] = [vectorLiteral];
     let paramIdx = 2;
 
-    if (dto.domain) {
+    if (dto.domain && dto.domain !== 'all' && dto.domain !== '*') {
       sql += ` AND c.domain = $${paramIdx}`;
       params.push(dto.domain);
       paramIdx++;

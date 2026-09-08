@@ -20,6 +20,22 @@ const chunk = (over: Partial<NetworkChunk> & { title: string; score: number }): 
 });
 
 describe('assembling documents from chunks', () => {
+  it('uses a summary when the body is explicitly empty', () => {
+    const [doc] = groupIntoDocuments([chunk({ title: 'Godot', score: 0.5, content: '', summary: 'Game engine', available: false })]);
+    expect(doc.sections[0].content).toBe('Game engine');
+    expect(doc.contentAvailable).toBe(false);
+  });
+
+  it('keeps summary-less legacy previews selectable without claiming content', () => {
+    const docs = groupIntoDocuments([
+      chunk({ title: 'Godot', score: 0.49, content: '', summary: '', preview: true }),
+    ]);
+    expect(docs).toHaveLength(1);
+    expect(docs[0]).toMatchObject({ name: 'Godot', contentAvailable: false, completeDocument: false });
+    expect(docs[0].sections[0].content).toBe('');
+    expect(docs[0].sections[0].chunkId).toBeTruthy();
+  });
+
   it('collapses sections of one document into a single result', () => {
     const docs = groupIntoDocuments([
       chunk({ title: 'instagram-clone — Phase 6: Client Apps', score: 0.42 }),

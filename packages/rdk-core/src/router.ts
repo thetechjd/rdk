@@ -294,6 +294,7 @@ export class RDKRouter {
           .slice(0, cfg.topK ?? 5)
           .map(chunk => {
             // Central names the live-fetched body `contentEncrypted` on the wire.
+            if (chunk.preview) return { ...chunk, content: chunk.summary };
             const body = chunk.contentEncrypted ?? chunk.content;
             if (!chunk.isEncrypted) return { ...chunk, content: body ?? chunk.summary };
             const key = cfg.sharedVaultKeys?.[chunk.nodeId];
@@ -461,7 +462,7 @@ export class RDKRouter {
         // rank 11 for the query "discord clone"; a topK-sized pool would have
         // discarded it before anything could rescue it.
         topK: Math.max(20, (cfg.topK ?? 5) * 4),
-        domain: cfg.domain,
+        domain: cfg.domain === 'all' || cfg.domain === '*' ? undefined : cfg.domain,
         // Tell Central we can handle matched-but-unretrievable chunks, so an
         // offline owner reports as such instead of looking like "no match".
         // Older centrals ignore the flag.

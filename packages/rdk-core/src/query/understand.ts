@@ -65,12 +65,16 @@ export function configureQueryVocabulary(opts: {
   frequencies = next;
   chunkVocabulary = chunkWords;
   englishWords = english;
-  fs.mkdirSync(opts.dataDir, { recursive: true });
-  fs.writeFileSync(dictionaryPath, JSON.stringify({
-    chunkCount: opts.chunkCount,
-    frequencies: Object.fromEntries(next),
-    chunkWords: [...chunkWords],
-  }));
+  try {
+    fs.mkdirSync(opts.dataDir, { recursive: true });
+    fs.writeFileSync(dictionaryPath, JSON.stringify({
+      chunkCount: opts.chunkCount,
+      frequencies: Object.fromEntries(next),
+      chunkWords: [...chunkWords],
+    }));
+  } catch {
+    // Optional cache: the in-memory vocabulary remains usable on read-only hosts.
+  }
 }
 
 export function loadBundledEnglishFrequencies(filePath: string): Array<readonly [string, number]> {

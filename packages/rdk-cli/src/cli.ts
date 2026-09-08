@@ -139,7 +139,7 @@ program.command('vault:versions <path>').description('Version history of an inde
 program
   .command('query <query>')
   .description('Query your knowledge — local vault first (free), then the network. Same routing as the desktop app.')
-  .option('-d, --domain <domain>')
+  .option('-d, --domain <domain>', 'Search domain (use all to search every domain)')
   .option('-k, --top-k <n>', 'Results', '5')
   .option('--no-save', "Don't keep retrieved documents in your vault")
   .option('--json', 'Machine-readable output. Without a selection, lists matches only — nothing is charged.')
@@ -236,7 +236,7 @@ network
 network
   .command('query <query>')
   .description('Search the public network and your indexed chunks for relevant knowledge')
-  .option('-d, --domain <domain>')
+  .option('-d, --domain <domain>', 'Search domain (use all to search every domain)')
   .option('-k, --top-k <n>', 'Results', '5')
   .option('--save', 'Save the results to your local knowledge (this machine only)')
   .action(async (query, opts) => {
@@ -247,7 +247,7 @@ network
 program.command('network:join').action(async () => { const { networkJoin } = await import('./commands/network.js'); await networkJoin(); });
 program.command('network:connect').action(async () => { const { networkConnect } = await import('./commands/network.js'); await networkConnect(); });
 program.command('network:status').action(async () => { const { networkStatus } = await import('./commands/network.js'); await networkStatus(); });
-program.command('network:query <query>').option('-d, --domain <d>').option('-k, --top-k <n>', 'Results', '5').option('--save', 'Save results to local knowledge').action(async (q, o) => { const { networkQuery } = await import('./commands/network.js'); await networkQuery(q, { domain: o.domain, topK: parseInt(o.topK, 10), save: !!o.save }); });
+program.command('network:query <query>').option('-d, --domain <d>', 'Search domain (use all to search every domain)').option('-k, --top-k <n>', 'Results', '5').option('--save', 'Save results to local knowledge').action(async (q, o) => { const { networkQuery } = await import('./commands/network.js'); await networkQuery(q, { domain: o.domain, topK: parseInt(o.topK, 10), save: !!o.save }); });
 program.command('save').description('Save the last network:query results to your local knowledge (this machine only)').action(async () => { const { saveLastQuery } = await import('./commands/network.js'); await saveLastQuery(); });
 program.command('network:sync').description('[deprecated] use vault:sync').option('--force').action(async (opts) => { console.error(t.dim('  note: `rdk network:sync` is deprecated — use `rdk vault:sync`')); const { vaultSync } = await import('./commands/vault.js'); await vaultSync({ force: !!opts.force }); });
 

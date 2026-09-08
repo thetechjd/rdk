@@ -88,8 +88,10 @@ export function groupIntoDocuments(chunks: NetworkChunk[]): RetrievedDocument[] 
   const byName = new Map<string, RetrievedDocument>();
 
   for (const chunk of chunks) {
-    const content = (chunk.content ?? chunk.summary ?? '').trim();
-    if (!content) continue;
+    const content = chunk.content?.trim() || chunk.summary?.trim() || '';
+    // Catalog entries from older nodes may have a title but no summary. Keep
+    // them selectable without inventing content or claiming a retrieval.
+    if (!content && !chunk.preview) continue;
 
     const name = documentName(chunk);
     const key = `${chunk.nodeId}:${chunk.documentHash ?? name}`;
@@ -102,8 +104,8 @@ export function groupIntoDocuments(chunks: NetworkChunk[]): RetrievedDocument[] 
         isOwn: chunk.isOwn === true,
         tipUsdc: 0,
         domain: chunk.domain,
-        contentAvailable: chunk.available !== false,
-        completeDocument: !!chunk.documentHash,
+        contentAvailable: chunk.available !== false && !chunk.preview,
+        completeDocument: !!chunk.documentHash && !chunk.preview,
         sections: [],
       };
       byName.set(key, doc);

@@ -4,6 +4,12 @@ import { loadConfig } from '../config.js';
 import { requireDeps } from '../require-dep.js';
 import { t } from '../theme.js';
 
+function assertIndexCompleted(result: { chunksIndexed: number; errors: string[] }): void {
+  if (result.errors.length) {
+    throw new Error(`Saved ${result.chunksIndexed} chunk(s) locally; operation incomplete: ${result.errors.join('; ')}`);
+  }
+}
+
 async function getIndexer() {
   const ready = await requireDeps(['@xenova/transformers'], { label: 'Embedding model' });
   if (!ready) return null;
@@ -40,6 +46,7 @@ export async function indexChunk(text: string, opts: { title: string; domain?: s
       isPublic: false,
       localOnly: opts.local,
     });
+    assertIndexCompleted(result);
     if (opts.local) {
       spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) saved locally`);
       console.log(t.dim('  Stored on this machine only — not synced to the network.'));
@@ -47,9 +54,9 @@ export async function indexChunk(text: string, opts: { title: string; domain?: s
       spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) indexed privately`);
       console.log(t.dim('  Encrypted with your vault key. Visible only to you and your team.'));
     }
-    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
+    process.exitCode = 1;
   }
 }
 
@@ -72,12 +79,13 @@ export async function publishChunk(text: string, opts: { title: string; public?:
       domain: opts.domain ?? config.domain,
       isPublic: true,
     });
+    assertIndexCompleted(result);
     spinner.succeed(`"${opts.title}" → ${result.chunksIndexed} chunk(s) published publicly`);
-    console.log(t.dim('  Now retrievable by any node on the network. Earns tips when used.'));
+    console.log(t.dim('  Synced to the network. Keep rdk mcp:serve running to serve the full content.'));
     console.log(t.warn('  Note: public chunks are immutable and cannot be made private again.'));
-    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
+    process.exitCode = 1;
   }
 }
 
@@ -115,11 +123,12 @@ async function ingestUrl(url: string, isPublic: boolean, domain?: string, localO
       localOnly,
       sourcePath: url,
     });
+    assertIndexCompleted(result);
     spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${outcome(isPublic, localOnly)}`);
     if (localOnly) console.log(t.dim('  Stored on this machine only — not synced to the network.'));
-    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
+    process.exitCode = 1;
   }
 }
 
@@ -147,11 +156,12 @@ async function ingestFile(filePath: string, isPublic: boolean, domain?: string, 
       localOnly,
       sourcePath: filePath,
     });
+    assertIndexCompleted(result);
     spinner.succeed(`"${title}" → ${result.chunksIndexed} chunk(s) ${outcome(isPublic, localOnly)}`);
     if (localOnly) console.log(t.dim('  Stored on this machine only — not synced to the network.'));
-    result.errors.forEach((e: string) => console.log(t.warn(`  ${e}`)));
   } catch (e) {
     spinner.fail((e as Error).message);
+    process.exitCode = 1;
   }
 }
 

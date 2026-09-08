@@ -197,7 +197,17 @@ export async function unifiedQuery(
     }
 
     const previews = groupIntoDocuments(result.chunks as NetworkChunk[]);
-    if (previews.length === 0) { reportUnavailable(result); return; }
+    if (previews.length === 0) {
+      const message = 'Matches were found, but no readable content or previews were returned. Try again when the publishing node is serving content.';
+      if (opts.json) {
+        emit({ ok: true, retrieved: false, reason: 'content_unavailable', message,
+          documents: [], unavailable: result.unavailableChunks?.length ?? result.chunks.length });
+      } else {
+        console.log(t.warn(message));
+        reportUnavailable(result);
+      }
+      return;
+    }
 
     // ── Selection ────────────────────────────────────────────────────────────
     // Retrieval settles a tip, so it never happens without someone choosing:

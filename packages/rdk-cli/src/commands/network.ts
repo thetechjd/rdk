@@ -260,8 +260,10 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
       },
       body: JSON.stringify({
         embedding: Array.from(embedding),
+        queryText: query,
+        includeUnavailable: true,
         topK: opts.topK ?? 5,
-        domain: opts.domain ?? config.domain,
+        domain: ['all', '*'].includes(opts.domain ?? config.domain) ? undefined : opts.domain ?? config.domain,
       }),
     });
 
@@ -272,7 +274,11 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     }
 
     const data = await res.json() as {
+      message?: string;
       results: Array<{
+        available?: boolean;
+        unavailableReason?: string;
+        domain?: string;
         title?: string;
         summary?: string;
         score?: number;
@@ -288,7 +294,7 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
     };
 
     if (!data.results.length) {
-      console.log(t.warn('No results.'));
+      console.log(t.warn(data.message ?? 'No results.'));
       return;
     }
 
@@ -312,6 +318,9 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
         : r.tipAmountUsdc ? t.dim(`  ·  tip $${r.tipAmountUsdc.toFixed(4)} USDC`) : '';
       console.log(t.bold(`[${i + 1}] ${r.title ?? 'Untitled'}`) + t.dim(` (${score}% match)`) + tip);
 
+      if (r.available === false) {
+        console.log(t.warn(`    Content unavailable: ${r.unavailableReason ?? 'unknown'}.`));
+      }
       let content = r.contentEncrypted ?? '';
       // Team/private content arrives encrypted — decrypt with the shared vault
       // key for the owning node (or our own key). Public content is plaintext.
@@ -332,7 +341,7 @@ export async function networkQuery(query: string, opts: { domain?: string; topK?
         // user's own vault, which is a human artifact they are entitled to read
         // in full. Redaction belongs on the way to a model, not on the way to
         // disk - saving tokens would destroy the answer for its owner.
-        savable.push({ title: r.title ?? 'Untitled', content: content.trim(), domain: opts.domain ?? config.domain });
+        savable.push({ title: r.title ?? 'Untitled', content: content.trim(), domain: r.domain ?? config.domain });
       } else if (r.summary) {
         console.log(t.dim(egress.text(r.summary.trim())));
       } else {

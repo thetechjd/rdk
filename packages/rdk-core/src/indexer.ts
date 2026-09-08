@@ -384,7 +384,7 @@ export class RDKIndexer {
       };
     }).filter(c => c.embedding.length > 0);
 
-    if (payload.length === 0) return;
+    if (payload.length === 0) throw new Error('No embeddings available for Central; chunks remain pending sync.');
 
     // The sync endpoint accepts a node JWT, not the long-lived node API key.
     // Sending the API key directly produced a 401 that this method used to
@@ -418,16 +418,20 @@ export class RDKIndexer {
       // skip chunks (plan limit, bad embedding); the rest stay pending and
       // re-push on the next sync instead of being falsely flagged synced.
       const result = await response.json().catch(() => ({})) as
-        { acceptedHashes?: string[]; errors?: string[] };
+        { synced?: number; acceptedHashes?: string[]; errors?: string[] };
       const accepted = Array.isArray(result.acceptedHashes)
         ? new Set(result.acceptedHashes)
         : new Set(
-            unsynced
-              .map(c => c.id)
+            (result.synced === payload.length ? payload : [])
+              .map(c => c.chunkHash)
               .filter(id => !(result.errors ?? []).some(e => e.split(':')[0]?.trim() === id)),
           );
       for (const chunk of unsynced) {
         if (accepted.has(chunk.id)) this.config.localStore.markSynced(chunk.id);
+      }
+      const pending = unsynced.filter(chunk => !accepted.has(chunk.id)).length;
+      if (pending > 0) {
+        throw new Error(`Central did not accept ${pending} chunk(s); saved locally and pending sync. Run rdk vault:sync --verify. ${(result.errors ?? []).join('; ')}`);
       }
     } else {
       const detail = await response.text().catch(() => '');
