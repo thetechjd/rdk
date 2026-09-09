@@ -54,7 +54,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Pinned off macos-latest (currently macOS 26 arm64). The image that
+          # rolled out between 2026-08-19 and 2026-09-07 breaks keychain unlock
+          # on the arm64 macOS runners, so electron-builder's
+          # `security set-key-partition-list` fails with "the user name or
+          # passphrase you entered is not correct" on credentials that have not
+          # changed since July. See actions/runner-images#13476.
+          - os: macos-15
             target: '--mac'
           - os: ubuntu-latest
             target: '--linux'
