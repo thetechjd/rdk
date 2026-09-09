@@ -13,9 +13,17 @@ mkdir -p "$(dirname "$OUT")"
 
 TARBALL_URL="https://registry.npmjs.org/@retrodeck/rdk/-/rdk-${VERSION}.tgz"
 
-# The npm version must be published before this runs. Poll briefly for CDN propagation.
+# The npm version must be published before this runs, but `npm publish` returning
+# success only means the REGISTRY accepted it — the tarball reaches the CDN some
+# time later. A 90s window (6 x 15s) was not enough for 1.14.1: the release job
+# failed on a 404 while the package was already listed, and the tap had to be
+# bumped by hand. Wait up to 10 minutes instead; a slow release beats a broken
+# `brew install`.
+ATTEMPTS="${TARBALL_POLL_ATTEMPTS:-40}"
+INTERVAL="${TARBALL_POLL_INTERVAL:-15}"
+
 SHA=""
-for attempt in 1 2 3 4 5 6; do
+for attempt in $(seq 1 "$ATTEMPTS"); do
   if curl -fsSL "$TARBALL_URL" -o /tmp/rdk.tgz 2>/dev/null; then
     if command -v sha256sum >/dev/null 2>&1; then
       SHA=$(sha256sum /tmp/rdk.tgz | awk '{print $1}')
@@ -24,12 +32,14 @@ for attempt in 1 2 3 4 5 6; do
     fi
     break
   fi
-  echo "npm tarball not available yet (attempt $attempt) — waiting 15s..."
-  sleep 15
+  echo "npm tarball not available yet (attempt $attempt/$ATTEMPTS) — waiting ${INTERVAL}s..."
+  sleep "$INTERVAL"
 done
 
 if [[ -z "$SHA" ]]; then
-  echo "ERROR: could not fetch $TARBALL_URL — publish @retrodeck/rdk@${VERSION} to npm before tagging the release." >&2
+  echo "ERROR: $TARBALL_URL still 404 after $((ATTEMPTS * INTERVAL))s." >&2
+  echo "  If @retrodeck/rdk@${VERSION} IS on npm, this is CDN lag — re-run this job." >&2
+  echo "  If it is not, publish it before tagging the release." >&2
   exit 1
 fi
 
