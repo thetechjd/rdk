@@ -114,7 +114,13 @@ export async function unifiedQuery(
       centralApiUrl: config.centralApiUrl,
       centralApiKey: config.apiKey,
       nodeId: config.nodeId,
-      domain: opts.domain ?? config.domain,
+      // Search every domain unless the caller narrows it. Defaulting to the
+      // node's OWN domain made `domain` a partition rather than a filter: a
+      // `general` node could never see anything published under `engineering`,
+      // the miss looked identical to "not indexed", and nothing in the output
+      // said a filter had been applied. Indexing still tags chunks with
+      // config.domain — this only widens what a query is allowed to match.
+      domain: opts.domain,
       topK: opts.topK ?? 5,
       vaultKey: config.vaultKeyHex ? keyFromHex(config.vaultKeyHex) : undefined,
       sharedVaultKeys,

@@ -14,12 +14,13 @@ vi.mock('@rdk/node/ws/ownership', () => ({ withWsConnection: (fn: () => unknown)
 vi.mock('@rdk/core', () => ({
   LocalStore: class {},
   LocalEmbeddingModel: class { async embed() { return new Float32Array(384).fill(0.1); } },
-  RDKRouter: class { query = state.query; },
+  RDKRouter: class { constructor(cfg: unknown) { (globalThis as Record<string, unknown>).__rdkRouterConfig = cfg; } query = state.query; },
   RDKIndexer: class { indexDocument = state.index; },
   keyFromHex: (s: string) => s,
   decrypt: (s: string) => s,
   groupIntoDocuments,
 }));
+const RouterSpy = { get lastConfig() { return (globalThis as Record<string, unknown>).__rdkRouterConfig; } };
 import { unifiedQuery } from '../src/commands/query.js';
 import { networkQuery } from '../src/commands/network.js';
 import { publishUrl } from '../src/commands/publish.js';
@@ -56,6 +57,20 @@ describe('query CLI retrieval failures', () => {
     expect(request).toMatchObject({ queryText: 'Godot', includeUnavailable: true });
     expect(request.domain).toBeUndefined();
     expect(output.mock.calls.flat().join(' ')).toContain('owner_offline');
+  });
+  it('does not partition by the node own domain when none is given', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ jwtToken: 'token' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ results: [] })));
+    vi.stubGlobal('fetch', fetch);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    state.query.mockImplementation(async () => ({ source: 'network', chunks: [] }));
+    await unifiedQuery('Godot', { json: true });
+    // loadConfig() reports domain 'general'; a query that names no domain must
+    // not inherit it, or content published under any other domain is invisible.
+    expect(state.query).toHaveBeenCalledTimes(1);
+    const cfg = (RouterSpy.lastConfig ?? {}) as { domain?: string };
+    expect(cfg.domain).toBeUndefined();
   });
   it('does not report a rejected URL publication as success', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('<title>Godot</title>article')));

@@ -146,7 +146,10 @@ export class NodeService {
         centralApiUrl: cfg?.centralApiUrl,
         centralApiKey: cfg?.apiKey,
         nodeId: cfg?.nodeId, // lets the router skip tipping the user's own chunks
-        domain: cfg?.domain,
+        // Search all domains. The query bar has no domain control, so passing
+        // the node's configured domain silently hid every result published
+        // under any other one. Indexing (getIndexer) still tags with cfg.domain.
+        domain: 'all',
         vaultKey: this.vaultKey(),
         sharedVaultKeys,
       });
