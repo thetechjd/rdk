@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Account, BillingInterval, McpInfo, NodeStatus, Plan, Preferences } from '../shared/ipc';
 import { useApp } from './store';
 import { LoginForm } from './LoginForm';
+import { currentTheme, saveTheme, type Theme } from './theme';
 
 type Section = 'node' | 'vault' | 'account' | 'mcp' | 'prefs';
 
@@ -308,7 +309,7 @@ function AccountSection() {
             role="alert"
             className="hint"
             style={{
-              color: acct.balanceStatus.level === 'low' ? 'var(--cassette, #e8b61a)' : 'var(--tape, #E8521A)',
+              color: acct.balanceStatus.level === 'low' ? 'var(--cassette, #e8b61a)' : 'var(--cassette)',
               marginBottom: 6,
             }}
           >
@@ -325,7 +326,7 @@ function AccountSection() {
             className="hint"
             style={{
               color: acct.subscriptionHealth.status === 'lapsed'
-                ? 'var(--tape, #E8521A)'
+                ? 'var(--cassette)'
                 : 'var(--cassette, #e8b61a)',
               marginBottom: 6,
             }}
@@ -355,7 +356,7 @@ function AccountSection() {
             style={{
               color:
                 acct?.balanceStatus && acct.balanceStatus.level !== 'ok'
-                  ? 'var(--tape, #E8521A)'
+                  ? 'var(--cassette)'
                   : 'var(--cassette)',
             }}
           >
@@ -424,20 +425,37 @@ function PrefsSection() {
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   useEffect(() => { window.rdk.getPreferences().then(setPrefs); }, []);
 
+  const [theme, setTheme] = useState<Theme>(currentTheme);
+
   const setVis = async (v: 'private' | 'public') => {
     const p = await window.rdk.setPreferences({ defaultVisibility: v });
     setPrefs(p);
     app.toast(`Default visibility: ${v}`);
   };
 
+  const chooseTheme = (t: Theme) => {
+    saveTheme(t);
+    setTheme(t);
+  };
+
   return (
-    <div className="field">
-      <label>default index visibility</label>
-      <div className="row">
-        <button className={prefs?.defaultVisibility === 'private' ? 'primary' : ''} onClick={() => setVis('private')}>private</button>
-        <button className={prefs?.defaultVisibility === 'public' ? 'cassette' : ''} onClick={() => setVis('public')}>public</button>
+    <>
+      <div className="field">
+        <label>theme</label>
+        <div className="row">
+          {(['dark', 'light'] as Theme[]).map(t => (
+            <button key={t} className={theme === t ? 'primary' : ''} aria-pressed={theme === t} onClick={() => chooseTheme(t)}>{t}</button>
+          ))}
+        </div>
       </div>
-      <div className="hint">Used by re-index and batch flows. Drag-and-drop always asks explicitly.</div>
-    </div>
+      <div className="field">
+        <label>default index visibility</label>
+        <div className="row">
+          <button className={prefs?.defaultVisibility === 'private' ? 'primary' : ''} onClick={() => setVis('private')}>private</button>
+          <button className={prefs?.defaultVisibility === 'public' ? 'cassette' : ''} onClick={() => setVis('public')}>public</button>
+        </div>
+        <div className="hint">Used by re-index and batch flows. Drag-and-drop always asks explicitly.</div>
+      </div>
+    </>
   );
 }

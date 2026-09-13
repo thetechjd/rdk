@@ -9,14 +9,36 @@ import { useApp } from '../store';
 interface SimNode extends SimulationNodeDatum, GraphNode {}
 interface SimEdge { source: SimNode; target: SimNode; kind: 'semantic' | 'retrieval'; weight: number }
 
-const COLORS = {
-  private: '#39FF6A',
-  public: '#E8521A',
-  local: '#6E756E',                 // muted — this-machine-only chunks
-  query: '#5AC8FA',                 // distinct from public: queries aren't content
-  semantic: 'rgba(57,255,106,0.22)',
-  retrieval: 'rgba(90,200,250,0.55)',
-};
+interface GraphColors {
+  private: string; public: string;
+  local: string;      // muted — this-machine-only chunks
+  query: string;      // distinct from public: queries aren't content
+  queryFill: string; semantic: string; retrieval: string; selected: string;
+}
+
+// Canvas can't use var(), so the palette is resolved from theme.css. Cached per
+// theme: draw() runs every simulation tick, and the graph never stops ticking,
+// so a theme switch is picked up on the next frame without any wiring.
+let cachedColors: { theme: string; colors: GraphColors } | null = null;
+function graphColors(): GraphColors {
+  const theme = document.documentElement.dataset.theme ?? 'dark';
+  if (cachedColors?.theme === theme) return cachedColors.colors;
+  const css = getComputedStyle(document.documentElement);
+  const v = (name: string) => css.getPropertyValue(name).trim();
+  const query = v('--graph-query-rgb');
+  const colors: GraphColors = {
+    private: v('--phosphor'),
+    public: v('--cassette'),
+    local: v('--graph-local'),
+    query: `rgb(${query})`,
+    queryFill: `rgba(${query},0.12)`,
+    semantic: `rgba(${v('--phosphor-rgb')},${v('--graph-semantic-alpha')})`,
+    retrieval: `rgba(${query},0.55)`,
+    selected: v('--text-bright'),
+  };
+  cachedColors = { theme, colors };
+  return colors;
+}
 
 export function GraphView() {
   const app = useApp();
@@ -99,6 +121,7 @@ export function GraphView() {
     ctx.save();
     ctx.translate(st.w / 2 + st.ox, st.h / 2 + st.oy);
     ctx.scale(st.scale, st.scale);
+    const colors = graphColors();
 
     // edges
     for (const e of st.edges) {
@@ -106,9 +129,9 @@ export function GraphView() {
       ctx.beginPath();
       ctx.moveTo(sx, sy); ctx.lineTo(tx, ty);
       if (e.kind === 'retrieval') {
-        ctx.strokeStyle = COLORS.retrieval; ctx.lineWidth = 0.8; ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = colors.retrieval; ctx.lineWidth = 0.8; ctx.setLineDash([3, 3]);
       } else {
-        ctx.strokeStyle = COLORS.semantic; ctx.lineWidth = 0.7; ctx.setLineDash([]);
+        ctx.strokeStyle = colors.semantic; ctx.lineWidth = 0.7; ctx.setLineDash([]);
       }
       ctx.stroke();
     }
@@ -121,12 +144,12 @@ export function GraphView() {
       ctx.arc(n.x ?? 0, n.y ?? 0, r, 0, Math.PI * 2);
       if (n.kind === 'query') {
         // ringed / hollow — its own color; queries are not content
-        ctx.fillStyle = 'rgba(90,200,250,0.12)'; ctx.fill();
-        ctx.lineWidth = 1.4; ctx.strokeStyle = COLORS.query; ctx.stroke();
+        ctx.fillStyle = colors.queryFill; ctx.fill();
+        ctx.lineWidth = 1.4; ctx.strokeStyle = colors.query; ctx.stroke();
       } else {
-        const c = n.state === 'public' ? COLORS.public : n.state === 'local' ? COLORS.local : COLORS.private;
+        const c = n.state === 'public' ? colors.public : n.state === 'local' ? colors.local : colors.private;
         ctx.fillStyle = c; ctx.fill();
-        if (n.id === app.selectedChunkId) { ctx.lineWidth = 2; ctx.strokeStyle = '#C8FFC8'; ctx.stroke(); }
+        if (n.id === app.selectedChunkId) { ctx.lineWidth = 2; ctx.strokeStyle = colors.selected; ctx.stroke(); }
       }
     }
     ctx.restore();
@@ -198,10 +221,10 @@ export function GraphView() {
         </div>
       )}
       <div className="legend">
-        <div className="row"><span className="swatch" style={{ borderTopColor: COLORS.private, width: 18 }} /> semantic link</div>
-        <div className="row"><span className="swatch" style={{ borderTopColor: COLORS.query, borderTopStyle: 'dashed', width: 18 }} /> retrieved by query</div>
+        <div className="row"><span className="swatch" style={{ borderTopColor: 'var(--phosphor)', width: 18 }} /> semantic link</div>
+        <div className="row"><span className="swatch" style={{ borderTopColor: 'rgb(var(--graph-query-rgb))', borderTopStyle: 'dashed', width: 18 }} /> retrieved by query</div>
         <div className="row"><span className="dot private" /> private &nbsp; <span className="dot public" /> public &nbsp; <span className="dot local" /> local</div>
-        <div className="row"><span className="dot" style={{ background: 'transparent', border: `1px solid ${COLORS.query}` }} /> query</div>
+        <div className="row"><span className="dot" style={{ background: 'transparent', border: '1px solid rgb(var(--graph-query-rgb))' }} /> query</div>
       </div>
     </div>
   );

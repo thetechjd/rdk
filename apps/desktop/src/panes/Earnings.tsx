@@ -133,7 +133,7 @@ export function Earnings() {
         </div>
 
         {/* Say why the button is dead rather than leaving it inert. */}
-        {amountError && <div className="hint" style={{ marginTop: 6, color: 'var(--tape, #E8521A)' }}>{amountError}</div>}
+        {amountError && <div className="hint" style={{ marginTop: 6, color: 'var(--cassette)' }}>{amountError}</div>}
 
         {/* The fee, before the button is pressed. A withdrawal debits at once,
             so the net must not first appear in the confirmation toast. */}
@@ -169,7 +169,7 @@ export function Earnings() {
                 <span style={{ color: 'var(--muted)' }}> · {new Date(w.requestedAt).toLocaleDateString()}</span>
               </span>
               <span>
-                <span style={{ color: w.status === 'completed' ? 'var(--phosphor)' : w.status === 'failed' ? 'var(--error, #f66)' : 'var(--muted)' }}>
+                <span style={{ color: w.status === 'completed' ? 'var(--phosphor)' : w.status === 'failed' ? 'var(--danger)' : 'var(--muted)' }}>
                   {w.status}
                 </span>
                 {w.status === 'failed' && <span style={{ color: 'var(--muted)' }}> · refunded</span>}
