@@ -1,4 +1,5 @@
 import { useApp } from './store';
+import { usdc } from './money';
 
 function ago(iso?: string): string {
   if (!iso) return 'never';
@@ -32,7 +33,7 @@ export function StatusBar() {
       )}
       <span className="spacer" />
       <span className="item balance">
-        ${(account?.balanceUsdc ?? status?.pendingTipsUsdc ?? 0).toFixed(2)} USDC
+        ${usdc(account?.balanceUsdc ?? status?.pendingTipsUsdc ?? 0)} USDC
       </span>
       <span className="item plan">{account?.plan ?? 'free'}</span>
     </div>

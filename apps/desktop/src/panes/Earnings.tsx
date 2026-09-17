@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Account, AccountWallet, EarningsSummary, WithdrawalView } from '../../shared/ipc';
 import { useApp } from '../store';
 import { computeWithdrawalBreakdown } from '@retrodeck/payments-contract';
+import { usdc } from '../money';
 
 export function Earnings() {
   const app = useApp();
@@ -46,7 +47,7 @@ export function Earnings() {
   const amount = typed !== null && amountValid ? typed : withdrawable;
   const amountError = !amountValid
     ? (Number.isFinite(typed) && (typed as number) > withdrawable
-        ? `Only $${withdrawable.toFixed(2)} is withdrawable.`
+        ? `Only $${usdc(withdrawable)} is withdrawable.`
         : 'Enter an amount greater than zero.')
     : null;
 
@@ -66,7 +67,7 @@ export function Earnings() {
     if (r.ok) {
       // "Requested", not "sent" — settlement happens on-chain afterwards.
       const received = breakdown?.net ?? amount;
-      app.toast(`Withdrawal requested — $${received.toFixed(2)} to ${wallet.address.slice(0, 10)}…`);
+      app.toast(`Withdrawal requested — $${usdc(received)} to ${wallet.address.slice(0, 10)}…`);
       app.refreshData();
       refresh();
     } else {
@@ -82,13 +83,13 @@ export function Earnings() {
     <div className="earnings">
       <div>
         <div className="section-label">total earned</div>
-        <div className="total">${data.totalUsdc.toFixed(2)}</div>
+        <div className="total">${usdc(data.totalUsdc)}</div>
       </div>
 
       <div>
         <div className="section-label" style={{ marginBottom: 6 }}>withdraw</div>
         <div className="row" style={{ alignItems: 'center', gap: 10 }}>
-          <span className="earn">${withdrawable.toFixed(2)} withdrawable</span>
+          <span className="earn">${usdc(withdrawable)} withdrawable</span>
           <input
             className="amount-input"
             type="number"
@@ -124,9 +125,9 @@ export function Earnings() {
                 : withdrawable <= 0 ? 'Nothing withdrawable yet.'
                 : amountError ? amountError
                 : breakdown
-                  ? `Send $${breakdown.net.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain} `
-                    + `(a ${(breakdown.taxRate * 100).toFixed(0)}% fee of $${breakdown.tax.toFixed(2)} is withheld)`
-                  : `Send $${amount.toFixed(2)} USDC to ${wallet.address} on ${wallet.chain}`
+                  ? `Send $${usdc(breakdown.net)} USDC to ${wallet.address} on ${wallet.chain} `
+                    + `(a ${(breakdown.taxRate * 100).toFixed(0)}% fee of $${usdc(breakdown.tax)} is withheld)`
+                  : `Send $${usdc(amount)} USDC to ${wallet.address} on ${wallet.chain}`
             }
             onClick={withdraw}
           >{busy ? 'requesting…' : 'withdraw →'}</button>
@@ -139,9 +140,9 @@ export function Earnings() {
             so the net must not first appear in the confirmation toast. */}
         {!amountError && breakdown && (
           <div className="hint" style={{ marginTop: 6 }}>
-            ${breakdown.gross.toFixed(2)} withdrawn · {(breakdown.taxRate * 100).toFixed(0)}% fee
-            −${breakdown.tax.toFixed(2)} · you receive{' '}
-            <strong style={{ color: 'var(--phosphor)' }}>${breakdown.net.toFixed(2)}</strong>
+            ${usdc(breakdown.gross)} withdrawn · {(breakdown.taxRate * 100).toFixed(0)}% fee
+            −${usdc(breakdown.tax)} · you receive{' '}
+            <strong style={{ color: 'var(--phosphor)' }}>${usdc(breakdown.net)}</strong>
           </div>
         )}
         {/* Say why it's unavailable rather than showing a dead button. */}
@@ -165,7 +166,7 @@ export function Earnings() {
           {history.map(w => (
             <div key={w.id} className="doc-row">
               <span>
-                ${w.amountUsdc.toFixed(2)}
+                ${usdc(w.amountUsdc)}
                 <span style={{ color: 'var(--muted)' }}> · {new Date(w.requestedAt).toLocaleDateString()}</span>
               </span>
               <span>
@@ -184,7 +185,7 @@ export function Earnings() {
           <div className="section-label" style={{ marginBottom: 10 }}>over time</div>
           <div className="bars">
             {data.overTime.map((d, i) => (
-              <div key={i} className="bar" style={{ height: `${(d.usdc / max) * 100}%` }} title={`${d.date}: $${d.usdc.toFixed(2)}`} />
+              <div key={i} className="bar" style={{ height: `${(d.usdc / max) * 100}%` }} title={`${d.date}: $${usdc(d.usdc)}`} />
             ))}
           </div>
         </div>
@@ -196,7 +197,7 @@ export function Earnings() {
         {data.byDocument.map(d => (
           <div key={d.chunkId} className="doc-row">
             <span>{d.title}</span>
-            <span><span style={{ color: 'var(--muted)' }}>{d.retrievals} retrievals</span> &nbsp; <span className="earn">${d.earnedUsdc.toFixed(2)}</span></span>
+            <span><span style={{ color: 'var(--muted)' }}>{d.retrievals} retrievals</span> &nbsp; <span className="earn">${usdc(d.earnedUsdc)}</span></span>
           </div>
         ))}
       </div>

@@ -3,6 +3,7 @@ import type { Account, BillingInterval, McpInfo, NodeStatus, Plan, Preferences }
 import { useApp } from './store';
 import { LoginForm } from './LoginForm';
 import { currentTheme, saveTheme, type Theme } from './theme';
+import { usdc } from './money';
 
 type Section = 'node' | 'vault' | 'account' | 'mcp' | 'prefs';
 
@@ -162,7 +163,7 @@ function AccountSection() {
       if (r.paid) { app.toast(`${r.planName ?? r.planId ?? 'Plan'} activated`); setAwaiting(null); void refresh(); return true; }
     } else {
       const r = await window.rdk.verifyTopup(awaiting.paymentId);
-      if (r.completed) { app.toast(`Credited — balance $${(r.balanceUsdc ?? 0).toFixed(2)}`); setAwaiting(null); void refresh(); return true; }
+      if (r.completed) { app.toast(`Credited — balance $${usdc(r.balanceUsdc ?? 0)}`); setAwaiting(null); void refresh(); return true; }
     }
     return false;
   }, [awaiting, app, refresh]);
@@ -360,10 +361,10 @@ function AccountSection() {
                   : 'var(--cassette)',
             }}
           >
-            {balance != null ? `$${balance.toFixed(2)} USDC` : '—'}
+            {balance != null ? `$${usdc(balance)} USDC` : '—'}
           </span>
           {withdrawable != null && withdrawable !== balance && (
-            <span className="hint">${withdrawable.toFixed(2)} withdrawable</span>
+            <span className="hint">${usdc(withdrawable)} withdrawable</span>
           )}
         </div>
         <div className="row" style={{ marginTop: 8, gap: 6 }}>

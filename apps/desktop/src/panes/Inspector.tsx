@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type { ChunkView, RetrievedFor, VersionView } from '../../shared/ipc';
 import { useApp } from '../store';
+import { usdc } from '../money';
 
 export function Inspector() {
   const app = useApp();
@@ -57,7 +58,7 @@ export function Inspector() {
             <div className="stat-grid">
               <Stat label="chunks" value={chunk.docChunkCount} />
               <Stat label="retrievals" value={chunk.retrievals} />
-              <Stat label="earned" value={`$${chunk.earnedUsdc.toFixed(2)}`} earn />
+              <Stat label="earned" value={`$${usdc(chunk.earnedUsdc)}`} earn />
               <Stat label="size" value={`${chunk.sizeTokens} tok`} />
             </div>
 

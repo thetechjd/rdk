@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { QueryDocument, QueryResponse } from '../shared/ipc';
 import { useApp } from './store';
+import { usdc } from './money';
 
 /**
  * A successful query has to LAND somewhere.
@@ -143,7 +144,7 @@ export function QueryBar() {
                         : `node ${doc.originNode.slice(0, 10)}`}
                     </span>
                     <span>{doc.sectionCount} section{doc.sectionCount === 1 ? '' : 's'}</span>
-                    {doc.tipUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tip ${doc.tipUsdc.toFixed(3)}</span>}
+                    {doc.tipUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tip ${usdc(doc.tipUsdc)}</span>}
                     {!doc.contentAvailable
                       ? <span style={{ color: 'var(--cassette)' }}>summary only</span>
                       : doc.previewOnly
@@ -179,7 +180,7 @@ export function QueryBar() {
                   <div className="snippet">{h.snippet}</div>
                   <div className="meta">
                     <span>{h.isOwn ? <span className="own-badge">◆ your knowledge</span> : `node ${h.sourceNode.slice(0, 10)}`}</span>
-                    {h.tipUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tip ${h.tipUsdc.toFixed(3)}</span>}
+                    {h.tipUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tip ${usdc(h.tipUsdc)}</span>}
                   </div>
                 </div>
               ))}
@@ -188,7 +189,7 @@ export function QueryBar() {
               <span>source: {res.source}</span>
               <span>{docs.length > 0 ? `${docs.length} document${docs.length === 1 ? '' : 's'}` : `${res.hits.length} hits`}</span>
               <span>~{res.tokenEstimate} tok</span>
-              {res.tipsPaidUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tips ${res.tipsPaidUsdc.toFixed(3)}</span>}
+              {res.tipsPaidUsdc > 0 && <span style={{ color: 'var(--cassette)' }}>tips ${usdc(res.tipsPaidUsdc)}</span>}
               <span>{res.latencyMs}ms</span>
             </div>
           </>
