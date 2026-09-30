@@ -44,7 +44,7 @@ export async function runServe(app: RdkApp): Promise<void> {
 
   const { startHttpServer, startMcpServer } = await import('@retrodeck/mcp');
   const { LocalStore } = await import('@rdk/core');
-  const boundPort: number = await (startHttpServer as (c: unknown, s: unknown) => Promise<number>)(config, new LocalStore());
+  const boundPort = await startHttpServer(config, new LocalStore());
 
   console.error('RDK MCP server starting...');
   if (boundPort > 0) console.error(`  .well-known: http://localhost:${boundPort}/.well-known/mcp.json`);
