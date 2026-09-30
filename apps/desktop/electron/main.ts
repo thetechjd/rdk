@@ -12,6 +12,7 @@ import { PUSH_CHANNEL, type PushEvent, type RdkChannel } from '../shared/ipc';
 import {
   autoStartSupported, setAutoStart, revealInFileManager, autoStartLabel,
 } from './platform';
+import { SERVE_FLAG } from './serve-launch';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
@@ -268,7 +269,17 @@ function beginServingLoop(): void {
   servingTimer.unref?.();
 }
 
-app.whenReady().then(() => {
+// Launched as the Windows background service (see serve-launch.ts): run the
+// headless node in this process and never open a window.
+const serveMode = process.argv.includes(SERVE_FLAG);
+if (serveMode) {
+  app.whenReady().then(() => import('./serve')).then(({ runServe }) => runServe('service')).catch((e: unknown) => {
+    console.error((e as Error).message || String(e));
+    app.exit(1);
+  });
+}
+
+if (!serveMode) app.whenReady().then(() => {
   registerHandlers();
   createWindow();
   if (service.isInitialized()) {
@@ -287,12 +298,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
+if (!serveMode) app.on('window-all-closed', () => {
   stopWatchers();
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
+if (!serveMode) app.on('before-quit', () => {
   stopWatchers();
   if (servingTimer) clearInterval(servingTimer);
   servingTimer = null;

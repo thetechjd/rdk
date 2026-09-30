@@ -32,9 +32,12 @@ cd "$REPO_ROOT"
 # runs pnpm's deps-status check which, in some environments, fires a production
 # `pnpm install` that prunes devDependencies mid-build. In-dir npm run just executes
 # the script against the already-installed node_modules.
-echo "→ building @rdk/core + @rdk/node"
+echo "→ building @rdk/core + @rdk/node + @retrodeck/mcp"
 ( cd "$REPO_ROOT/packages/rdk-core" && npm run build )
 ( cd "$REPO_ROOT/packages/rdk-node" && npm run build )
+# The app ships its own headless node (electron/serve.ts) so the background
+# service and Claude Desktop never need the rdk CLI; that serves through the MCP package.
+( cd "$REPO_ROOT/packages/rdk-mcp" && npm run build )
 
 echo "→ building desktop (electron-vite → out/)"
 ( cd "$APP_DIR" && npm run build )

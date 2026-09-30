@@ -1,40 +1,17 @@
 // packages/rdk-cli/src/commands/service/platform.ts
 
-import os from 'os';
 import fs from 'fs';
+import {
+  detectPlatform,
+  getServiceAdapter,
+  type LaunchSpec,
+  type ServiceAdapter,
+} from '@rdk/node/service';
 
-export type Platform = 'macos' | 'linux' | 'windows' | 'unsupported';
-
-export function detectPlatform(): Platform {
-  switch (os.platform()) {
-    case 'darwin': return 'macos';
-    case 'linux':  return 'linux';
-    case 'win32':  return 'windows';
-    default:       return 'unsupported';
-  }
-}
-
-export interface ServiceAdapter {
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  status(): Promise<ServiceStatus>;
-}
-
-export interface ServiceStatus {
-  installed: boolean;
-  running: boolean;
-  pid?: number;
-  lastError?: string;
-}
-
-export interface LaunchSpec {
-  /** Absolute path to the executable to run. */
-  command: string;
-  /** Arguments to pass, with any extra args appended. */
-  args: string[];
-}
+// The OS adapters live in @rdk/node so the desktop app can install the same
+// service without the CLI. The CLI's only job here is saying how to re-invoke
+// itself.
+export { detectPlatform, type LaunchSpec };
 
 /**
  * Resolve exactly how to re-invoke this rdk binary, derived from the
@@ -71,13 +48,8 @@ export function resolveLaunch(...extraArgs: string[]): LaunchSpec {
   };
 }
 
-export async function getAdapter(): Promise<ServiceAdapter> {
-  const platform = detectPlatform();
-  switch (platform) {
-    case 'macos':   return (await import('./macos.js')).MacOSAdapter;
-    case 'linux':   return (await import('./linux.js')).LinuxAdapter;
-    case 'windows': return (await import('./windows.js')).WindowsAdapter;
-    default:
-      throw new Error(`Unsupported platform: ${os.platform()}`);
-  }
+/** The OS adapter, bound to re-invoke this CLI as `rdk mcp:serve`. */
+export async function getAdapter(): Promise<Omit<ServiceAdapter, 'install'> & { install(): Promise<void> }> {
+  const adapter = await getServiceAdapter();
+  return { ...adapter, install: () => adapter.install(resolveLaunch('mcp:serve')) };
 }

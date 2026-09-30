@@ -12,7 +12,14 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin({ include: ['@xenova/transformers'] })],
     build: {
-      lib: { entry: resolve(__dirname, 'electron/main.ts') },
+      // serve.ts is the headless node (service + Claude Desktop MCP server) and
+      // must be its own file: it is launched directly as out/main/serve.js.
+      lib: {
+        entry: {
+          main: resolve(__dirname, 'electron/main.ts'),
+          serve: resolve(__dirname, 'electron/serve.ts'),
+        },
+      },
       outDir: 'out/main',
     },
   },

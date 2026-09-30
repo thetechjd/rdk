@@ -9,7 +9,6 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawnSync } from 'child_process';
 import {
   LocalStore,
   RDKRouter,
@@ -49,6 +48,8 @@ import {
   autoStartSupported,
   serviceInstallSupported,
 } from './platform';
+import { getServiceAdapter } from '@rdk/node/service';
+import { serveLaunch } from './serve-launch';
 import type {
   Account, BillingInterval, ChunkView, ContentView, EarningsSummary, FileState, GraphData,
   GraphEdge, GraphNode, IndexedDoc, LoginOutcome, McpInfo, NodeStatus, Plan, PlatformCapabilities,
@@ -1493,43 +1494,27 @@ export class NodeService {
   }
 
   // ── Install as a background service (all OSes) ────────────────────────────
-  // The desktop app can't itself run headless on boot (Electron GUI process), so
-  // "install as service" installs an OS auto-start unit that runs `rdk mcp:serve`
-  // — the same launchd/systemd/Task-Scheduler adapters the CLI ships, which are
-  // implemented for macOS, Linux, and Windows. We drive them by invoking the
-  // installed `rdk` CLI; if it isn't on PATH we say exactly how to get it.
+  // The GUI can't run headless on boot, so "install as service" installs an OS
+  // auto-start unit (launchd/systemd/Task Scheduler, shared with the CLI via
+  // @rdk/node/service) that runs THIS app's headless node — serve.ts, launched
+  // from the app's own executable. No rdk CLI needed.
 
-  /** Resolve the `rdk` CLI on PATH, or null. */
-  private findRdkBin(): string | null {
-    const probe = process.platform === 'win32'
-      ? spawnSync('where', ['rdk'], { stdio: 'ignore', shell: true }).status === 0
-      : !spawnSync('rdk', ['--version'], { stdio: 'ignore' }).error;
-    return probe ? 'rdk' : null;
-  }
-
-  /** Windows-safe spawn of the rdk CLI (npm shim is rdk.cmd). */
-  private runRdk(args: string[]): { ok: boolean; error?: string } {
-    const bin = this.findRdkBin();
-    if (!bin) {
-      return {
-        ok: false,
-        error: 'The rdk command-line tool is required to run RDK as a background service. Install it with: npm i -g @retrodeck/rdk (or: brew install thetechjd/rdk/rdk), then try again.',
-      };
+  async installService(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await (await getServiceAdapter()).install(serveLaunch('service'));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: `Could not install the RDK service: ${(e as Error).message}` };
     }
-    const r = process.platform === 'win32'
-      ? spawnSync(bin, args.map(a => `"${a}"`), { stdio: 'pipe', shell: true, encoding: 'utf8', timeout: 120_000 })
-      : spawnSync(bin, args, { stdio: 'pipe', encoding: 'utf8', timeout: 120_000 });
-    if (r.status === 0) return { ok: true };
-    const msg = (r.stderr || r.stdout || r.error?.message || 'unknown error').toString().trim().split('\n').slice(-3).join(' ');
-    return { ok: false, error: `rdk ${args.join(' ')} failed: ${msg}` };
   }
 
-  installService(): { ok: boolean; error?: string } {
-    return this.runRdk(['service:install']);
-  }
-
-  uninstallService(): { ok: boolean; error?: string } {
-    return this.runRdk(['service:uninstall', '--yes']);
+  async uninstallService(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await (await getServiceAdapter()).uninstall();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: `Could not remove the RDK service: ${(e as Error).message}` };
+    }
   }
 
   private authMessage(e: unknown): string {
@@ -1540,10 +1525,13 @@ export class NodeService {
 
   getMcpInfo(): McpInfo {
     const cfg = this.getConfig();
+    // Claude Desktop launches the app's own executable in headless mode, so the
+    // snippet works without the rdk CLI on PATH.
+    const { command, args, env } = serveLaunch('mcp');
     const snippet = JSON.stringify(
       {
         mcpServers: {
-          rdk: { command: 'rdk', args: ['mcp:serve'], env: { RDK_HOME: rdkDir() } },
+          rdk: { command, args, env: { ...env, RDK_HOME: rdkDir() } },
         },
       },
       null, 2,

@@ -467,7 +467,7 @@ export interface RdkApi {
   startNode(): Promise<{ ok: boolean; error?: string }>;
   stopNode(): Promise<{ ok: boolean; error?: string }>;
   forceSync(): Promise<{ ok: boolean; error?: string }>;
-  installService(): Promise<{ ok: boolean; error?: string }>;   // installs an OS auto-start service (runs `rdk mcp:serve`)
+  installService(): Promise<{ ok: boolean; error?: string }>;   // installs an OS auto-start service (runs this app's headless node — no CLI needed)
   uninstallService(): Promise<{ ok: boolean; error?: string }>;
   setAutoStart(enabled: boolean): Promise<{ ok: boolean; error?: string }>;
 

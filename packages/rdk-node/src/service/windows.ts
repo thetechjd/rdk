@@ -1,11 +1,11 @@
-// packages/rdk-cli/src/commands/service/windows.ts
+// packages/rdk-node/src/service/windows.ts
 
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
-import { resolveLaunch } from './platform.js';
+import type { ServiceAdapter } from './index.js';
 
 const execAsync = promisify(exec);
 
@@ -71,9 +71,13 @@ function buildTaskXml(command: string, args: string[], _logDir: string): string 
 </Task>`;
 }
 
-export const WindowsAdapter = {
-  async install() {
-    const { command, args } = resolveLaunch('mcp:serve');
+export const WindowsAdapter: ServiceAdapter = {
+  async install({ command, args, env }) {
+    // Task Scheduler has no per-task environment, so a launch that depends on
+    // one would silently start the wrong program. Callers pass a flag instead.
+    if (env && Object.keys(env).length) {
+      throw new Error('The Windows service adapter cannot set environment variables; pass a launch that needs none.');
+    }
     const logDir  = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
 
@@ -85,8 +89,8 @@ export const WindowsAdapter = {
       execSync(`schtasks /Delete /TN ${TASK_NAME} /F`, { stdio: 'ignore' });
     } catch {}
 
-    execSync(`schtasks /Create /XML "${TASK_XML_PATH}" /TN ${TASK_NAME}`, { stdio: 'inherit' });
-    execSync(`schtasks /Run /TN ${TASK_NAME}`, { stdio: 'inherit' });
+    execSync(`schtasks /Create /XML "${TASK_XML_PATH}" /TN ${TASK_NAME}`, { stdio: 'pipe' });
+    execSync(`schtasks /Run /TN ${TASK_NAME}`, { stdio: 'pipe' });
   },
 
   async uninstall() {

@@ -25,8 +25,10 @@
   },
   "dependencies": {
     "@huggingface/jinja": "0.2.2",
+    "@modelcontextprotocol/sdk": "1.12.1",
     "@rdk/core": "workspace:*",
     "@rdk/node": "workspace:*",
+    "@retrodeck/mcp": "workspace:*",
     "@xenova/transformers": "2.17.2",
     "better-sqlite3": "^12.0.0",
     "d3-force": "^3.0.0",

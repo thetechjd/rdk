@@ -111,12 +111,18 @@ importers:
       '@huggingface/jinja':
         specifier: 0.2.2
         version: 0.2.2
+      '@modelcontextprotocol/sdk':
+        specifier: 1.12.1
+        version: 1.12.1
       '@rdk/core':
         specifier: workspace:*
         version: link:../../packages/rdk-core
       '@rdk/node':
         specifier: workspace:*
         version: link:../../packages/rdk-node
+      '@retrodeck/mcp':
+        specifier: workspace:*
+        version: link:../../packages/rdk-mcp
       '@xenova/transformers':
         specifier: 2.17.2
         version: 2.17.2
@@ -2111,6 +2117,7 @@ packages:
   cron-parser@4.9.0:
     resolution: {integrity: sha512-p0SaNjrHOnQeR8/VnfGbmg9te2kfyYSQ7Sc/j/6DtPL3JQvKxmjO9TSjNFpujqV3vEYYBvNNvXSxzyksBWAx1Q==}
     engines: {node: '>=12.0.0'}
+    deprecated: v4 is no longer maintained, upgrade to v5
 
   cron@3.2.1:
     resolution: {integrity: sha512-w2n5l49GMmmkBFEsH9FIDhjZ1n1QgTMOCMGuQtOXs5veNiosZmso6bQGuqOJSYAXXrG84WQFVneNk+Yt0Ua9iw==}

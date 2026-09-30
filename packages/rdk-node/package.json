@@ -53,6 +53,10 @@
     "./redaction-policy": {
       "import": "./dist/redaction-policy.js",
       "types": "./dist/redaction-policy.d.ts"
+    },
+    "./service": {
+      "import": "./dist/service/index.js",
+      "types": "./dist/service/index.d.ts"
     }
   },
   "scripts": {

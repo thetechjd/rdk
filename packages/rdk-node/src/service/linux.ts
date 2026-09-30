@@ -1,11 +1,11 @@
-// packages/rdk-cli/src/commands/service/linux.ts
+// packages/rdk-node/src/service/linux.ts
 
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
-import { resolveLaunch } from './platform.js';
+import type { LaunchSpec, ServiceAdapter } from './index.js';
 
 const execAsync = promisify(exec);
 
@@ -13,10 +13,11 @@ const UNIT_NAME = 'rdk.service';
 const UNIT_DIR  = path.join(os.homedir(), '.config', 'systemd', 'user');
 const UNIT_PATH = path.join(UNIT_DIR, UNIT_NAME);
 
-function buildUnit(command: string, args: string[], logDir: string): string {
+function buildUnit({ command, args, env = {} }: LaunchSpec, logDir: string): string {
   // systemd ExecStart supports double-quoted tokens; quoting every token keeps
   // absolute paths with spaces intact.
   const execStart = [command, ...args].map(tok => `"${tok}"`).join(' ');
+  const extraEnv = Object.entries(env).map(([k, v]) => `\nEnvironment="${k}=${v}"`).join('');
   return `[Unit]
 Description=RDK — Retrieval Development Kit node
 After=network-online.target
@@ -29,31 +30,25 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=append:${path.join(logDir, 'rdk.out.log')}
 StandardError=append:${path.join(logDir, 'rdk.err.log')}
-Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"${extraEnv}
 
 [Install]
 WantedBy=default.target
 `;
 }
 
-export const LinuxAdapter = {
-  async install() {
-    const { command, args } = resolveLaunch('mcp:serve');
+export const LinuxAdapter: ServiceAdapter = {
+  async install(launch) {
     const logDir  = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
     await fs.mkdir(UNIT_DIR, { recursive: true });
 
-    const unitContent = buildUnit(command, args, logDir);
+    const unitContent = buildUnit(launch, logDir);
     await fs.writeFile(UNIT_PATH, unitContent, 'utf8');
 
-    execSync('systemctl --user daemon-reload', { stdio: 'inherit' });
-    execSync(`systemctl --user enable ${UNIT_NAME}`, { stdio: 'inherit' });
-    execSync(`systemctl --user start ${UNIT_NAME}`, { stdio: 'inherit' });
-
-    console.error('');
-    console.error('  ℹ To keep RDK running even when you log out, run:');
-    console.error('    sudo loginctl enable-linger ' + os.userInfo().username);
-    console.error('');
+    execSync('systemctl --user daemon-reload', { stdio: 'pipe' });
+    execSync(`systemctl --user enable ${UNIT_NAME}`, { stdio: 'pipe' });
+    execSync(`systemctl --user start ${UNIT_NAME}`, { stdio: 'pipe' });
   },
 
   async uninstall() {

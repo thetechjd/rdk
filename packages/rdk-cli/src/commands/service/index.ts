@@ -103,6 +103,11 @@ export async function serviceInstall(): Promise<void> {
     const adapter = await getAdapter();
     await adapter.install();
     console.error('');
+    if (platform === 'linux') {
+      console.error(t.dim('  To keep RDK running even when you log out, run:'));
+      console.error(t.dim(`    sudo loginctl enable-linger ${os.userInfo().username}`));
+      console.error('');
+    }
     console.error(t.green(`  ${mark.ok()} RDK is now running in the background`));
     console.error(t.green(`  ${mark.ok()} RDK will auto-start when your computer boots`));
     console.error('');

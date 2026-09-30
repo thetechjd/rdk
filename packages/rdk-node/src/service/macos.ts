@@ -1,11 +1,11 @@
-// packages/rdk-cli/src/commands/service/macos.ts
+// packages/rdk-node/src/service/macos.ts
 
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { execSync, exec } from 'child_process';
 import { promisify } from 'util';
-import { resolveLaunch } from './platform.js';
+import type { LaunchSpec, ServiceAdapter } from './index.js';
 
 const execAsync = promisify(exec);
 
@@ -21,10 +21,13 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function buildPlist(command: string, args: string[], logDir: string): string {
+function buildPlist({ command, args, env = {} }: LaunchSpec, logDir: string): string {
   const programArgs = [command, ...args]
     .map(a => `      <string>${xmlEscape(a)}</string>`)
     .join('\n');
+  const extraEnv = Object.entries(env)
+    .map(([k, v]) => `\n      <key>${xmlEscape(k)}</key>\n      <string>${xmlEscape(v)}</string>`)
+    .join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -57,7 +60,7 @@ ${programArgs}
       <key>PATH</key>
       <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
       <key>HOME</key>
-      <string>${os.homedir()}</string>
+      <string>${os.homedir()}</string>${extraEnv}
     </dict>
 
     <key>ThrottleInterval</key>
@@ -66,21 +69,20 @@ ${programArgs}
 </plist>`;
 }
 
-export const MacOSAdapter = {
-  async install() {
-    const { command, args } = resolveLaunch('mcp:serve');
+export const MacOSAdapter: ServiceAdapter = {
+  async install(launch) {
     const logDir = path.join(os.homedir(), '.rdk', 'logs');
     await fs.mkdir(logDir, { recursive: true });
     await fs.mkdir(path.dirname(PLIST_PATH), { recursive: true });
 
-    const plistContent = buildPlist(command, args, logDir);
+    const plistContent = buildPlist(launch, logDir);
     await fs.writeFile(PLIST_PATH, plistContent, 'utf8');
 
     try {
       execSync(`launchctl unload "${PLIST_PATH}"`, { stdio: 'ignore' });
     } catch { /* not loaded yet, that's fine */ }
 
-    execSync(`launchctl load "${PLIST_PATH}"`, { stdio: 'inherit' });
+    execSync(`launchctl load "${PLIST_PATH}"`, { stdio: 'pipe' });
   },
 
   async uninstall() {
