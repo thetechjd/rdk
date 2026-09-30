@@ -8,7 +8,8 @@
     "prepublishOnly": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/index.js --external:@modelcontextprotocol/sdk --external:better-sqlite3 --external:@xenova/transformers",
     "dev": "tsc -p tsconfig.json --watch",
     "start": "node dist/index.js",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run --passWithNoTests"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": ">=1.0.0"
@@ -21,7 +22,8 @@
     "@types/node": "^22.15.21",
     "esbuild": "^0.28.0",
     "express": "^4.21.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.7"
   },
   "files": [
     "dist/",

@@ -302,6 +302,13 @@ export class RDKNode {
     isPublic?: boolean;
     domain?: string;
     categories?: string[];
+    /** Where this content came from — a URL, or a path the caller is mirroring.
+     *  This is the document's identity across re-indexes: it keys the version
+     *  series, lets the desktop associate the document with a file, and is the
+     *  lineage central uses to tell "this node updated its own document" from
+     *  "someone republished existing content". Without it every re-index looks
+     *  like a duplicate of the copy it replaces. */
+    sourcePath?: string;
   }): Promise<McpToolResult> {
     if (!opts.content || !opts.title) {
       return this.errorResult('content and title are required');
@@ -313,6 +320,7 @@ export class RDKNode {
       domain: opts.domain ?? this.config.domain,
       categories: opts.categories,
       isPublic: opts.isPublic ?? true,
+      sourcePath: opts.sourcePath,
       sourceAdapter: 'manual',
     });
 
@@ -374,6 +382,11 @@ export class RDKNode {
       title,
       isPublic: opts.isPublic ?? true,
       domain: opts.domain,
+      // The URL IS this document's identity. Dropping it here is what made
+      // re-indexing a page permanently impossible: the second attempt minted new
+      // chunk hashes with no lineage tying them to the first, so central saw a
+      // stranger republishing content it already had and rejected every chunk.
+      sourcePath: opts.url,
     });
   }
 

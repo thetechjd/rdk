@@ -37,6 +37,10 @@ const RDK_TOOLS = [
         isPublic: { type: 'boolean', default: false },
         domain: { type: 'string' },
         categories: { type: 'array', items: { type: 'string' } },
+        sourcePath: {
+          type: 'string',
+          description: 'Where this content came from (URL or file path). Pass the SAME value when re-indexing updated content — it is how RDK recognises an update to an existing document rather than a republish of someone else\'s.',
+        },
       },
       required: ['content', 'title'],
     },
@@ -110,6 +114,7 @@ export async function startMcpServer() {
             isPublic: a.isPublic as boolean | undefined,
             domain: a.domain as string | undefined,
             categories: a.categories as string[] | undefined,
+            sourcePath: a.sourcePath as string | undefined,
           });
         case 'rdk_index_url':
           return await node.handleIndexUrl({
