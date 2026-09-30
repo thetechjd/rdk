@@ -7,9 +7,14 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Nightly: catches what breaks with no commit at all — a dependency that
+  # resolved differently, a runner image that dropped a native toolchain.
+  schedule:
+    - cron: '30 7 * * *'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is in the group so a push to main never cancels the nightly.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,3 +45,45 @@ jobs:
       # two tsconfigs (main process vs renderer). Both must pass.
       - name: Typecheck desktop
         run: pnpm --filter rdk-desktop typecheck
+
+  # A red nightly nobody opens is the same as no nightly. A failed scheduled run
+  # files one incident in SubZero's RDK project. Scheduled runs only: a PR or a
+  # push already has its author looking at the result.
+  report-to-subzero:
+    name: Raise SubZero incident
+    runs-on: ubuntu-latest
+    needs: [build-test]
+    if: failure() && github.event_name == 'schedule'
+    permissions:
+      actions: read
+    steps:
+      - name: File an incident
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUBZERO_URL: ${{ vars.SUBZERO_URL || 'https://api.sub-zero.dev/incidents/external' }}
+          SUBZERO_INGEST_KEY: ${{ secrets.SUBZERO_INGEST_KEY }}
+        run: |
+          FAILED=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | "- \(.name): \(.html_url)"')
+
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          DESCRIPTION=$(printf 'The nightly build of %s failed @ %s.\n\nFailed jobs:\n%s\n\nRun: %s' \
+            "$GITHUB_REPOSITORY" "${GITHUB_SHA:0:7}" "$FAILED" "$RUN_URL")
+
+          # The run id doubles as the display number, so re-running a failed
+          # attempt finds the incident already filed instead of opening another.
+          BODY=$(jq -n \
+            --arg subject "[AUTOMATED] Nightly build failed — $GITHUB_REPOSITORY" \
+            --arg description "$DESCRIPTION" \
+            --argjson displayNumber "$GITHUB_RUN_ID" \
+            '{projectKey: "RDK", service: "RDK-NIGHTLY", subject: $subject,
+              description: $description, priority: "P2", displayNumber: $displayNumber}')
+
+          AUTH=()
+          [ -n "$SUBZERO_INGEST_KEY" ] && AUTH=(-H "Authorization: Bearer $SUBZERO_INGEST_KEY")
+          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+            -X POST "$SUBZERO_URL" -H 'Content-Type: application/json' "${AUTH[@]}" \
+            -d "$BODY"
+          echo
+          echo "SubZero incident raised"
