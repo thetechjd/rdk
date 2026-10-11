@@ -71,7 +71,13 @@ const DEAD_CENTRAL_API_URLS = new Set([
   'http://api.rdk.network',
 ]);
 // Machine-specific key: hash of hostname + os username (deters casual reads of config)
-const MACHINE_KEY = crypto.createHash('sha256').update(`${os.hostname()}${os.userInfo().username}`).digest();
+const hostedKey = process.env.RDK_CONFIG_ENCRYPTION_KEY;
+if (hostedKey && !/^[a-f0-9]{64}$/i.test(hostedKey)) {
+  throw new Error('RDK_CONFIG_ENCRYPTION_KEY must contain 32 hex-encoded bytes');
+}
+const MACHINE_KEY = hostedKey
+  ? Buffer.from(hostedKey, 'hex')
+  : crypto.createHash('sha256').update(`${os.hostname()}${os.userInfo().username}`).digest();
 
 /** Absolute path of the ~/.rdk directory (honors RDK_HOME). */
 export function rdkDir(): string {

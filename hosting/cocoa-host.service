@@ -1,0 +1,23 @@
+[Unit]
+Description=Cocoa private RDK node host
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=cocoa
+Group=cocoa
+WorkingDirectory=/opt/rdk
+EnvironmentFile=/etc/cocoa/host.env
+ExecStart=/usr/bin/node /opt/rdk/hosting/cocoa-host.mjs
+Restart=on-failure
+StateDirectory=cocoa
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cocoa
+MemoryMax=4G
+TasksMax=128
+UMask=0077
+[Install]
+WantedBy=multi-user.target
