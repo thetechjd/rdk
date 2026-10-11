@@ -50,7 +50,7 @@ async function getPipeline() {
     env.allowRemoteModels = false;
   } else {
     // No bundled model (e.g. the plain CLI): download once to the shared cache.
-    env.cacheDir = path.join(os.homedir(), '.rdk', 'models'); // shared across instances — models are 23MB, no reason to duplicate
+    env.cacheDir = process.env.RDK_MODELS_DIR ?? path.join(os.homedir(), '.rdk', 'models'); // shared across instances — models are 23MB, no reason to duplicate
   }
 
   _pipeline = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
