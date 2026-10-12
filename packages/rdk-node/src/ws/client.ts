@@ -5,7 +5,24 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { loadConfig } from '../config.js';
 import { dispatchCommand } from './handlers/index.js';
-import type { WsMessage } from './protocol.js';
+import { COMMAND_FAILED, type WsMessage } from './protocol.js';
+
+/**
+ * The `error.code` to report for a failed command. A handler that throws an
+ * error carrying a string `.code` (partner jobs do: `content_hash_mismatch`,
+ * `rate_limited`, ...) has that code forwarded, because Central decides between
+ * "failed for good" and "try again later" on it. Anything else stays the
+ * historical COMMAND_FAILED.
+ *
+ * Central's own transport codes are never forwarded: it reads those as "this
+ * session failed, try another one", which a handler error must not trigger.
+ */
+const CENTRAL_TRANSPORT_CODES = new Set(['COMMAND_TIMEOUT', 'TRANSPORT_ERROR', 'NODE_DISCONNECTED']);
+export function errorCode(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code !== 'string' || !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(code)) return COMMAND_FAILED;
+  return CENTRAL_TRANSPORT_CODES.has(code) ? COMMAND_FAILED : code;
+}
 
 // Inline ANSI "dim" so @rdk/node carries no dependency on the CLI's theme module.
 // These strings go to stderr (stdout is the MCP JSON-RPC channel).
@@ -228,7 +245,7 @@ export class RdkWebSocketClient extends EventEmitter {
         this.send({
           type: 'error',
           replyTo: msg['id'] as string,
-          error: { code: 'COMMAND_FAILED', message: (e as Error).message },
+          error: { code: errorCode(e), message: (e as Error)?.message ?? String(e) },
         });
       }
     }
