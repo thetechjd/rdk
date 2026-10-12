@@ -18,6 +18,7 @@
 
 import { getWsClient, type RdkWebSocketClient } from './client.js';
 import { announceWs, clearWs, type RdkApp } from './ws-presence.js';
+import { setHostVersion } from './host-info.js';
 
 /** How often presence is refreshed (must stay under ws-presence's STALE_MS). */
 const PRESENCE_TICK_MS = 30_000;
@@ -30,6 +31,9 @@ export interface WsSessionOptions {
   /** Diagnostics sink. Defaults to silence — the desktop surfaces state via
    *  getStatus(), the CLI prints to stderr. */
   log?: (message: string) => void;
+  /** The host's own version (CLI package version or desktop app version),
+   *  reported by the partner `ping` job. @rdk/node never guesses it. */
+  hostVersion?: string | null;
 }
 
 export interface WsSession {
@@ -46,6 +50,7 @@ export interface WsSession {
  * an offline `local-` node).
  */
 export function startWsSession(opts: WsSessionOptions = {}): WsSession | null {
+  if (opts.hostVersion !== undefined) setHostVersion(opts.hostVersion);
   const client = getWsClient();
   if (!client) return null;
 

@@ -134,9 +134,11 @@ export async function unifiedQuery(
     // Match Desktop's two-phase query contract. Phase one returns free
     // title/summary previews only; Central neither fetches provider content nor
     // settles a tip until the user explicitly chooses a document.
+    const { cliVersion } = await import('../version.js');
+    const wsOpts = { hostVersion: cliVersion() };
     let result: QueryResult = await withWsConnection(() =>
       router.query(query, { networkPreviewOnly: true }),
-    );
+    wsOpts);
     spinner.stop();
 
     if (result.chunks.length === 0) {
@@ -313,7 +315,7 @@ export async function unifiedQuery(
     const retrieveSpinner = ora('Retrieving the selected document...').start();
     result = await withWsConnection(() =>
       router.query(query, { selectedNetworkChunkId: selectedChunkId }),
-    );
+    wsOpts);
     retrieveSpinner.stop();
 
     if (result.chunks.length === 0) {

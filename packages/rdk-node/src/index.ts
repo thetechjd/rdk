@@ -31,5 +31,6 @@ export type { NodeControllerOptions, NodeRuntimeStatus, NodeLogger } from './nod
 // Node network runtime — WebSocket control channel + command handlers.
 export { RdkWebSocketClient, getWsClient } from './ws/client.js';
 export { dispatchCommand } from './ws/handlers/index.js';
+export { setHostVersion, getHostVersion } from './ws/host-info.js';
 export * as wsEvents from './ws/events.js';
 export type { WsMessage } from './ws/protocol.js';

@@ -5,6 +5,7 @@ import { deleteChunkHandler } from './delete-chunk.js';
 import { vaultListHandler } from './vault-list.js';
 import { fetchContentHandler } from './fetch-content.js';
 import { fetchDocumentHandler } from './fetch-document.js';
+import { partnerJobHandler } from './partner-job.js';
 
 const handlers: Record<string, (data: unknown) => Promise<unknown>> = {
   'command.promote_public': promotePublicHandler,
@@ -12,6 +13,7 @@ const handlers: Record<string, (data: unknown) => Promise<unknown>> = {
   'command.vault_list':     vaultListHandler,
   'command.fetch_content':  fetchContentHandler,
   'command.fetch_document': fetchDocumentHandler,
+  'command.partner_job':    partnerJobHandler,
 };
 
 export async function dispatchCommand(msg: { type: string; id: string; data: unknown }): Promise<unknown> {

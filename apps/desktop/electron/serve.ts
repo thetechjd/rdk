@@ -29,6 +29,17 @@ function bundledModelsDir(): string {
     : path.resolve(__dirname, '../../build/models');
 }
 
+/** The app's version from its package.json (<resources>/app.asar/package.json
+ *  when packaged, apps/desktop/package.json in dev). Null when unreadable. */
+function desktopVersion(): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf-8')) as { version?: string };
+    return pkg.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runServe(app: RdkApp): Promise<void> {
   const models = bundledModelsDir();
   if (!process.env.RDK_MODELS_DIR && fs.existsSync(path.join(models, 'Xenova'))) {
@@ -52,7 +63,12 @@ export async function runServe(app: RdkApp): Promise<void> {
 
   // Holding this socket is what makes this node's chunks retrievable.
   const { startWsSession } = await import('@rdk/node/ws/ownership');
-  const ownership = startWsSession({ app, log: msg => console.error(`  · ${msg}`) });
+  const ownership = startWsSession({
+    app,
+    log: msg => console.error(`  · ${msg}`),
+    // Reported by the partner `ping` job. 'electron' cannot be imported here.
+    hostVersion: desktopVersion(),
+  });
 
   const shutdown = (): void => {
     ownership?.stop();
