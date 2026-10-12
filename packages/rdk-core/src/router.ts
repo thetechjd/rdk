@@ -27,6 +27,24 @@ export interface RouterConfig {
   networkPreviewOnly?: boolean;
   /** Retrieve only the candidate explicitly selected from a prior preview. */
   selectedNetworkChunkId?: string;
+  /** Central network-query filters (RDK_PL_00A C4). Omitted when unset, so
+   *  older Centrals never see the field. */
+  networkFilters?: NetworkQueryFilters;
+}
+
+/** RDK_PL_00A C4. `categories` is ALL-match. */
+export interface NetworkQueryFilters {
+  externalPartner?: string;
+  attestedStatus?: string[];
+  categories?: string[];
+}
+
+/** A partner attestation as Central returns it with a result (C4). */
+export interface NetworkAttestation {
+  kind: string;
+  status: string;
+  record: unknown;
+  signedAt: string;
 }
 
 export interface NetworkChunk {
@@ -67,6 +85,18 @@ export interface NetworkChunk {
   categories: string[];
   preview?: boolean;
   riskScore?: number;
+  /** Partner provenance (C4); null/absent for ordinary content. */
+  externalRef?: { partner: string; ref: string } | null;
+  attestation?: NetworkAttestation | null;
+  publisherRecord?: unknown;
+}
+
+/** Raw network answer: Central's results plus its bookkeeping. */
+export interface NetworkSearchResponse {
+  results: NetworkChunk[];
+  queryId?: string;
+  settledByCentral?: boolean;
+  message?: string;
 }
 
 export interface TipRecord {
@@ -207,6 +237,23 @@ export class RDKRouter {
       networkPreviewOnly: true,
     });
     return response.results.filter((candidate) => candidate.available !== false);
+  }
+
+  /**
+   * One raw call to Central's network query: no local vault step, no relevance
+   * floor, no rerank. For callers that run the two-phase flow themselves
+   * (`rdk api:serve`): phase one with `networkPreviewOnly`, then one
+   * `selectedNetworkChunkId` call per document actually retrieved.
+   * Errors carry Central's HTTP status as `.status` when there was one.
+   */
+  async networkSearch(
+    queryText: string,
+    embedding: Float32Array,
+    overrides: Partial<RouterConfig> = {},
+  ): Promise<NetworkSearchResponse> {
+    const cfg = { ...this.config, ...overrides };
+    if (!cfg.centralApiUrl || !cfg.centralApiKey) throw new Error('No RDK Central configured');
+    return this.queryNetwork(queryText, embedding, cfg);
   }
 
   async query(userQuery: string, overrides?: Partial<RouterConfig>): Promise<QueryResult> {
@@ -443,7 +490,7 @@ export class RDKRouter {
     queryText: string,
     embedding: Float32Array,
     cfg: RouterConfig,
-  ): Promise<{ results: NetworkChunk[]; settledByCentral?: boolean; message?: string }> {
+  ): Promise<NetworkSearchResponse> {
     const jwt = await this.getJwt(cfg);
     const response = await fetch(`${cfg.centralApiUrl}/api/v1/query`, {
       method: 'POST',
@@ -469,6 +516,7 @@ export class RDKRouter {
         includeUnavailable: true,
         previewOnly: cfg.networkPreviewOnly ?? false,
         ...(cfg.selectedNetworkChunkId ? { selectedChunkId: cfg.selectedNetworkChunkId } : {}),
+        ...(cfg.networkFilters ? { filters: cfg.networkFilters } : {}),
       }),
     });
 
@@ -483,18 +531,18 @@ export class RDKRouter {
       } catch {
         if (detail.trim()) reason = detail.trim().slice(0, 200);
       }
-      throw new Error(reason);
+      throw Object.assign(new Error(reason), { status: response.status });
     }
 
     // settledByCentral: newer centrals settle tips server-side via RetroDeck
     // credits and say so; absent (older central) → the local x402 queue pays.
-    const { results, settledByCentral, message } = (await response.json()) as {
-      results: NetworkChunk[]; queryId: string; settledByCentral?: boolean; message?: string;
+    const { results, queryId, settledByCentral, message } = (await response.json()) as {
+      results: NetworkChunk[]; queryId?: string; settledByCentral?: boolean; message?: string;
     };
 
     // Fetch chunk content from provider MCP endpoints where available
     if (cfg.networkPreviewOnly) {
-      return { results, settledByCentral, message };
+      return { results, queryId, settledByCentral, message };
     }
 
     const enriched = await Promise.allSettled(
@@ -504,7 +552,7 @@ export class RDKRouter {
     const enrichedResults = enriched
       .map((r, i) => r.status === 'fulfilled' ? r.value : results[i])
       .filter(Boolean) as NetworkChunk[];
-    return { results: enrichedResults, settledByCentral, message };
+    return { results: enrichedResults, queryId, settledByCentral, message };
   }
 
   private async fetchChunkContent(chunk: NetworkChunk): Promise<NetworkChunk> {

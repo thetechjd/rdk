@@ -318,6 +318,19 @@ mcp.command('test').action(async () => { const { mcpTest } = await import('./com
 program.command('mcp:serve').option('-p, --port <port>', 'Port').option('-d, --detach', 'Run in the background (survives terminal close, until reboot)').option('--stop', 'Stop the background server').option('--status', 'Show whether the background server is running').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: o.port ? parseInt(o.port, 10) : undefined, detach: o.detach, stop: o.stop, status: o.status }); });
 program.command('mcp:validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
 
+// ── Local query API (partner query node) ─────────────────────────────────────
+
+program
+  .command('api:serve')
+  .description('Serve a localhost-only query API (127.0.0.1) for a partner query node; needs a private token file')
+  .option('-p, --port <port>', 'Port', '7841')
+  .option('--token-file <path>', 'File holding the bearer token (mode 600)')
+  .option('--host <host>', 'Only 127.0.0.1 is accepted')
+  .action(async (o) => {
+    const { apiServe } = await import('./commands/api-serve.js');
+    await apiServe({ port: parseInt(o.port, 10), tokenFile: o.tokenFile, host: o.host });
+  });
+
 // ── Tips ──────────────────────────────────────────────────────────────────────
 
 program
