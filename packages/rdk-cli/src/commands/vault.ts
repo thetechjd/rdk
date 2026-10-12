@@ -294,7 +294,7 @@ export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}
               sourceAdapter: chunk.sourceAdapter,
               supersedesHash: chunk.supersedes,
               version: chunk.version ?? 1,
-              // Partner provenance (RDK_PL_00A C3) — dropping it here would
+              // Partner provenance (RDK_PL_00A C3). Dropping it here would
               // detach a partner publication from its attestations.
               externalPartner: chunk.externalPartner,
               externalRef: chunk.externalRef,

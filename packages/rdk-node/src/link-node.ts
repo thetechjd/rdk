@@ -164,10 +164,10 @@ async function linkOnRetrodeckApi(
 ): Promise<{ result: LinkResult; token?: string }> {
 
   if (!config.nodeId || config.nodeId.startsWith('local-')) {
-    return { result: { status: 'skipped', reason: 'offline node — run rdk network:join' } };
+    return { result: { status: 'skipped', reason: 'offline node: run rdk network:join' } };
   }
   let token = opts.accessToken ?? config.retrodeckAccessToken;
-  if (!token) return { result: { status: 'skipped', reason: 'not logged in — run rdk account:login' } };
+  if (!token) return { result: { status: 'skipped', reason: 'not logged in: run rdk account:login' } };
 
   // Idempotency guard: check existing links before inserting, because
   // retrodeck-api's /nodes/link would otherwise create duplicate rows.

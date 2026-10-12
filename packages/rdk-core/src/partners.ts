@@ -21,7 +21,7 @@ function rdkHome(): string {
   return process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
 }
 
-/** `<RDK_HOME>/partners` — the root of every partner's managed folder. */
+/** `<RDK_HOME>/partners`: the root of every partner's managed folder. */
 export function partnerDocsRoot(): string {
   return path.resolve(rdkHome(), 'partners');
 }
