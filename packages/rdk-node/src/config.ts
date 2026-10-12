@@ -53,10 +53,39 @@ export interface RDKConfig {
    *  tip next to every choice, so the human has already seen the price. */
   queryMaxTipUsdc?: number;
 
+  /**
+   * Partner apps linked to this node with `rdk link <code>` (RDK_PL_00A C1),
+   * keyed by partner id (`parlayledger`). Nothing in a block is secret, so it
+   * round-trips through save/load unencrypted.
+   */
+  partners?: Record<string, PartnerLinkConfig>;
+
   // Encryption
   vaultKeyHex?: string;                      // own vault key (encrypted at rest)
   sharedVaultKeys?: Record<string, string>;  // ownerNodeId → hex key (encrypted at rest)
 }
+
+export interface PartnerLinkConfig {
+  /** Display name, e.g. "ParlayLedger". */
+  name: string;
+  linkId: string;
+  /** `rdk partners disable` turns this off; jobs are then refused. */
+  enabled: boolean;
+  allowedJobTypes: string[];
+  linkedAt: string;
+}
+
+/** Human name for a partner id, from its config block when linked. */
+export function partnerDisplayName(
+  partnerId: string,
+  config?: Pick<RDKConfig, 'partners'> | null,
+): string {
+  const configured = config?.partners?.[partnerId]?.name;
+  if (configured) return configured;
+  return KNOWN_PARTNER_NAMES[partnerId] ?? partnerId;
+}
+
+const KNOWN_PARTNER_NAMES: Record<string, string> = { parlayledger: 'ParlayLedger' };
 
 const DEFAULT_RDK_DIR = process.env.RDK_HOME ?? path.join(os.homedir(), '.rdk');
 const CONFIG_PATH = process.env.RDK_CONFIG_PATH

@@ -16,7 +16,7 @@ import type {
   VaultAdapter, AdapterConfig, IndexOptions, IndexResult,
   RetrievedChunk, FileChange, VaultMetadata,
 } from '@rdk/core';
-import { LocalStore, RDKIndexer, LocalEmbeddingModel, keyFromHex } from '@rdk/core';
+import { LocalStore, RDKIndexer, LocalEmbeddingModel, keyFromHex, isManagedPartnerPath } from '@rdk/core';
 
 export interface ObsidianAdapterConfig extends AdapterConfig {
   vaultPath: string;
@@ -326,7 +326,10 @@ export default class ObsidianAdapter implements VaultAdapter {
 
   private async getMarkdownFiles(vaultPath: string): Promise<string[]> {
     const ignore = this.buildIgnoreList(vaultPath);
-    return glob('**/*.md', { cwd: vaultPath, absolute: true, ignore, nodir: true });
+    const files = await glob('**/*.md', { cwd: vaultPath, absolute: true, ignore, nodir: true });
+    // Partner-managed documents (~/.rdk/partners) belong to the partner-job
+    // handler, even when the vault is rooted at or above ~/.rdk.
+    return files.filter((f) => !isManagedPartnerPath(f));
   }
 
   private buildIgnoreList(vaultPath: string): string[] {

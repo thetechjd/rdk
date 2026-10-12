@@ -144,6 +144,9 @@ export class SyncService {
           derivedFromHash: chunk.derivedFrom,
           version: chunk.version ?? 1,
           riskScore: chunk.riskScore ?? 0,
+          // Partner provenance (RDK_PL_00A C3); absent for ordinary content.
+          externalPartner: chunk.externalPartner,
+          externalRef: chunk.externalRef,
         });
       }
 

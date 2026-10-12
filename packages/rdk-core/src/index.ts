@@ -12,6 +12,7 @@ export * from './store/local-store.js';
 export * from './summarize.js';
 export * from './taxonomy.js';
 export * from './title.js';
+export * from './partners.js';
 export * from './query/pipeline.constants.js';
 export * from './query/types.js';
 export * from './query/understand.js';

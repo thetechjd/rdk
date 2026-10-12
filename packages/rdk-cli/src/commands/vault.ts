@@ -1,5 +1,5 @@
 // packages/rdk-cli/src/commands/vault.ts
-import { loadConfig, updateConfig } from '../config.js';
+import { loadConfig, updateConfig, partnerDisplayName } from '../config.js';
 import { requireDeps } from '../require-dep.js';
 import { loadAdapter } from '../load-adapter.js';
 import { t, mark, divider } from '../theme.js';
@@ -294,6 +294,10 @@ export async function vaultSync(opts: { force?: boolean; verify?: boolean } = {}
               sourceAdapter: chunk.sourceAdapter,
               supersedesHash: chunk.supersedes,
               version: chunk.version ?? 1,
+              // Partner provenance (RDK_PL_00A C3) — dropping it here would
+              // detach a partner publication from its attestations.
+              externalPartner: chunk.externalPartner,
+              externalRef: chunk.externalRef,
             }],
           }),
           signal: AbortSignal.timeout(10000),
@@ -465,7 +469,9 @@ export async function vaultSearch(query: string, opts: { topK?: number }): Promi
         }
       }
       const state = r.isPublic ? 'public' : r.isLocalOnly ? 'local' : 'private';
-      console.log(t.bold(`[${i + 1}] ${r.title}`) + t.dim(` (${score}% match · yours · ${state})`));
+      // Managed partner documents name their source: "[ParlayLedger] <title>".
+      const partner = r.externalPartner ? `[${partnerDisplayName(r.externalPartner, config)}] ` : '';
+      console.log(t.bold(`[${i + 1}] ${partner}${r.title}`) + t.dim(` (${score}% match · yours · ${state})`));
       if (r.sourcePath) console.log(t.dim(`    ${r.sourcePath}`));
       console.log(t.body(content.slice(0, 200) + (content.length > 200 ? '...' : '')));
       console.log('');
