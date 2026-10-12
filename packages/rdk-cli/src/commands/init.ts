@@ -903,14 +903,17 @@ async function runFullSetup(opts: SetupOptions): Promise<boolean> {
     } catch {}
   }
 
-  if (opts.auth.userId && rdkJwtToken) {
-    try {
-      await fetch(`${CENTRAL_API_URL}/api/v1/nodes/${nodeId}/link-retrodeck`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${rdkJwtToken}` },
-        body: JSON.stringify({ retrodeckUserId: opts.auth.userId }),
-      });
-    } catch {}
+  if (opts.auth.userId && opts.auth.accessToken && rdkJwtToken) {
+    // Central now requires proof of the account (RDK_PL_00A D): the access
+    // token travels with the user id. Still non-fatal, as before.
+    const { linkRetrodeckOnCentral } = await import('@rdk/node/link-node');
+    await linkRetrodeckOnCentral({
+      centralApiUrl: CENTRAL_API_URL,
+      nodeId,
+      jwt: rdkJwtToken,
+      retrodeckUserId: opts.auth.userId,
+      retrodeckAccessToken: opts.auth.accessToken,
+    });
   }
 
   saveConfig({
@@ -938,7 +941,10 @@ async function runFullSetup(opts: SetupOptions): Promise<boolean> {
   // what used to leave chunks synced to Central but invisible in the dashboard.
   if (opts.auth.accessToken && !nodeId.startsWith('local-')) {
     const { ensureNodeLinked } = await import('../link-node.js');
-    const link = await ensureNodeLinked({ accessToken: opts.auth.accessToken, displayName: opts.displayName });
+    const link = await ensureNodeLinked({
+      accessToken: opts.auth.accessToken, displayName: opts.displayName,
+      centralLink: false, // done above, with the JWT already in hand
+    });
     if (link.status === 'failed') {
       console.log(t.warn(`  Could not link node to your account (${link.reason}).`));
       console.log(t.dim('  Your chunks will sync, but run rdk account:relink to show them in the dashboard.'));

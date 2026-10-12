@@ -83,31 +83,102 @@ async function fetchLinkedNodeIds(
   return null;
 }
 
+/**
+ * Record the node → RetroDeck account binding on RDK Central:
+ * `POST {central}/api/v1/nodes/:nodeId/link-retrodeck`.
+ *
+ * Central no longer takes the account id on the node's word (RDK_PL_00A D):
+ * the body must carry `retrodeckAccessToken`, which Central introspects and
+ * whose user must equal `retrodeckUserId`, else `403 link_proof_required`.
+ * Best effort: never throws, and callers treat failure as non-fatal.
+ */
+export async function linkRetrodeckOnCentral(opts: {
+  centralApiUrl: string;
+  nodeId: string;
+  retrodeckUserId: string;
+  retrodeckAccessToken: string;
+  /** A node JWT, when the caller already has one; otherwise `apiKey` is exchanged. */
+  jwt?: string;
+  apiKey?: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const base = opts.centralApiUrl.replace(/\/+$/, '');
+  try {
+    let jwt = opts.jwt;
+    if (!jwt) {
+      if (!opts.apiKey) return { ok: false, reason: 'no node credentials' };
+      const auth = await fetch(`${base}/api/v1/nodes/auth`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${opts.apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!auth.ok) return { ok: false, reason: `node auth HTTP ${auth.status}` };
+      jwt = ((await auth.json()) as { jwtToken?: string }).jwtToken;
+      if (!jwt) return { ok: false, reason: 'node auth returned no token' };
+    }
+    const res = await fetch(`${base}/api/v1/nodes/${encodeURIComponent(opts.nodeId)}/link-retrodeck`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body: JSON.stringify({
+        retrodeckUserId: opts.retrodeckUserId,
+        retrodeckAccessToken: opts.retrodeckAccessToken,
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return { ok: true };
+    let code = '';
+    try { code = ((await res.json()) as { code?: string }).code ?? ''; } catch { /* non-JSON */ }
+    return { ok: false, reason: code ? `${code} (HTTP ${res.status})` : `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+}
+
 // Link this node to the user's RetroDeck account if it isn't already.
 // Safe to call repeatedly (idempotent). Pass a freshly minted `accessToken`
 // (e.g. right after login) to link even when the existing-links check can't be
 // performed; otherwise the check guards against duplicate inserts.
+//
+// Also records the binding on RDK Central with proof of the account
+// (linkRetrodeckOnCentral), unless `centralLink: false` (init does that itself).
 export async function ensureNodeLinked(
-  opts: { config?: RDKConfig; accessToken?: string; displayName?: string } = {},
+  opts: { config?: RDKConfig; accessToken?: string; displayName?: string; centralLink?: boolean } = {},
 ): Promise<LinkResult> {
   const config = opts.config ?? loadConfig();
+  const { result, token } = await linkOnRetrodeckApi(config, opts);
+  if (opts.centralLink !== false && token && config.retrodeckUserId && result.status !== 'skipped') {
+    // Non-fatal by design: the dashboard link above is what this command is for.
+    await linkRetrodeckOnCentral({
+      centralApiUrl: config.centralApiUrl,
+      nodeId: config.nodeId,
+      apiKey: config.apiKey,
+      retrodeckUserId: config.retrodeckUserId,
+      retrodeckAccessToken: token,
+    });
+  }
+  return result;
+}
+
+async function linkOnRetrodeckApi(
+  config: RDKConfig,
+  opts: { accessToken?: string; displayName?: string },
+): Promise<{ result: LinkResult; token?: string }> {
 
   if (!config.nodeId || config.nodeId.startsWith('local-')) {
-    return { status: 'skipped', reason: 'offline node — run rdk network:join' };
+    return { result: { status: 'skipped', reason: 'offline node — run rdk network:join' } };
   }
   let token = opts.accessToken ?? config.retrodeckAccessToken;
-  if (!token) return { status: 'skipped', reason: 'not logged in — run rdk account:login' };
+  if (!token) return { result: { status: 'skipped', reason: 'not logged in — run rdk account:login' } };
 
   // Idempotency guard: check existing links before inserting, because
   // retrodeck-api's /nodes/link would otherwise create duplicate rows.
   const linked = await fetchLinkedNodeIds(config, token);
   if (linked) {
     token = linked.token;
-    if (linked.ids.includes(config.nodeId)) return { status: 'already-linked' };
+    if (linked.ids.includes(config.nodeId)) return { result: { status: 'already-linked' }, token };
   } else if (!opts.accessToken) {
     // Couldn't verify and we don't have a trusted fresh token — bail rather
     // than risk a blind duplicate insert.
-    return { status: 'failed', reason: 'could not verify existing links' };
+    return { result: { status: 'failed', reason: 'could not verify existing links' } };
   }
 
   try {
@@ -122,9 +193,9 @@ export async function ensureNodeLinked(
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    if (res.ok) return { status: 'linked' };
-    return { status: 'failed', reason: `HTTP ${res.status}` };
+    if (res.ok) return { result: { status: 'linked' }, token };
+    return { result: { status: 'failed', reason: `HTTP ${res.status}` }, token };
   } catch (e) {
-    return { status: 'failed', reason: (e as Error).message };
+    return { result: { status: 'failed', reason: (e as Error).message }, token };
   }
 }
