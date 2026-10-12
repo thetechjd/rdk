@@ -24,6 +24,21 @@ export async function setWallet(address: string, opts: { chain?: string } = {}):
   console.log('');
   console.log(`  ${mark.ok()} Payout wallet set: ${t.body(addr)} ${t.dim(`(${chain})`)}`);
   console.log(t.dim('  Tip earnings accrue as USDC credit; withdraw to this wallet with rdk earnings:withdraw.'));
+
+  // Tell Central too (RDK_PL_00A C6), so the address partner apps show
+  // read-only is the one set here. Best effort: the local value stands.
+  const config = loadConfig();
+  const { isOfflineNode } = await import('@rdk/node/register-node');
+  if (!isOfflineNode(config) && config.nodeId !== 'headless') {
+    const { syncWalletToCentral } = await import('@rdk/node/central-client');
+    const synced = await syncWalletToCentral({
+      centralApiUrl: config.centralApiUrl, apiKey: config.apiKey, walletAddress: addr, walletChain: chain,
+    });
+    if (!synced.ok) {
+      console.log(t.warn(`  Saved on this machine, but RDK Central could not be updated (${synced.reason}).`));
+      console.log(t.dim('  Run the same command again when you are online.'));
+    }
+  }
   console.log('');
 }
 

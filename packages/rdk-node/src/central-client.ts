@@ -147,6 +147,36 @@ export class CentralClient {
   }
 }
 
+/**
+ * Tell Central this node's payout wallet (RDK_PL_00A C6):
+ * `PATCH /api/v1/nodes/me/wallet` with the node JWT, so Central's
+ * `nodes.wallet_address` (what a partner reads, read-only) matches what the
+ * user set with `rdk wallet`. Only the node itself can call it, which is what
+ * keeps a partner from redirecting earnings. Never throws: best effort.
+ */
+export async function syncWalletToCentral(opts: {
+  centralApiUrl: string;
+  apiKey: string;
+  walletAddress: string;
+  walletChain: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(opts.walletAddress)) return { ok: false, reason: 'invalid wallet address' };
+  try {
+    const client = new CentralClient({ centralApiUrl: opts.centralApiUrl, apiKey: opts.apiKey });
+    const jwt = await client.getJwt();
+    const res = await fetch(`${opts.centralApiUrl.replace(/\/$/, '')}/api/v1/nodes/me/wallet`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress: opts.walletAddress, walletChain: opts.walletChain }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, reason: await centralError(res, 'Wallet update failed') };
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+}
+
 export interface PinSummary {
   documentHash: string;
   title: string | null;

@@ -5,7 +5,7 @@
 // inside the CLI and MCP packages.
 export * from './config.js';
 export { SyncService, type SyncConfig } from './sync-service.js';
-export { CentralClient } from './central-client.js';
+export { CentralClient, syncWalletToCentral } from './central-client.js';
 // RetroDeck API (account / plans / balance / top-up / subscription) — a different
 // service from RDK Central, with its own token. Namespaced to avoid collisions.
 export * as retrodeck from './retrodeck-client.js';
