@@ -279,7 +279,7 @@ export async function requireDep(
 /** Ensure multiple deps are installed. Shows one combined prompt if any are missing. */
 export async function requireDeps(
   depKeys: string[],
-  opts: { label?: string } = {},
+  opts: { label?: string; /** Install without asking (`init -y`). */ yes?: boolean } = {},
 ): Promise<boolean> {
   const missing: DepSpec[] = [];
 
@@ -303,7 +303,7 @@ export async function requireDeps(
   console.error(`  ${chalk.dim(`Total: ${totalSize}`)}`);
   console.error('');
 
-  const confirmed = await confirm('  Install now?');
+  const confirmed = opts.yes === true || await confirm('  Install now?');
   if (!confirmed) {
     console.error(chalk.dim('  Skipped. Run again and choose Y when ready.'));
     return false;

@@ -11,6 +11,11 @@ export { CentralClient } from './central-client.js';
 export * as retrodeck from './retrodeck-client.js';
 export { RetrodeckAuthError, type ApiPlan, type BalanceInfo } from './retrodeck-client.js';
 export { ensureNodeLinked, type LinkResult } from './link-node.js';
+// Partner apps (ParlayLedger): pair codes and the partners config block.
+export {
+  normalizePairCode, isWellFormedPairCode, redeemPairCode, savePartnerLink,
+  setPartnerEnabled, removePartnerLink, PartnerLinkError, type PartnerLinkResponse,
+} from './partner-link.js';
 // Model-facing redaction: gets the org policy onto this node and keeps it there.
 // The engine itself lives in @rdk/core; this is distribution and fail-closed caching.
 export {

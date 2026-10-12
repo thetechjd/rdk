@@ -2,7 +2,7 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { saveConfig, ensureRDKDir, configExists, loadConfig } from '../config.js';
+import { saveConfig, ensureRDKDir, configExists, loadConfig, loadConfigOrNull } from '../config.js';
 import {
   CRYPTO_POLL,
   STRIPE_POLL,
@@ -73,6 +73,16 @@ interface SetupOptions {
   enableMcp: boolean;
   walletAddress: string;
   walletChain: string;
+  /** Never prompt (`-y` / `--non-interactive` / no TTY): installs proceed and
+   *  autostart follows `autostart`. */
+  nonInteractive?: boolean;
+  /** Non-interactive only: install the background service (default true). */
+  autostart?: boolean;
+  /** `init --link`: a node that cannot register is a failure, not an offline
+   *  fallback, because pairing needs a node Central knows. */
+  requireNetwork?: boolean;
+  /** Overrides the summary's Account line. */
+  accountLabel?: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -91,12 +101,23 @@ function countFiles(dir: string): number {
   } catch { return 0; }
 }
 
-export async function runInit(nonInteractive: {
+export interface InitOptions {
   email?: string; domain?: string; vault?: string; path?: string;
   apiKey?: string; plan?: string; nonInteractive?: boolean; yes?: boolean;
   autostart?: boolean; mcpConfig?: boolean;
-} = {}): Promise<void> {
+  /** Partner pair code (`rdk init --link K7Q2-M9XD`). */
+  link?: string;
+}
+
+export async function runInit(nonInteractive: InitOptions = {}): Promise<void> {
   const ora = (await import('ora')).default;
+
+  // A partner pairing code replaces the RetroDeck sign-in entirely: a user whose
+  // account ParlayLedger provisioned has never seen a password.
+  if (nonInteractive.link !== undefined) {
+    await runInitWithLink(nonInteractive);
+    return;
+  }
 
   const headless = nonInteractive.nonInteractive === true
     || nonInteractive.yes === true
@@ -332,53 +353,7 @@ export async function runInit(nonInteractive: {
 
   console.log(`\n  ${mark.ok()} ${t.body('Account ready')}`);
 
-  // ── Step 2: Vault ─────────────────────────────────────────────────────────
-  stepHeader(2, 6, 'Knowledge Vault');
-  note('Connect your local vault (Obsidian, filesystem, etc.).');
-  note('RDK will index files from your vault into encrypted private chunks on the network.');
-  console.log('');
-
-  const connectVault = await confirm({ message: 'Connect a vault?', default: true });
-
-  let vaultAdapter: VaultAdapter = 'filesystem';
-  let vaultPath = '';
-  let createVault = false;
-
-  if (connectVault) {
-    vaultAdapter = await select<VaultAdapter>({
-      message: 'Vault tool:',
-      choices: [
-        { name: 'Obsidian',                    value: 'obsidian' },
-        { name: 'Plain folder (.md / .txt)',   value: 'filesystem' },
-        { name: 'Logseq',                      value: 'logseq' },
-        { name: 'Notion',                      value: 'notion' },
-      ],
-    });
-
-    if (vaultAdapter !== 'notion') {
-      const defaultPath = VAULT_DEFAULTS[vaultAdapter];
-      const pathExists = defaultPath && fs.existsSync(defaultPath);
-      const inputPath = await input({
-        message: `Vault path:`,
-        default: pathExists ? defaultPath : '',
-      });
-      if (!inputPath.trim()) {
-        vaultPath = defaultPath || path.join(os.homedir(), 'Documents', 'rdk-vault');
-        createVault = true;
-      } else {
-        vaultPath = inputPath.trim().replace(/^~/, os.homedir());
-        createVault = !fs.existsSync(vaultPath);
-      }
-    }
-  }
-
-  // ── Step 3: Enable MCP ────────────────────────────────────────────────────
-  stepHeader(3, 6, 'Enable MCP');
-  note('MCP connects your vault to Claude Desktop so Claude can');
-  note('query your knowledge directly (~50MB download, one-time).');
-  console.log('');
-
-  const enableMcp = await confirm({ message: 'Enable MCP?', default: true });
+  const { connectVault, vaultAdapter, vaultPath, createVault, enableMcp } = await promptVaultAndMcp(2, 6);
 
   // ── Step 4: Wallet ────────────────────────────────────────────────────────
   stepHeader(4, 6, 'Tip Wallet (optional)');
@@ -708,7 +683,167 @@ export async function runInit(nonInteractive: {
   });
 }
 
-async function runFullSetup(opts: SetupOptions): Promise<void> {
+
+/** Steps "Knowledge Vault" and "Enable MCP", shared by `rdk init` and
+ *  `rdk init --link`. */
+async function promptVaultAndMcp(step: number, total: number): Promise<{
+  connectVault: boolean; vaultAdapter: VaultAdapter; vaultPath: string; createVault: boolean; enableMcp: boolean;
+}> {
+  // ── Step 2: Vault ─────────────────────────────────────────────────────────
+  stepHeader(step, total, 'Knowledge Vault');
+  note('Connect your local vault (Obsidian, filesystem, etc.).');
+  note('RDK will index files from your vault into encrypted private chunks on the network.');
+  console.log('');
+
+  const connectVault = await confirm({ message: 'Connect a vault?', default: true });
+
+  let vaultAdapter: VaultAdapter = 'filesystem';
+  let vaultPath = '';
+  let createVault = false;
+
+  if (connectVault) {
+    vaultAdapter = await select<VaultAdapter>({
+      message: 'Vault tool:',
+      choices: [
+        { name: 'Obsidian',                    value: 'obsidian' },
+        { name: 'Plain folder (.md / .txt)',   value: 'filesystem' },
+        { name: 'Logseq',                      value: 'logseq' },
+        { name: 'Notion',                      value: 'notion' },
+      ],
+    });
+
+    if (vaultAdapter !== 'notion') {
+      const defaultPath = VAULT_DEFAULTS[vaultAdapter];
+      const pathExists = defaultPath && fs.existsSync(defaultPath);
+      const inputPath = await input({
+        message: `Vault path:`,
+        default: pathExists ? defaultPath : '',
+      });
+      if (!inputPath.trim()) {
+        vaultPath = defaultPath || path.join(os.homedir(), 'Documents', 'rdk-vault');
+        createVault = true;
+      } else {
+        vaultPath = inputPath.trim().replace(/^~/, os.homedir());
+        createVault = !fs.existsSync(vaultPath);
+      }
+    }
+  }
+
+  // ── Step 3: Enable MCP ────────────────────────────────────────────────────
+  stepHeader(step + 1, total, 'Enable MCP');
+  note('MCP connects your vault to Claude Desktop so Claude can');
+  note('query your knowledge directly (~50MB download, one-time).');
+  console.log('');
+
+  const enableMcp = await confirm({ message: 'Enable MCP?', default: true });
+
+  return { connectVault, vaultAdapter, vaultPath, createVault, enableMcp };
+}
+
+/** Placeholder owner email for a node registered without a RetroDeck sign-in.
+ *  Central requires an email at registration but only stores it; `.invalid`
+ *  (RFC 2606) can never deliver. Pairing then binds the node to the real
+ *  account (RDK_PL_00A C1). */
+function pairingPlaceholderEmail(): string {
+  return `node-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}@pairing.invalid`;
+}
+
+const ADAPTER_NAMES = ['obsidian', 'filesystem', 'logseq', 'notion'];
+
+/**
+ * `rdk init --link <code>`: set up a node without RetroDeck credentials, then
+ * redeem the partner pair code (which binds the node to the account). Works
+ * interactively and with `-y`. If setup fails, the link is not attempted.
+ */
+async function runInitWithLink(opts: InitOptions): Promise<void> {
+  const code = (opts.link ?? '').trim();
+  const { isWellFormedPairCode } = await import('@rdk/node/partner-link');
+  const { isOfflineNode } = await import('@rdk/node/register-node');
+  const { linkPartner, pairErrorMessage } = await import('./partners.js');
+
+  if (!isWellFormedPairCode(code)) {
+    console.error(pairErrorMessage('pair_code_invalid', ''));
+    process.exitCode = 1;
+    return;
+  }
+
+  // Re-running setup would replace this machine's node identity and vault key.
+  // A working node only needs the link.
+  const existing = loadConfigOrNull();
+  if (existing && !isOfflineNode(existing) && existing.nodeId !== 'headless') {
+    console.log('This machine already has an RDK node. Linking it.');
+    await linkPartner(code);
+    return;
+  }
+
+  const headless = opts.nonInteractive === true || opts.yes === true || !isInteractive();
+  const email = opts.email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(opts.email) ? opts.email : pairingPlaceholderEmail();
+  const displayName = `rdk-${os.hostname().split('.')[0].replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'node'}`;
+  const noAuth: AuthResult = { userId: '', accessToken: '', refreshToken: '', emailVerified: false, isNewUser: false };
+
+  let setup: SetupOptions;
+  if (headless) {
+    const vaultPath = opts.path
+      ?? (opts.vault && !ADAPTER_NAMES.includes(opts.vault) ? opts.vault : undefined)
+      ?? process.env.RDK_VAULT_PATH
+      ?? '';
+    const resolvedVault = vaultPath ? vaultPath.replace(/^~/, os.homedir()) : '';
+    setup = {
+      email, displayName,
+      domain: opts.domain ?? process.env.RDK_DOMAIN ?? 'general',
+      auth: noAuth,
+      plan: 'free',
+      connectVault: !!resolvedVault,
+      vaultAdapter: (opts.vault && ADAPTER_NAMES.includes(opts.vault) ? opts.vault : 'filesystem') as VaultAdapter,
+      vaultPath: resolvedVault,
+      createVault: !!resolvedVault && !fs.existsSync(resolvedVault),
+      enableMcp: opts.mcpConfig !== false,
+      walletAddress: '',
+      walletChain: 'base',
+      nonInteractive: true,
+      autostart: opts.autostart !== false,
+      requireNetwork: true,
+      accountLabel: 'connected by pairing code',
+    };
+  } else {
+    splash();
+    stepHeader(1, 3, 'Account');
+    note('No RetroDeck sign-in needed: the pairing code connects this node');
+    note('to the account your partner app created for you.');
+    console.log('');
+    const domain = opts.domain ?? await select({
+      message: 'Knowledge domain:',
+      choices: [
+        { name: 'Engineering / Dev', value: 'engineering' },
+        { name: 'Fintech / Finance',  value: 'fintech' },
+        { name: 'Legal',              value: 'legal' },
+        { name: 'Healthcare',         value: 'healthcare' },
+        { name: 'Marketing',          value: 'marketing' },
+        { name: 'Education',          value: 'education' },
+        { name: 'Research',           value: 'research' },
+        { name: 'General',            value: 'general' },
+      ],
+      default: 'general',
+    });
+    const vm = await promptVaultAndMcp(2, 3);
+    setup = {
+      email, displayName, domain, auth: noAuth, plan: 'free', ...vm,
+      walletAddress: '', walletChain: 'base',
+      requireNetwork: true,
+      accountLabel: 'connected by pairing code',
+    };
+  }
+
+  const ok = await runFullSetup(setup);
+  if (!ok) {
+    process.exitCode = 1;
+    return;
+  }
+  console.log('');
+  await linkPartner(code);
+}
+
+async function runFullSetup(opts: SetupOptions): Promise<boolean> {
   const ora = (await import('ora')).default;
   console.log('');
   console.log(`  ${divider(46)}`);
@@ -745,6 +880,11 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
   } catch (e) {
     regSpinner.fail(`  Node registration failed: ${(e as Error).message}`);
     regSpinner.warn(`  Tried: ${CENTRAL_API_URL} — set RDK_CENTRAL_URL to override`);
+    if (opts.requireNetwork) {
+      // Pairing needs a node Central knows; an offline node cannot be linked.
+      console.error('  Setup stopped: this node could not register with RDK Central, so it cannot be linked. Check your connection and run the command again.');
+      return false;
+    }
     regSpinner.warn('  Running in offline mode (vault search only, no network sync)');
   }
 
@@ -835,7 +975,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     console.log('');
     adapterReady = await requireDeps(
       [`@retrodeck/adapter-${opts.vaultAdapter}`],
-      { label: `Vault adapter (${opts.vaultAdapter})` },
+      { label: `Vault adapter (${opts.vaultAdapter})`, yes: opts.nonInteractive },
     );
   }
 
@@ -844,7 +984,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     console.log('');
     mcpReady = await requireDeps(
       ['@xenova/transformers', '@modelcontextprotocol/sdk'],
-      { label: 'MCP components' },
+      { label: 'MCP components', yes: opts.nonInteractive },
     );
   }
 
@@ -867,7 +1007,7 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
   }
 
   summary([
-    { label: 'Account',    value: `${opts.email} (${opts.plan} plan)`, done: true },
+    { label: 'Account',    value: opts.accountLabel ?? `${opts.email} (${opts.plan} plan)`, done: true },
     { label: 'Vault',      value: opts.vaultAdapter,                    done: opts.connectVault },
     { label: 'MCP',        value: 'enabled',                            done: mcpReady },
     { label: 'Tip wallet', done: !!opts.walletAddress, action: 'tips:enable' },
@@ -880,12 +1020,12 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
     console.log('');
 
     // ── Start / auto-start the MCP server ──────────────────────────────────
-    const runNow = await confirm({
+    const runNow = opts.nonInteractive ? false : await confirm({
       message: 'Run the MCP server now?',
       default: true,
     });
 
-    const autoStart = await confirm({
+    const autoStart = opts.nonInteractive ? opts.autostart !== false : await confirm({
       message: 'Start RDK automatically on startup? (recommended)',
       default: true,
     });
@@ -914,4 +1054,5 @@ async function runFullSetup(opts: SetupOptions): Promise<void> {
 
   console.log(`  ${t.dim('Manage your account:')} ${link('https://retrodeck.ai/dashboard')}`);
   console.log(`  ${divider(48)}\n`);
+  return !nodeId.startsWith('local-');
 }
