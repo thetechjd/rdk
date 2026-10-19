@@ -43,7 +43,7 @@ import { otherWsServers, describeOtherWsServers } from '@rdk/node/ws/ws-presence
 // RetroDeck API — account/plans/balance/top-up/subscription. A different service
 // (and token) from RDK Central; see the note above getAccount().
 import * as retrodeck from '@rdk/node/retrodeck-client';
-import { shell } from 'electron';
+import { app, shell } from 'electron';
 import {
   autoStartSupported,
   serviceInstallSupported,
@@ -1180,7 +1180,8 @@ export class NodeService {
       );
       this.syncService.start();
       // Defers to an installed always-on service when one already holds the lock.
-      this.wsOwnership = startWsSession({ app: 'desktop' });
+      // The desktop version is what a partner `ping` reports for this node.
+      this.wsOwnership = startWsSession({ app: 'desktop', hostVersion: app.getVersion() });
       if (!this.wsOwnership) {
         // startWsSession returns null when this machine has no usable node
         // identity. Reporting ok here is what made "start node" appear to do

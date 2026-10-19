@@ -67,9 +67,12 @@ export async function mcpServe(opts: { port?: number; detach?: boolean; stop?: b
   // duplicates with 4001) lives in @rdk/node so mcp:serve and the desktop app
   // behave identically.
   const { startWsSession } = await import('@rdk/node/ws/ownership');
+  const { cliVersion } = await import('../version.js');
   const ownership = startWsSession({
     // Claude Desktop spawns this; RDK_APP_LABEL lets whoever spawns it say so.
     app: 'mcp',
+    // Reported by the partner `ping` job.
+    hostVersion: cliVersion(),
     log: msg => console.error(t.dim(`  · ${msg}`)),
   });
 

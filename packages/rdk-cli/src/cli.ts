@@ -40,10 +40,36 @@ program
   .option('-y, --yes', 'Alias for --non-interactive')
   .option('--no-autostart', 'Do not start background services')
   .option('--no-mcp-config', 'Do not configure an MCP host')
+  .option('--link <code>', 'Pair with a partner app (e.g. ParlayLedger) using its code; no RetroDeck sign-in needed')
   .action(async (opts) => {
     const { runInit } = await import('./commands/init.js');
     await runInit(opts);
   });
+
+// ── Partner apps ──────────────────────────────────────────────────────────────
+
+program
+  .command('link <code>')
+  .description('Link this node to a partner app (e.g. ParlayLedger) with the code it shows you')
+  .action(async (code: string) => {
+    const { linkPartner } = await import('./commands/partners.js');
+    await linkPartner(code);
+  });
+
+const partners = program
+  .command('partners')
+  .description('Partner apps linked to this node (list, enable, disable, remove)')
+  .action(async () => { const { partnersList } = await import('./commands/partners.js'); await partnersList(); });
+
+partners.command('list').description('List linked partner apps').action(async () => { const { partnersList } = await import('./commands/partners.js'); await partnersList(); });
+partners.command('enable <partner>').description('Accept jobs from a linked partner again').action(async (id: string) => { const { partnersSetEnabled } = await import('./commands/partners.js'); await partnersSetEnabled(id, true); });
+partners.command('disable <partner>').description('Refuse jobs from a linked partner (documents stay)').action(async (id: string) => { const { partnersSetEnabled } = await import('./commands/partners.js'); await partnersSetEnabled(id, false); });
+partners.command('remove <partner>').description('Unlink a partner; --delete-docs also unpublishes and deletes its documents').option('--delete-docs', 'Unpublish and delete every document the partner published here').action(async (id: string, o) => { const { partnersRemove } = await import('./commands/partners.js'); await partnersRemove(id, { deleteDocs: !!o.deleteDocs }); });
+
+program.command('partners:list').description('List linked partner apps').action(async () => { const { partnersList } = await import('./commands/partners.js'); await partnersList(); });
+program.command('partners:enable <partner>').description('Accept jobs from a linked partner again').action(async (id: string) => { const { partnersSetEnabled } = await import('./commands/partners.js'); await partnersSetEnabled(id, true); });
+program.command('partners:disable <partner>').description('Refuse jobs from a linked partner (documents stay)').action(async (id: string) => { const { partnersSetEnabled } = await import('./commands/partners.js'); await partnersSetEnabled(id, false); });
+program.command('partners:remove <partner>').description('Unlink a partner; --delete-docs also unpublishes and deletes its documents').option('--delete-docs', 'Unpublish and delete every document the partner published here').action(async (id: string, o) => { const { partnersRemove } = await import('./commands/partners.js'); await partnersRemove(id, { deleteDocs: !!o.deleteDocs }); });
 
 // ── Vault ─────────────────────────────────────────────────────────────────────
 
@@ -291,6 +317,19 @@ mcp.command('test').action(async () => { const { mcpTest } = await import('./com
 
 program.command('mcp:serve').option('-p, --port <port>', 'Port').option('-d, --detach', 'Run in the background (survives terminal close, until reboot)').option('--stop', 'Stop the background server').option('--status', 'Show whether the background server is running').action(async (o) => { const { mcpServe } = await import('./commands/mcp.js'); await mcpServe({ port: o.port ? parseInt(o.port, 10) : undefined, detach: o.detach, stop: o.stop, status: o.status }); });
 program.command('mcp:validate').action(async () => { const { mcpValidate } = await import('./commands/mcp.js'); await mcpValidate(); });
+
+// ── Local query API (partner query node) ─────────────────────────────────────
+
+program
+  .command('api:serve')
+  .description('Serve a localhost-only query API (127.0.0.1) for a partner query node; needs a private token file')
+  .option('-p, --port <port>', 'Port', '7841')
+  .option('--token-file <path>', 'File holding the bearer token (mode 600)')
+  .option('--host <host>', 'Only 127.0.0.1 is accepted')
+  .action(async (o) => {
+    const { apiServe } = await import('./commands/api-serve.js');
+    await apiServe({ port: parseInt(o.port, 10), tokenFile: o.tokenFile, host: o.host });
+  });
 
 // ── Tips ──────────────────────────────────────────────────────────────────────
 

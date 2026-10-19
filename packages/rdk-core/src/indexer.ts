@@ -16,6 +16,7 @@ import { describeDuplicate, findNearDuplicate, minHash, type DuplicateMatch } fr
 import { consumeIndexToken } from './index/rate-limit.js';
 import { scanChunk } from './index/scan.js';
 import { queryCache } from './query/cache.js';
+import { isManagedPartnerPath, isPartnerSourceAdapter } from './partners.js';
 
 export interface Document {
   content: string;
@@ -43,6 +44,10 @@ export interface Document {
    *  mints new hashes and makes the work genuinely the editor's — still records
    *  who seeded it. See StoredChunk.derivedFrom. */
   derivedFrom?: string;
+  /** Partner provenance carried onto every chunk (RDK_PL_00A C3). Set only by
+   *  the partner-job handler, e.g. `parlayledger` / `pub_<ULID>`. */
+  externalPartner?: string;
+  externalRef?: string;
 }
 
 export interface IndexerConfig {
@@ -86,6 +91,17 @@ export class RDKIndexer {
     let chunksIndexed = 0;
     let chunksSkipped = 0;
     const indexedChunkIds: string[] = [];
+
+    // Partner-managed documents are written and indexed only by the partner-job
+    // handler. A vault rooted at (or above) ~/.rdk would otherwise expose them to
+    // vault indexing, which would duplicate them as private vault notes and
+    // later "clean up" chunks it never owned.
+    if (isManagedPartnerPath(doc.sourcePath) && !isPartnerSourceAdapter(doc.sourceAdapter)) {
+      return {
+        chunksIndexed: 0, chunksSkipped: 1, filesProcessed: 0, categories: [], chunkIds: [],
+        errors: [`Skipped managed partner document: ${doc.sourcePath}`],
+      };
+    }
 
     try {
       // 0. Settle on what this document is called. Derived from the ORIGINAL
@@ -297,6 +313,8 @@ export class RDKIndexer {
             supersedes: doc.supersedes,
             version: doc.version ?? 1,
             derivedFrom,
+            externalPartner: doc.externalPartner,
+            externalRef: doc.externalRef,
           }, embedding);
           pipelineStore.setChunkRisk?.(chunkId, riskScore);
           pipelineStore.setChunkMinHash?.(chunkId, minHash(chunk.text));
@@ -320,7 +338,10 @@ export class RDKIndexer {
       errors.push(`Fatal: ${(e as Error).message}`);
     }
 
-    return { chunksIndexed, chunksSkipped, filesProcessed: chunksIndexed, categories: allCategories, errors };
+    return {
+      chunksIndexed, chunksSkipped, filesProcessed: chunksIndexed, categories: allCategories, errors,
+      chunkIds: indexedChunkIds,
+    };
   }
 
   async indexBatch(docs: Document[]): Promise<{ total: IndexResult; perDoc: IndexResult[] }> {
@@ -380,6 +401,9 @@ export class RDKIndexer {
         supersedesHash: chunk.supersedes,
         version: chunk.version ?? 1,
         riskScore: chunk.riskScore ?? 0,
+        // Partner provenance (RDK_PL_00A C3); absent for ordinary content.
+        externalPartner: chunk.externalPartner,
+        externalRef: chunk.externalRef,
         // NO content field — content is served on demand, never synced.
       };
     }).filter(c => c.embedding.length > 0);

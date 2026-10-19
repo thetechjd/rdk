@@ -16,7 +16,7 @@ import type {
   FileChange,
   VaultMetadata,
 } from '@rdk/core';
-import { LocalStore, RDKIndexer, keyFromHex } from '@rdk/core';
+import { LocalStore, RDKIndexer, keyFromHex, isManagedPartnerPath } from '@rdk/core';
 
 export interface FilesystemAdapterConfig extends AdapterConfig {
   rootPath: string;
@@ -257,7 +257,9 @@ export class FilesystemAdapter implements VaultAdapter {
       files.push(...found);
     }
 
-    return [...new Set(files)]; // deduplicate
+    // Partner-managed documents (~/.rdk/partners) belong to the partner-job
+    // handler, even when the vault is rooted at or above ~/.rdk.
+    return [...new Set(files)].filter((f) => !isManagedPartnerPath(f)); // deduplicate
   }
 
   private getIgnorePatterns(rootPath: string): string[] {

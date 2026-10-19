@@ -5,12 +5,17 @@
 // inside the CLI and MCP packages.
 export * from './config.js';
 export { SyncService, type SyncConfig } from './sync-service.js';
-export { CentralClient } from './central-client.js';
+export { CentralClient, syncWalletToCentral } from './central-client.js';
 // RetroDeck API (account / plans / balance / top-up / subscription) — a different
 // service from RDK Central, with its own token. Namespaced to avoid collisions.
 export * as retrodeck from './retrodeck-client.js';
 export { RetrodeckAuthError, type ApiPlan, type BalanceInfo } from './retrodeck-client.js';
-export { ensureNodeLinked, type LinkResult } from './link-node.js';
+export { ensureNodeLinked, linkRetrodeckOnCentral, type LinkResult } from './link-node.js';
+// Partner apps (ParlayLedger): pair codes and the partners config block.
+export {
+  normalizePairCode, isWellFormedPairCode, redeemPairCode, savePartnerLink,
+  setPartnerEnabled, removePartnerLink, PartnerLinkError, type PartnerLinkResponse,
+} from './partner-link.js';
 // Model-facing redaction: gets the org policy onto this node and keeps it there.
 // The engine itself lives in @rdk/core; this is distribution and fail-closed caching.
 export {
@@ -31,5 +36,6 @@ export type { NodeControllerOptions, NodeRuntimeStatus, NodeLogger } from './nod
 // Node network runtime — WebSocket control channel + command handlers.
 export { RdkWebSocketClient, getWsClient } from './ws/client.js';
 export { dispatchCommand } from './ws/handlers/index.js';
+export { setHostVersion, getHostVersion } from './ws/host-info.js';
 export * as wsEvents from './ws/events.js';
 export type { WsMessage } from './ws/protocol.js';

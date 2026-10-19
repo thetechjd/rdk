@@ -8,7 +8,7 @@ import os from 'os';
 import crypto from 'crypto';
 import {
   LocalStore, RDKRouter, RDKIndexer, LocalEmbeddingModel, QueryPipeline, HaikuRerankModel,
-  keyFromHex, type NetworkChunk, type RetrievalHit, type VaultKey,
+  keyFromHex, isManagedPartnerPath, type NetworkChunk, type RetrievalHit, type VaultKey,
 } from '@rdk/core';
 import { SyncService } from './sync-service.js';
 import { startRedactionPolicySync, redactionStatus, type RedactionPolicySync } from '@rdk/node';
@@ -591,6 +591,8 @@ export class RDKNode {
       for (const entry of entries) {
         if (entry.name.startsWith('.')) continue;
         const fullPath = path.join(dir, entry.name);
+        // Partner-managed documents belong to the partner-job handler.
+        if (isManagedPartnerPath(fullPath)) continue;
         if (entry.isDirectory()) {
           results.push(...this.listMarkdownFiles(fullPath));
         } else if (/\.(md|txt|mdx)$/.test(entry.name)) {

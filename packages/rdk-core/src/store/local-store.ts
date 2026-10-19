@@ -62,6 +62,15 @@ export interface StoredChunk {
    * the only thing that remembers where it started.
    */
   derivedFrom?: string;
+  /**
+   * Partner provenance (RDK_PL_00A C3). Set only on documents a partner app
+   * (e.g. `parlayledger`) published to this node through a partner job; the
+   * pair `(externalPartner, externalRef)` is how Central attaches the
+   * partner's attestations to every chunk of that publication.
+   */
+  externalPartner?: string;
+  /** The partner's id for the publication, e.g. `pub_<ULID>`. */
+  externalRef?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -232,6 +241,8 @@ export class LocalStore {
         superseded_at DATETIME,
         derived_from  TEXT,
         version       INTEGER DEFAULT 1,
+        external_partner TEXT,
+        external_ref  TEXT,
         created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -286,9 +297,15 @@ export class LocalStore {
       `ALTER TABLE chunks ADD COLUMN chunk_index INTEGER`,
       `ALTER TABLE chunks ADD COLUMN chunk_count INTEGER`,
       `ALTER TABLE chunks ADD COLUMN document_tokens INTEGER`,
+      // Partner provenance (external refs) for partner-published documents.
+      `ALTER TABLE chunks ADD COLUMN external_partner TEXT`,
+      `ALTER TABLE chunks ADD COLUMN external_ref TEXT`,
     ]) {
       try { this.db.exec(ddl); } catch { /* column already exists */ }
     }
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_chunks_external ON chunks(external_partner, external_ref)`,
+    );
 
     this.db.exec(`
 
@@ -359,7 +376,8 @@ export class LocalStore {
           title = ?, doc_title = ?, document_hash = ?, chunk_index = ?, chunk_count = ?,
           document_tokens = ?, content = ?, summary = ?, domain = ?, categories = ?,
           is_public = ?, is_encrypted = ?, local_only = ?, quality_score = ?, source_path = ?,
-          source_adapter = ?, supersedes = ?, version = ?, derived_from = ?, updated_at = ?,
+          source_adapter = ?, supersedes = ?, version = ?, derived_from = ?,
+          external_partner = ?, external_ref = ?, updated_at = ?,
           synced_at = CASE
             WHEN is_public <> ? OR is_encrypted <> ? OR local_only <> ? THEN NULL
             ELSE synced_at
@@ -372,7 +390,7 @@ export class LocalStore {
         JSON.stringify(chunk.categories), chunk.isPublic ? 1 : 0,
         chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore, chunk.sourcePath ?? null,
         chunk.sourceAdapter ?? null, chunk.supersedes ?? null, chunk.version ?? 1,
-        chunk.derivedFrom ?? null, now,
+        chunk.derivedFrom ?? null, chunk.externalPartner ?? null, chunk.externalRef ?? null, now,
         // the CASE comparands — the NEW visibility
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0,
         id,
@@ -382,15 +400,16 @@ export class LocalStore {
         INSERT INTO chunks (id, title, doc_title, content, summary, domain, categories,
           document_hash, chunk_index, chunk_count, document_tokens,
           is_public, is_encrypted, local_only, quality_score, source_path, source_adapter,
-          supersedes, version, derived_from, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          supersedes, version, derived_from, external_partner, external_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, chunk.title, chunk.docTitle ?? null, chunk.content, chunk.summary ?? null,
         chunk.domain ?? null, JSON.stringify(chunk.categories), chunk.documentHash ?? null,
         chunk.chunkIndex ?? null, chunk.chunkCount ?? null, chunk.documentTokens ?? null,
         chunk.isPublic ? 1 : 0, chunk.isEncrypted ? 1 : 0, chunk.isLocalOnly ? 1 : 0, chunk.qualityScore,
         chunk.sourcePath ?? null, chunk.sourceAdapter ?? null,
-        chunk.supersedes ?? null, chunk.version ?? 1, chunk.derivedFrom ?? null, now, now,
+        chunk.supersedes ?? null, chunk.version ?? 1, chunk.derivedFrom ?? null,
+        chunk.externalPartner ?? null, chunk.externalRef ?? null, now, now,
       );
     }
 
@@ -445,6 +464,17 @@ export class LocalStore {
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };
+  }
+
+  /**
+   * Remove a stored document (the authoritative full text). Chunk deletion
+   * alone left this row behind, and `fetch_document` kept serving the whole
+   * document by hash after it was unpublished. Returns whether a row existed.
+   */
+  deleteDocument(hash: string): boolean {
+    const result = this.db.prepare('DELETE FROM documents WHERE hash = ?').run(hash);
+    if (result.changes > 0) queryCache.clear();
+    return result.changes > 0;
   }
 
   /** Indexed documents, most recently updated first. Content is deliberately
@@ -1029,6 +1059,8 @@ export class LocalStore {
       supersededAt: row.superseded_at ? new Date(row.superseded_at as string) : undefined,
       version: (row.version as number | null) ?? 1,
       derivedFrom: (row.derived_from as string | null) ?? undefined,
+      externalPartner: (row.external_partner as string | null) ?? undefined,
+      externalRef: (row.external_ref as string | null) ?? undefined,
       createdAt: new Date(row.created_at as string),
       updatedAt: new Date(row.updated_at as string),
     };

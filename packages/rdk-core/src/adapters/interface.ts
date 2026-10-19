@@ -33,6 +33,9 @@ export interface IndexResult {
   filesProcessed: number;
   errors: string[];
   categories: string[][];
+  /** Content hashes of the chunks stored by this call (indexDocument only).
+   *  The local chunk id IS the chunk hash Central knows it by. */
+  chunkIds?: string[];
 }
 
 export interface VaultMetadata {
