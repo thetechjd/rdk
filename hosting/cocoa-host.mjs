@@ -4,12 +4,15 @@ import { fork } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { publisherFor, validSync } from './publishers.mjs';
 const secret = process.env.COCOA_RDK_HOST_SECRET ?? '';
 const master = process.env.COCOA_NODE_MASTER_KEY ?? '';
 if (secret.length < 32 || !/^[a-f0-9]{64}$/i.test(master)) throw new Error('Configure a host secret and 32-byte node master key');
 const central = process.env.RDK_CENTRAL_URL ?? 'https://rdk.retrodeck.ai';
-const subzero = process.env.COCOA_PUBLIC_API_URL;
-if (!subzero?.startsWith('https://') || !central.startsWith('https://')) throw new Error('Configure HTTPS SubZero and Central URLs');
+// Which product publishes here (hosting/publishers.mjs). Koryo's Kaia runs her own instance with RDK_HOST_PUBLISHER=koryo.
+const publisher = publisherFor(process.env.RDK_HOST_PUBLISHER || 'subzero');
+const apiUrl = process.env.COCOA_PUBLIC_API_URL;
+if (!apiUrl?.startsWith('https://') || !central.startsWith('https://')) throw new Error('Configure HTTPS publisher API and Central URLs');
 const root = resolve(process.env.COCOA_NODE_DATA_DIR ?? '/var/lib/cocoa');
 const maxNodes = Number(process.env.COCOA_MAX_NODES ?? 16);
 if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1000) throw new Error('Invalid node capacity');
@@ -33,7 +36,7 @@ async function operation(action, body) {
       const dir = join(root,scope);
       await mkdir(dir,{recursive:true,mode:0o700});
       entry.child = fork(fileURLToPath(new URL('./cocoa-node.mjs',import.meta.url)),[],{
-        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:join(root,'models'),RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope },
+        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:join(root,'models'),RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope,COCOA_NODE_LABEL:publisher.label,COCOA_NODE_SOURCE:publisher.source },
         stdio:['ignore','ignore','ignore','ipc'],execArgv:['--max-old-space-size=256'],
       });
       entry.child.on('message',message=> {
@@ -50,7 +53,7 @@ async function operation(action, body) {
     } catch(e) { nodes.delete(scope); throw e; }
   }
   if(entry.starting || entry.pending.size) throw new Error('node busy');
-  if(action==='sync' && (body.apiUrl!==subzero || !/^sz_agent_[a-f0-9]{64}$/.test(body.token??'') || !Number.isSafeInteger(body.projectId) || body.projectId<1)) throw new Error('invalid publisher');
+  if(action==='sync' && !validSync(publisher,apiUrl,body)) throw new Error('invalid publisher');
   entry.active=Date.now();
   return new Promise((resolve,reject)=> {
     const id=randomUUID();

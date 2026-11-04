@@ -4,19 +4,23 @@ import { CentralClient } from "./central-client.js";
 import { loadConfig } from "./config.js";
 
 /** Customer-operated publication worker. It runs no model and never publishes
- * to the public network. Run it with a dedicated project node/config. */
+ * to the public network. Run it with a dedicated project node/config.
+ * The publisher's API (SubZero, or Koryo for Kaia) serves the same protocol
+ * under /agent-api/knowledge/:id, where id is a SubZero project number or a
+ * Koryo workspace uuid. */
 export class SubzeroSupportSync {
   constructor(
     private readonly api: string,
     private readonly token: string,
-    private readonly projectId: number,
+    private readonly projectId: number | string,
     private readonly node: NodeController,
     private readonly central: CentralClient,
     private readonly nodeId: string,
+    private readonly sourceAdapter = "subzero",
   ) {}
   private async call(path: string, body?: unknown): Promise<any> {
     const response = await fetch(
-      `${this.api.replace(/\/$/, "")}/agent-api/knowledge/${this.projectId}${path}`,
+      `${this.api.replace(/\/$/, "")}/agent-api/knowledge/${encodeURIComponent(String(this.projectId))}${path}`,
       {
         method: body === undefined ? "GET" : "POST",
         headers: {
@@ -52,7 +56,7 @@ export class SubzeroSupportSync {
               title: claim.title,
               content: claim.content,
               sourcePath: claim.sourcePath,
-              sourceAdapter: "subzero",
+              sourceAdapter: this.sourceAdapter,
               version: claim.revision,
               isPublic: false,
             },
