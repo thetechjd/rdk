@@ -1,6 +1,10 @@
 # Private RDK node hosts
 
-`cocoa-host.mjs` runs one private, encrypted RDK node per tenant (its own process, vault, config key and SQLite store) and publishes the tenant's approved knowledge into it. It serves exactly one publisher, set by `RDK_HOST_PUBLISHER`:
+`cocoa-host.mjs` runs **one shared, private, encrypted RDK node** for every tenant it serves and publishes each tenant's approved knowledge into it. Tenants stay separate by ownership: RetroDeck records which account and project own each document (`support_documents`, `support_shared_bindings`) and checks it on every document, pin and unpin call, and each project has its own pin mode. The node stays online (answers fetch documents from it) and runs one operation at a time, queueing the rest. It registers on Central as the host itself, by service credential (`RDK_HOST_REGISTRATION_SECRET`, equal to Central's `SUPPORT_HOST_SECRET`), with no email.
+
+`/ensure {scope, email}` returns the same `{nodeId, nodeApiKey, shared: true}` for every scope; publishers then bind each account and project with `{projectId, nodeApiKey, shared: true}` and claim each published document (`POST /:id/nodes/:nodeId/documents`). `RDK_HOST_SHARED=false` keeps the older mode, one node per scope (its own process and vault each), which does not scale and should not be used for new hosts.
+
+It serves exactly one publisher, set by `RDK_HOST_PUBLISHER`:
 
 | Publisher | Product | Unit | `/sync` credential | `/sync` id |
 |---|---|---|---|---|
@@ -21,7 +25,8 @@ COCOA_PUBLIC_API_URL=https://api.koryo.app   # must equal Koryo's PUBLIC_URL exa
 RDK_CENTRAL_URL=https://rdk.retrodeck.ai
 COCOA_NODE_DATA_DIR=/var/lib/kaia
 COCOA_RDK_HOST_PORT=4251         # Cocoa's host keeps 4250
-# COCOA_RDK_HOST_BIND=127.0.0.1  COCOA_MAX_NODES=16
+RDK_HOST_REGISTRATION_SECRET=...  # Central's SUPPORT_HOST_SECRET: registers the shared node, no email
+# COCOA_RDK_HOST_BIND=127.0.0.1  RDK_HOST_MAX_QUEUED=200
 ```
 
 The variable names are shared with Cocoa's host; only the values differ. Expose the port to Koryo's API and worker only, over loopback or a private network.
