@@ -5,7 +5,7 @@ process.on('message', ({ id, action, body }) => {
   active++; maxActive = Math.max(maxActive, active);
   setTimeout(() => {
     active--;
-    if (action === 'ensure') process.send({ id, result: { nodeId: 'node-shared', nodeApiKey: 'rdk_live_fake', email: body.email } });
+    if (action === 'ensure') process.send({ id, result: { nodeId: 'node-shared', nodeApiKey: 'rdk_live_fake', email: body.email, host: process.env.RDK_SUPPORT_HOST_NAME } });
     else process.send({ id, result: { published: 0, projectId: body.projectId, maxActive } });
   }, 80);
 });

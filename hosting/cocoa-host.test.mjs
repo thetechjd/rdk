@@ -44,7 +44,7 @@ async function start(env){
 }
 
 test('Shared host serves every project from one node, one operation at a time',async()=> {
-  const h=await start({RDK_HOST_NODE_EMAIL:'ops@example.test',COCOA_NODE_SCRIPT:fileURLToPath(new URL('./fake-node.fixture.mjs',import.meta.url))});
+  const h=await start({RDK_HOST_REGISTRATION_SECRET:'r'.repeat(40),COCOA_NODE_SCRIPT:fileURLToPath(new URL('./fake-node.fixture.mjs',import.meta.url))});
   try {
     const post=(path,body)=>fetch(h.base+path,{method:'POST',headers:h.headers,body:JSON.stringify(body)});
     const a=await (await post('/ensure',{scope:'subzero:workspace:1:project:1',email:'owner@customer-a.test'})).json();
@@ -52,7 +52,8 @@ test('Shared host serves every project from one node, one operation at a time',a
     assert.equal(a.nodeId,'node-shared');
     assert.deepEqual(b,a,'every scope gets the same node');
     assert.equal(a.shared,true);
-    assert.equal(a.email,'ops@example.test','the shared node registers as the operator, never a customer');
+    assert.equal(a.email,undefined,'no customer email reaches the shared node');
+    assert.equal(a.host,'cocoa','the shared node registers as the host, by service credential');
     const health=await (await fetch(h.base+'/health',{headers:h.headers})).json();
     assert.deepEqual([health.nodes,health.capacity,health.shared],[1,1,true]);
     // Three projects publishing at once: queued, not refused, never concurrent on the node.
@@ -66,7 +67,7 @@ test('Shared host serves every project from one node, one operation at a time',a
   } finally { await h.stop(); }
 });
 
-test('Shared host refuses to start without its own node email',async()=> {
-  await assert.rejects(start({}),/RDK_HOST_NODE_EMAIL/);
+test('Shared host refuses to start without its registration credential',async()=> {
+  await assert.rejects(start({}),/RDK_HOST_REGISTRATION_SECRET/);
 });
 

@@ -20,9 +20,11 @@ const root = resolve(process.env.COCOA_NODE_DATA_DIR ?? '/var/lib/cocoa');
 // per project does not scale: each is a process and an encrypted vault.
 // RDK_HOST_SHARED=false keeps the older node-per-scope mode.
 const shared = process.env.RDK_HOST_SHARED !== 'false';
-// The shared node's own identity on Central: an address of the operator's, never a customer's.
-const nodeEmail = process.env.RDK_HOST_NODE_EMAIL ?? '';
-if (shared && (!nodeEmail.includes('@') || nodeEmail.length > 254)) throw new Error('Set RDK_HOST_NODE_EMAIL for the shared node (or RDK_HOST_SHARED=false)');
+// The shared node registers on Central as this host, by service credential
+// (Central's SUPPORT_HOST_SECRET), not under anyone's email.
+const registration = process.env.RDK_HOST_REGISTRATION_SECRET ?? '';
+if (shared && registration.length < 32) throw new Error('Set RDK_HOST_REGISTRATION_SECRET (Central SUPPORT_HOST_SECRET) for the shared node, or RDK_HOST_SHARED=false');
+const hostName = publisher.label.toLowerCase();
 const maxNodes = shared ? 1 : Number(process.env.COCOA_MAX_NODES ?? 16);
 if (!Number.isSafeInteger(maxNodes) || maxNodes < 1 || maxNodes > 1000) throw new Error('Invalid node capacity');
 // Operations for one node run one at a time; callers wait their turn instead of failing.
@@ -38,10 +40,11 @@ async function operation(action, body) {
   if (typeof body.scope !== 'string' || !/^[a-zA-Z0-9:_-]{1,240}$/.test(body.scope)) throw new Error('invalid scope');
   // Shared: every scope maps to the one node, registered under the host's own email.
   const scope = createHash('sha256').update(shared ? `shared:${publisher.source}` : body.scope).digest('hex');
-  if (shared && action === 'ensure') body = { ...body, email: nodeEmail };
+  // The shared node is the host's: no tenant's email reaches it.
+  if (shared) { const { email: _email, ...rest } = body; body = rest; }
   let entry = nodes.get(scope);
   if (!entry) {
-    if (action !== 'ensure' || typeof body.email !== 'string' || !body.email.includes('@') || body.email.length > 254) throw new Error('ensure the node first');
+    if (action !== 'ensure' || (!shared && (typeof body.email !== 'string' || !body.email.includes('@') || body.email.length > 254))) throw new Error('ensure the node first');
     if (nodes.size >= maxNodes) throw new Error('node capacity reached');
     // Reserve capacity before asynchronous filesystem work to prevent duplicate starts.
     entry = { child:null, pending:new Map(), active:Date.now(), starting:true, queue:Promise.resolve(), queued:0 };
@@ -50,7 +53,7 @@ async function operation(action, body) {
       const dir = join(root,scope);
       await mkdir(dir,{recursive:true,mode:0o700});
       entry.child = fork(nodeScript,[],{
-        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:join(root,'models'),RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope,COCOA_NODE_LABEL:publisher.label,COCOA_NODE_SOURCE:publisher.source },
+        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:join(root,'models'),RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope,COCOA_NODE_LABEL:publisher.label,COCOA_NODE_SOURCE:publisher.source,...(shared ? {RDK_SUPPORT_HOST_SECRET:registration,RDK_SUPPORT_HOST_NAME:hostName} : {}) },
         stdio:['ignore','ignore','ignore','ipc'],execArgv:['--max-old-space-size=256'],
       });
       entry.child.on('message',message=> {
