@@ -175,4 +175,30 @@ describe('deduplication is a decision about documents', () => {
     expect(store.saved).toHaveLength(0);
     expect(result.errors.join(' ')).toMatch(/document is a near-duplicate/i);
   });
+
+  it('indexes a private support publication even when its text is already held', async () => {
+    // A shared support node holds many accounts' private documents. The same
+    // text from another account, or from the same account after it removed its
+    // copy, is that account's own document: ownership is per account in
+    // RetroDeck, and nothing about it earns network credit.
+    const store = stubStore();
+    const indexer = new RDKIndexer({ embeddingModel, localStore: store, domain: 'support', nodeId: 'shared' });
+    const labels = ['Gateway', 'Snowflakes', 'Overwrites'];
+    await indexer.indexDocument({ content: doc(labels), title: 'first', sourcePath: 'subzero://a/1', isPublic: false, supportPublication: true });
+    store.seal();
+
+    const again = await indexer.indexDocument({
+      content: `# Again\n${doc(labels)}`, title: 'again', sourcePath: 'subzero://b/2', isPublic: false, supportPublication: true,
+    });
+    expect(again.errors).toEqual([]);
+    expectWholeDocument(store);
+
+    // Public content keeps the republish check, flag or not.
+    store.seal();
+    const published = await indexer.indexDocument({
+      content: `# Public\n${doc(labels)}`, title: 'public', sourcePath: '/vault/public.md', isPublic: true, supportPublication: true,
+    });
+    expect(published.chunksIndexed).toBe(0);
+    expect(published.errors.join(' ')).toMatch(/document is a near-duplicate/i);
+  });
 });

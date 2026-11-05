@@ -59,6 +59,8 @@ export class SubzeroSupportSync {
               sourceAdapter: this.sourceAdapter,
               version: claim.revision,
               isPublic: false,
+              // Private, per-account support content: identical text is not a republish.
+              supportPublication: true,
             },
           ]);
           if (result.errors.length) throw new Error(result.errors.join("; "));
