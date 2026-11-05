@@ -30,7 +30,7 @@ export {
 } from './redaction-policy.js';
 export type { CentralClientConfig, EarningsSummary, AccountInfo, PinSummary } from './central-client.js';
 export { NodeController } from './node-controller.js';
-export { SubzeroSupportSync } from './support-sync.js';
+export { SubzeroSupportSync, type SupportSyncResult } from './support-sync.js';
 export type { NodeControllerOptions, NodeRuntimeStatus, NodeLogger } from './node-controller.js';
 
 // Node network runtime — WebSocket control channel + command handlers.

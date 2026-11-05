@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { configExists, loadConfig, saveConfig } from '../packages/rdk-node/dist/config.js';
 import { registerNode } from '../packages/rdk-node/dist/register-node.js';
 import { NodeController, CentralClient, SubzeroSupportSync } from '../packages/rdk-node/dist/index.js';
+import { failureReason } from './node-errors.mjs';
 let node;
 let busy = false;
 async function registerSharedNode(host) {
@@ -43,12 +44,12 @@ process.on('message', async ({ id, action, body }) => {
       const worker = new SubzeroSupportSync(body.apiUrl, body.token, body.projectId, node,
         new CentralClient({ centralApiUrl: config.centralApiUrl, apiKey: config.apiKey }), config.nodeId,
         process.env.COCOA_NODE_SOURCE ?? 'subzero');
-      const published = await worker.tick();
-      process.send?.({ id, result: { published } });
+      // { published, rateLimited, retryAfterMs, capacity }: at the indexing rate limit the rest stay queued.
+      process.send?.({ id, result: await worker.run() });
     } else throw new Error('unsupported');
-  } catch {
-    // Provider responses, keys, and document content never go to process logs.
-    process.send?.({ id, error: 'Private node operation failed' });
+  } catch (error) {
+    // Provider responses, keys, and document content never go to process logs: only a short reason code.
+    process.send?.({ id, error: 'Private node operation failed', reason: failureReason(error) });
   } finally { busy = false; }
 });
 process.on('disconnect', () => process.exit(0));

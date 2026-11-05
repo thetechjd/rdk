@@ -11,7 +11,13 @@ It serves exactly one publisher, set by `RDK_HOST_PUBLISHER`:
 | `subzero` (default) | SubZero's Cocoa | `cocoa-host.service` | `sz_agent_` + 64 hex | project number |
 | `koryo` | Koryo's Kaia | `kaia-host.service` | `kor_pub_` + 43 base64url (a publish-only credential) | workspace uuid |
 
-Run a separate instance per publisher: its own OS user, secret, master key, data directory and capacity. Then one product's load can't use up the other's node slots, and one leaked secret reaches one product only. Both publishers speak the same protocol (`packages/rdk-node/src/support-sync.ts`) under `<publisher API>/agent-api/knowledge/:id`: `jobs`, then `claim`, private indexing and metadata sync, an optional `authorize-pin` and pin, then `complete` with the SHA-256 of the content, or `fail`.
+The host indexes with the embedding model vendored in the checkout (`apps/desktop/build/models/Xenova/all-MiniLM-L6-v2`, the same files the desktop app bundles), so deploy the full checkout, or set `RDK_HOST_MODELS_DIR` to a directory holding `Xenova/all-MiniLM-L6-v2`. Nodes load it from disk only and never download it, so the host refuses to start without it.
+
+A failed operation answers 503 with `{"error", "reason"}` and logs `{"event":"operation_failed","action","reason"}`. The reason is a short code (`hosting/node-errors.mjs`), such as `embedding_model_missing`, `publisher_http_409` or `registration_http_401`. The error message itself is never logged, because it can carry keys or document text.
+
+A node indexes at most `INDEX_RATE_LIMIT_BURST` documents at once, then `INDEX_RATE_LIMIT_PER_HOUR` an hour (`packages/rdk-core/src/query/pipeline.constants.ts`). At that limit a `/sync` pass stops and leaves the rest queued. It doesn't claim a document it can't index yet, and it hands a claimed one back with `release` rather than `fail`. The pass answers `{published, rateLimited, retryAfterMs, capacity}`, so a publisher can tell people how long their queue will take. If a publisher has no `release` route, the claim simply expires and the document is claimed again later.
+
+Run a separate instance per publisher: its own OS user, secret, master key, data directory and capacity. Then one product's load can't use up the other's node slots, and one leaked secret reaches one product only. Both publishers speak the same protocol (`packages/rdk-node/src/support-sync.ts`) under `<publisher API>/agent-api/knowledge/:id`: `jobs`, then `claim`, private indexing and metadata sync, an optional `authorize-pin` and pin, then `complete` with the SHA-256 of the content, `fail`, or (at the node's indexing rate limit) `release`, which puts the document back in the queue.
 
 ## Kaia's host
 

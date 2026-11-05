@@ -2,9 +2,11 @@ import { createServer } from 'node:http';
 import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import { fork } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publisherFor, validSync } from './publishers.mjs';
+import { failureReason, MODEL_FILES } from './node-errors.mjs';
 const secret = process.env.COCOA_RDK_HOST_SECRET ?? '';
 const master = process.env.COCOA_NODE_MASTER_KEY ?? '';
 if (secret.length < 32 || !/^[a-f0-9]{64}$/i.test(master)) throw new Error('Configure a host secret and 32-byte node master key');
@@ -14,6 +16,11 @@ const publisher = publisherFor(process.env.RDK_HOST_PUBLISHER || 'subzero');
 const apiUrl = process.env.COCOA_PUBLIC_API_URL;
 if (!apiUrl?.startsWith('https://') || !central.startsWith('https://')) throw new Error('Configure HTTPS publisher API and Central URLs');
 const root = resolve(process.env.COCOA_NODE_DATA_DIR ?? '/var/lib/cocoa');
+// The embedding model nodes index with. Vendored in this checkout; RDK_HOST_MODELS_DIR points elsewhere.
+// Without it every document fails to index, so the host refuses to start instead.
+const modelsDir = resolve(process.env.RDK_HOST_MODELS_DIR ?? fileURLToPath(new URL('../apps/desktop/build/models', import.meta.url)));
+const missingModel = MODEL_FILES.filter((f) => !existsSync(join(modelsDir, f)));
+if (missingModel.length) throw new Error(`The embedding model is missing from ${modelsDir} (${missingModel.join(', ')}). Deploy the full checkout (apps/desktop/build/models) or set RDK_HOST_MODELS_DIR to a directory holding Xenova/all-MiniLM-L6-v2`);
 // Shared (default): ONE node for every workspace and project this host serves,
 // always online. Each tenant's documents stay separate by ownership, recorded
 // and checked per account and project in RetroDeck (support_documents). A node
@@ -53,13 +60,13 @@ async function operation(action, body) {
       const dir = join(root,scope);
       await mkdir(dir,{recursive:true,mode:0o700});
       entry.child = fork(nodeScript,[],{
-        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:join(root,'models'),RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope,COCOA_NODE_LABEL:publisher.label,COCOA_NODE_SOURCE:publisher.source,...(shared ? {RDK_SUPPORT_HOST_SECRET:registration,RDK_SUPPORT_HOST_NAME:hostName} : {}) },
+        env:{ PATH:process.env.PATH,NODE_ENV:'production',RDK_HOME:dir,RDK_MODELS_DIR:modelsDir,RDK_CONFIG_ENCRYPTION_KEY:createHmac('sha256',Buffer.from(master,'hex')).update(scope).digest('hex'),RDK_CENTRAL_URL:central,COCOA_NODE_SCOPE:scope,COCOA_NODE_LABEL:publisher.label,COCOA_NODE_SOURCE:publisher.source,...(shared ? {RDK_SUPPORT_HOST_SECRET:registration,RDK_SUPPORT_HOST_NAME:hostName} : {}) },
         stdio:['ignore','ignore','ignore','ipc'],execArgv:['--max-old-space-size=256'],
       });
       entry.child.on('message',message=> {
         const pending=entry.pending.get(message.id); if(!pending) return;
         entry.pending.delete(message.id); clearTimeout(pending.timer);
-        if(message.error) pending.reject(new Error('node operation failed')); else pending.resolve(message.result);
+        if(message.error) pending.reject(Object.assign(new Error('node operation failed'),{reason:typeof message.reason==='string'?message.reason:'unknown'})); else pending.resolve(message.result);
       });
       entry.child.on('exit',()=> {
         if(nodes.get(scope)===entry) nodes.delete(scope);
@@ -96,7 +103,12 @@ const server=createServer(async(req,res)=> {
   try {
     let raw=''; for await(const chunk of req) {raw+=chunk; if(Buffer.byteLength(raw)>16000) throw new Error('body too large');}
     const result=await operation(action,JSON.parse(raw));res.end(JSON.stringify(result));
-  } catch {res.writeHead(503);res.end('{"error":"Private storage unavailable; check host capacity and configuration"}');}
+  } catch(e) {
+    // A reason code only (hosting/node-errors.mjs): safe to log and to give the publisher, unlike the message.
+    const reason=typeof e?.reason==='string'?e.reason:failureReason(e);
+    console.log(JSON.stringify({event:'operation_failed',action,reason}));
+    res.writeHead(503);res.end(JSON.stringify({error:'Private storage unavailable; check host capacity and configuration',reason}));
+  }
 });
 server.requestTimeout=100000;
 server.headersTimeout=10000;

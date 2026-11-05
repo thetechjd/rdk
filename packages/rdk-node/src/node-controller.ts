@@ -12,7 +12,10 @@ import {
   RDKIndexer,
   LocalEmbeddingModel,
   keyFromHex,
+  indexCapacity,
+  INDEX_RATE_DEFAULT_NODE,
   type EmbeddingModel,
+  type IndexCapacity,
   type Document,
   type QueryResult,
   type VaultKey,
@@ -243,6 +246,12 @@ export class NodeController {
   /** Direct access to the underlying store (graph data, reads) for host UIs. */
   getLocalStore(): LocalStore {
     return this.getStore();
+  }
+
+  /** How many documents this node may index now (the indexer's rate limit), without charging it. */
+  indexCapacity(): IndexCapacity {
+    const store = this.getStore();
+    return indexCapacity(INDEX_RATE_DEFAULT_NODE, { get: (id) => store.getIndexRateState(id) });
   }
 
   // ── helpers ──────────────────────────────────────────────────────────────────
