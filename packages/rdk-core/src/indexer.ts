@@ -13,7 +13,7 @@ import { extractiveSummary } from './summarize.js';
 import { buildChunkTitle, extractDocTitle } from './title.js';
 import type { IndexResult } from './adapters/interface.js';
 import { describeDuplicate, findNearDuplicate, minHash, type DuplicateMatch } from './index/dedup.js';
-import { consumeIndexToken } from './index/rate-limit.js';
+import { consumeIndexToken, INDEX_RATE_DEFAULT_NODE } from './index/rate-limit.js';
 import { scanChunk } from './index/scan.js';
 import { queryCache } from './query/cache.js';
 import { isManagedPartnerPath, isPartnerSourceAdapter } from './partners.js';
@@ -135,7 +135,7 @@ export class RDKIndexer {
         setIndexRateState?: LocalStore['setIndexRateState'];
       };
       if (rateLimitStore.getIndexRateState && rateLimitStore.setIndexRateState) {
-        consumeIndexToken(this.config.nodeId ?? 'local', {
+        consumeIndexToken(this.config.nodeId ?? INDEX_RATE_DEFAULT_NODE, {
           get: (nodeId) => rateLimitStore.getIndexRateState!(nodeId),
           set: (nodeId, state) => rateLimitStore.setIndexRateState!(nodeId, state),
         });

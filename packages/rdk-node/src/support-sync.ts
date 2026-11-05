@@ -2,6 +2,22 @@ import { createHash } from "node:crypto";
 import { NodeController } from "./node-controller.js";
 import { CentralClient } from "./central-client.js";
 import { loadConfig } from "./config.js";
+import type { IndexCapacity } from "@rdk/core";
+
+/** One publication pass. */
+export interface SupportSyncResult {
+  /** Documents indexed, verified and completed in this pass. */
+  published: number;
+  /** The node reached its indexing rate limit. The remaining documents wait in the publisher's queue. */
+  rateLimited: boolean;
+  /** When rate limited: milliseconds until the node can index another document. Else 0. */
+  retryAfterMs: number;
+  /** The node's indexing capacity after the pass (perHour, burst, available, waitMs), when it reports one. */
+  capacity?: IndexCapacity;
+}
+
+const RATE_LIMITED = /Index rate limit exceeded/i;
+class RateLimited extends Error {}
 
 /** Customer-operated publication worker. It runs no model and never publishes
  * to the public network. Run it with a dedicated project node/config.
@@ -37,10 +53,18 @@ export class SubzeroSupportSync {
       );
     return response.json();
   }
-  async tick(): Promise<number> {
+  /**
+   * Publishes the queued documents, in order. At the node's indexing rate
+   * limit it stops and leaves the rest queued: it does not claim a document it
+   * can't index yet, and a document that hits the limit mid-pass goes back to
+   * the publisher's queue (`release`), not to failed. A later pass picks them up.
+   */
+  async run(): Promise<SupportSyncResult> {
     const jobs = await this.call("/jobs");
     let done = 0;
     for (const job of jobs) {
+      const before = this.capacity();
+      if (before && before.available < 1) return this.limited(done, before);
       const path = `/${job.id}/revisions/${job.revision}`;
       const claim = await this.call(path + "/claim", {});
       try {
@@ -63,7 +87,10 @@ export class SubzeroSupportSync {
               supportPublication: true,
             },
           ]);
-          if (result.errors.length) throw new Error(result.errors.join("; "));
+          if (result.errors.length) {
+            const message = result.errors.join("; ");
+            throw RATE_LIMITED.test(message) ? new RateLimited(message) : new Error(message);
+          }
         }
         const doc = this.node.getLocalStore().getDocument(hash);
         if (!doc || doc.isPublic || !doc.isEncrypted)
@@ -84,6 +111,12 @@ export class SubzeroSupportSync {
         });
         done++;
       } catch (error) {
+        if (error instanceof RateLimited) {
+          // Not a failure: back in the queue. A publisher without `release`
+          // lets the claim expire instead, and the document is claimed again then.
+          await this.call(path + "/release", { claimToken: claim.claim_token }).catch(() => {});
+          return this.limited(done, this.capacity());
+        }
         await this.call(path + "/fail", {
           claimToken: claim.claim_token,
           error:
@@ -92,7 +125,17 @@ export class SubzeroSupportSync {
         throw error;
       }
     }
-    return done;
+    return { published: done, rateLimited: false, retryAfterMs: 0, capacity: this.capacity() };
+  }
+  /** `run`, counting the documents published. */
+  async tick(): Promise<number> {
+    return (await this.run()).published;
+  }
+  private capacity(): IndexCapacity | undefined {
+    return typeof this.node.indexCapacity === "function" ? this.node.indexCapacity() : undefined;
+  }
+  private limited(published: number, capacity: IndexCapacity | undefined): SupportSyncResult {
+    return { published, rateLimited: true, retryAfterMs: Math.max(1000, capacity?.waitMs ?? 60000), capacity };
   }
   static async create(api: string, token: string, projectId: number) {
     if (

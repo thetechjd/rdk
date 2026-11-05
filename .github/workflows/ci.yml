@@ -42,7 +42,7 @@ jobs:
         run: pnpm turbo build test
 
       - name: Cocoa private host protocol
-        run: node --test hosting/cocoa-host.test.mjs
+        run: node --test hosting/cocoa-host.test.mjs hosting/publishers.test.mjs hosting/node-errors.test.mjs
 
       # The desktop app is the only package with real static checking, and it has
       # two tsconfigs (main process vs renderer). Both must pass.

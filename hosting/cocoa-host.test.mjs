@@ -71,3 +71,18 @@ test('Shared host refuses to start without its registration credential',async()=
   await assert.rejects(start({}),/RDK_HOST_REGISTRATION_SECRET/);
 });
 
+
+test('Host refuses to start without the embedding model, naming what is missing',async()=> {
+  const empty=await mkdtemp(join(tmpdir(),'cocoa-host-models-'));
+  try { await assert.rejects(start({RDK_HOST_REGISTRATION_SECRET:'r'.repeat(40),RDK_HOST_MODELS_DIR:empty}),/embedding model is missing.*tokenizer\.json/); }
+  finally { await rm(empty,{recursive:true,force:true}); }
+});
+
+test('A failed operation logs and answers a reason code, not the error',async()=> {
+  const h=await start({RDK_HOST_REGISTRATION_SECRET:'r'.repeat(40),COCOA_NODE_SCRIPT:fileURLToPath(new URL('./fake-node.fixture.mjs',import.meta.url))});
+  try {
+    const res=await fetch(h.base+'/sync',{method:'POST',headers:h.headers,body:JSON.stringify({scope:'subzero:workspace:1:project:1',apiUrl:'https://attacker.example',token:'sz_agent_'+'a'.repeat(64),projectId:1})});
+    assert.equal(res.status,503);
+    assert.equal((await res.json()).reason,'node_not_ensured');
+  } finally { await h.stop(); }
+});

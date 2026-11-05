@@ -79,3 +79,18 @@ describe('index rate limiting', () => {
     expect(store.saved).toHaveLength(0);
   });
 });
+
+describe('indexCapacity', () => {
+  it('reads the bucket without charging it, and says how long until the next document', async () => {
+    const { indexCapacity, consumeIndexToken, INDEX_RATE_DEFAULT_NODE } = await import('../src/index/rate-limit.js');
+    const rate = new Map<string, { tokens: number; updatedAt: number }>();
+    const store = { get: (id: string) => rate.get(id), set: (id: string, s: { tokens: number; updatedAt: number }) => { rate.set(id, s); } };
+    const now = 1_000_000;
+    expect(indexCapacity(INDEX_RATE_DEFAULT_NODE, store, now)).toEqual({ perHour: 200, burst: 20, available: 20, waitMs: 0 });
+    for (let i = 0; i < 20; i++) consumeIndexToken(INDEX_RATE_DEFAULT_NODE, store, now);
+    const empty = indexCapacity(INDEX_RATE_DEFAULT_NODE, store, now);
+    expect(empty).toMatchObject({ available: 0, waitMs: 18000 });
+    expect(indexCapacity(INDEX_RATE_DEFAULT_NODE, store, now)).toEqual(empty);
+    expect(indexCapacity(INDEX_RATE_DEFAULT_NODE, store, now + 18000)).toMatchObject({ available: 1, waitMs: 0 });
+  });
+});

@@ -129,3 +129,37 @@ describe("private support publication", () => {
     });
   });
 });
+
+describe("indexing rate limit", () => {
+  const capacity = (available: number, waitMs = 0) => ({ perHour: 200, burst: 20, available, waitMs });
+  it("leaves documents queued, unclaimed, while the node has no capacity", async () => {
+    const h = harness();
+    (h.node as any).indexCapacity = () => capacity(0, 18000);
+    expect(await h.worker.run()).toEqual({ published: 0, rateLimited: true, retryAfterMs: 18000, capacity: capacity(0, 18000) });
+    expect(h.calls).toEqual(["jobs"]);
+  });
+  it("puts a document that hits the limit back in the queue instead of failing it", async () => {
+    const h = harness({}, ["Fatal: Index rate limit exceeded for node local"]);
+    let checks = 0;
+    (h.node as any).indexCapacity = () => (checks++ === 0 ? capacity(1) : capacity(0, 9000));
+    expect(await h.worker.run()).toMatchObject({ published: 0, rateLimited: true, retryAfterMs: 9000 });
+    expect(h.calls).toEqual(["jobs", "claim", "index", "release"]);
+    expect(h.calls).not.toContain("fail");
+  });
+  it("still releases when the publisher has no release endpoint (the claim expires instead)", async () => {
+    const h = harness({}, ["Index rate limit exceeded for node local"]);
+    const fetch = globalThis.fetch as any;
+    const real = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url: string, init: any) =>
+      url.endsWith("/release") ? { ok: false, status: 404, text: async () => "Not Found" } : real(url, init),
+    );
+    await expect(h.worker.run()).resolves.toMatchObject({ rateLimited: true });
+  });
+  it("reports capacity after a full pass, and tick still counts published documents", async () => {
+    const h = harness({ pin_requested: false });
+    (h.node as any).indexCapacity = () => capacity(19);
+    expect(await h.worker.run()).toEqual({ published: 1, rateLimited: false, retryAfterMs: 0, capacity: capacity(19) });
+    const t = harness({ pin_requested: false });
+    expect(await t.worker.tick()).toBe(1);
+  });
+});
