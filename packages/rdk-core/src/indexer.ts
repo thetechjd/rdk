@@ -48,6 +48,13 @@ export interface Document {
    *  the partner-job handler, e.g. `parlayledger` / `pub_<ULID>`. */
   externalPartner?: string;
   externalRef?: string;
+  /** A private support document published for one account on a support node.
+   *  The republish check is skipped: it guards network credit for public
+   *  content, while support documents are private and owned per account in
+   *  RetroDeck, so identical text from another account (or the same account
+   *  after removing a copy) is a different document, not a republish.
+   *  Ignored for public documents. */
+  supportPublication?: boolean;
 }
 
 export interface IndexerConfig {
@@ -250,7 +257,8 @@ export class RDKIndexer {
       // rule is: if every chunk duplicates existing content the document is a
       // republish and is rejected whole; if any chunk is novel the document is
       // new work and is indexed whole, shared passages included.
-      if (prepared.length > 0 && prepared.every(p => p.duplicateOf)) {
+      const republishCheck = isPublic || !doc.supportPublication;
+      if (republishCheck && prepared.length > 0 && prepared.every(p => p.duplicateOf)) {
         const match = prepared[0].duplicateOf!;
         return {
           chunksIndexed: 0,
